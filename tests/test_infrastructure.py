@@ -299,3 +299,10 @@ def test_two_rank_cpu_training_with_empty_history(tmp_path):
     assert saved["step"] == 2
     assert len(saved["rng_by_rank"]) == 2
     assert (tmp_path / "runs/seed0/teacher/complete.json").exists()
+    # One rank-zero W&B writer for the entire distributed allocation.
+    directory = tmp_path / "runs/seed0/teacher"
+    tracking = json.loads((directory / "tracking.json").read_text())
+    assert tracking["status"] == "completed"
+    assert tracking["attempt"] == 1
+    assert len(list(directory.glob("wandb/offline-run-*/*.wandb"))) == 1
+    assert saved["tracking"]["id"] == tracking["id"]

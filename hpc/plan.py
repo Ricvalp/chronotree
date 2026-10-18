@@ -18,6 +18,9 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 PROFILES = {"a5000_debug": 1, "h200_1gpu": 1, "h200_4gpu": 4, "b200_1gpu": 1, "b200_8gpu": 8}
+# Only nonsecret W&B settings belong in rendered scripts or site.env. Credentials
+# remain in the account's W&B login store or its external runtime environment.
+WANDB_SITE_VARIABLES = frozenset({"WANDB_MODE", "WANDB_PROJECT", "WANDB_ENTITY", "WANDB_DIR"})
 
 
 def sha256(path: Path) -> str:
@@ -75,7 +78,11 @@ def source_hash(repo: Path) -> str:
 
 def read_site(path: Path) -> dict[str, str]:
     """Parse literal site assignments, never execute an env file in the planner."""
-    values = {key: value for key, value in os.environ.items() if key.startswith("STMEM_")}
+    values = {
+        key: value
+        for key, value in os.environ.items()
+        if key.startswith("STMEM_") or key in WANDB_SITE_VARIABLES
+    }
     if path.exists():
         for number, line in enumerate(path.read_text().splitlines(), 1):
             words = shlex.split(line, comments=True)
@@ -84,13 +91,15 @@ def read_site(path: Path) -> dict[str, str]:
             if words[0] == "export":
                 words.pop(0)
             if len(words) != 1 or "=" not in words[0]:
-                raise ValueError(f"{path}:{number}: expected one literal STMEM_NAME=value assignment")
+                raise ValueError(f"{path}:{number}: expected one literal supported NAME=value assignment")
             key, value = words[0].split("=", 1)
-            if not re.fullmatch(r"STMEM_[A-Z0-9_]+", key):
+            if not re.fullmatch(r"STMEM_[A-Z0-9_]+", key) and key not in WANDB_SITE_VARIABLES:
                 raise ValueError(f"{path}:{number}: unsupported setting {key}")
             if "$" in value or "`" in value:
                 raise ValueError("site.env uses literal values; shell substitutions are not evaluated")
             values[key] = value
+    if values.get("WANDB_MODE") not in (None, "", "offline", "online", "disabled"):
+        raise ValueError("WANDB_MODE must be offline, online, or disabled")
     return values
 
 
@@ -528,7 +537,12 @@ def render_job(
     ]
     lines += ["set -euo pipefail", f"cd {shlex.quote(str(repo))}"]
     for key, value in site.items():
-        lines.append(f"export {key}={shlex.quote(value)}")
+        # Empty optional overrides explicitly clear a submit-shell setting, so
+        # an inherited entity/directory cannot defeat a blank site assignment.
+        if key in WANDB_SITE_VARIABLES and not value:
+            lines.append(f"unset {key}")
+        else:
+            lines.append(f"export {key}={shlex.quote(value)}")
     lines += [f"export STMEM_PROFILE={shlex.quote(profile)}", f"export STMEM_ALLOCATED_GPUS={job.gpus}"]
     if site.get("STMEM_ACTIVATE"):
         lines.append(f"source {shlex.quote(site['STMEM_ACTIVATE'])}")

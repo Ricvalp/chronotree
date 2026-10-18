@@ -3,6 +3,12 @@ seed: 0
 debug: false
 stage: teacher
 profile: h200_1gpu
+tracking:
+  enabled: true
+  mode: offline
+  project: chronotree
+  entity: null
+  dir: null
 paths:
   data_root: data
   cache_root: cache

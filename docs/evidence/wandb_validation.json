@@ -1,0 +1,179 @@
+{
+  "date": "2026-10-19",
+  "source": {
+    "git": "be14fc2bd8697b09adee970f83909cef7f135163",
+    "dirty": true,
+    "source_sha256": "a2cca85c92c78c220bd3d1c9b2d256b43ba76eac8180410f92ebb897a4c5fd55"
+  },
+  "wandb_version": "0.23.0",
+  "mode_tested": "offline",
+  "tests": {
+    "command": "uv run pytest -q",
+    "passed": 86,
+    "seconds": 12.37
+  },
+  "synthetic_pipeline": {
+    "root": "runs/wandb_verified_smoke",
+    "logical_runs": 15,
+    "offline_segments": 17,
+    "decoded_sdk_history_records": 120,
+    "stages": [
+      {
+        "path": "runs/wandb_verified_smoke/evaluation_smoke/CURRENT/tracking.json",
+        "job_type": "evaluation_smoke",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 1,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/evaluation_smoke/FLAT/tracking.json",
+        "job_type": "evaluation_smoke",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 1,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/evaluation_smoke/FULL/tracking.json",
+        "job_type": "evaluation_smoke",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 1,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/evaluation_smoke/PERCEIVER/tracking.json",
+        "job_type": "evaluation_smoke",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 1,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/evaluation_smoke/TREE/tracking.json",
+        "job_type": "evaluation_smoke",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 1,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/evaluation_smoke/UNIFORM/tracking.json",
+        "job_type": "evaluation_smoke",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 1,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/seed0/compact/tracking.json",
+        "job_type": "compact",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 12,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/seed0/perceiver/tracking.json",
+        "job_type": "perceiver",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 12,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/seed0/router_flat/tracking.json",
+        "job_type": "router_flat",
+        "status": "completed",
+        "attempts": 2,
+        "history_rows": 12,
+        "offline_segments": 2
+      },
+      {
+        "path": "runs/wandb_verified_smoke/seed0/router_flat/tracking_labels_initial/tracking.json",
+        "job_type": "label_flat_initial",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 11,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/seed0/router_flat/tracking_labels_refresh/tracking.json",
+        "job_type": "label_flat_refresh",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 16,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/seed0/router_tree/tracking.json",
+        "job_type": "router_tree",
+        "status": "completed",
+        "attempts": 2,
+        "history_rows": 12,
+        "offline_segments": 2
+      },
+      {
+        "path": "runs/wandb_verified_smoke/seed0/router_tree/tracking_labels_initial/tracking.json",
+        "job_type": "label_tree_initial",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 11,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/seed0/router_tree/tracking_labels_refresh/tracking.json",
+        "job_type": "label_tree_refresh",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 16,
+        "offline_segments": 1
+      },
+      {
+        "path": "runs/wandb_verified_smoke/seed0/teacher/tracking.json",
+        "job_type": "teacher",
+        "status": "completed",
+        "attempts": 1,
+        "history_rows": 12,
+        "offline_segments": 1
+      }
+    ]
+  },
+  "real_data": {
+    "root": "runs/wandb_real",
+    "task": "VideoUnmask",
+    "teacher_updates": 2,
+    "parameter_parity": {
+      "prior_checkpoint": "runs/real_debug/seed0/teacher/last.pt",
+      "tracked_checkpoint": "runs/wandb_real/seed0/teacher/last.pt",
+      "optimizer_steps": 2,
+      "max_parameter_difference": 0.0
+    },
+    "rollout": {
+      "status": "timeout",
+      "error": null,
+      "primitive_commands": 13,
+      "runtime_seconds": 4.250161407515407
+    },
+    "evaluation_attempts": 2,
+    "resumed_reused_episodes": 1,
+    "report_tracked": true
+  },
+  "logging_call_benchmark": {
+    "diagnostic_only": true,
+    "mode": "offline",
+    "records": 1000,
+    "scalars_per_record": 30,
+    "median_call_ms": 0.13930536806583405,
+    "p95_call_ms": 0.20479410886764526,
+    "total_call_seconds": 0.14825800247490406
+  },
+  "performance_scope": "Caller-side logging cost only; excludes startup/shutdown, SDK background CPU/I/O, network and cluster shared storage; not an end-to-end slowdown estimate.",
+  "not_tested": [
+    "Authenticated online dashboard delivery",
+    "Offline files uploaded/synced to a W&B account",
+    "H200/B200 cluster throughput"
+  ],
+  "slurm_jobs_submitted": false
+}

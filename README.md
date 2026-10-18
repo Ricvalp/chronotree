@@ -30,6 +30,46 @@ the shared paths, Python/activation file, partition, account/QoS and actual GPU
 resource name. Full data and assets must be staged first. Submission happens only
 with an explicit `--submit`; the default plan performs validation, not test tuning.
 
+## Weights & Biases logging
+
+Every training stage and official evaluation shard logs to W&B, including
+checkpoint-selection rollouts. Label generation, aggregate reports and the smoke
+diagnostics are tracked too. Logging is enabled by default in **offline** mode:
+real W&B run files are saved beside each stage's outputs without requiring network
+access or credentials. Existing JSON/JSONL results remain available.
+
+For live dashboards, authenticate on the cluster with `.venv/bin/wandb login`
+and add these assignments to `hpc/site.env`:
+
+```bash
+WANDB_MODE=online
+WANDB_PROJECT=chronotree
+WANDB_ENTITY=your_wandb_team_or_username
+WANDB_DIR=
+```
+
+An empty entity uses your account's default; an empty directory stores logs with
+each run. Keep API keys out of `site.env`; use W&B login or a credential supplied
+through the job environment. For direct local CLI runs, export these variables
+in the shell instead. `site.env` is read by the HPC launcher, not local training.
+
+The logger records resolved configuration, source/data/checkpoint provenance,
+training losses, LR, gradient norm, throughput, memory, router diagnostics,
+episode outcomes/errors, planned denominators and evaluation timing/storage.
+Only rank zero logs under DDP. Training uses `training.log_every` (50 updates in
+the core config), plus final/stop metrics; evaluation logs after each episode.
+W&B's service handles writes/uploads asynchronously. There are no model watch
+hooks, gradient histograms, automatic checkpoint/video uploads or background
+system polling. Initialization and final flushing occur outside training loops
+and policy latency measurements. Scalar logging has small, measured overhead,
+not a zero-overhead guarantee.
+
+`tracking.json` retains the W&B ID across resumes, while `tracking_history.jsonl`
+maintains monotonic W&B history indices independently of checkpoint progress.
+Offline attempts produce separate files with the same ID; sync them in attempt
+order, using `wandb sync --append` for subsequent attempts. Detailed setup and
+commands are in [docs/hpc.md](docs/hpc.md).
+
 ## Install
 
 Linux, Python 3.11–3.12, and `uv` are required. The lock resolves Python 3.11.15,

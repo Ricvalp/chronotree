@@ -3,10 +3,10 @@
 Copy `hpc/site.env.example` to the ignored `hpc/site.env`. Fill absolute shared
 repository, data, cache and run paths and the Python executable. If modules are
 needed, `STMEM_ACTIVATE` names a shell file to source. The site file itself uses
-literal `STMEM_NAME=value` assignments; the planner deliberately does not execute
-shell substitutions. Set the site's partition, optional account/QoS/constraint,
-GPU resource name, memory and walltime. `gpuq` is only the supplied partition
-default and does not select H200 hardware.
+literal `STMEM_NAME=value` assignments and the four W&B settings documented below;
+the planner deliberately does not execute shell substitutions. Set the site's
+partition, optional account/QoS/constraint, GPU resource name, memory and walltime.
+`gpuq` is only the supplied partition default and does not select H200 hardware.
 
 ```bash
 cp hpc/site.env.example hpc/site.env
@@ -36,6 +36,85 @@ lanes by default, controlled by `STMEM_MAX_CONCURRENT`. Each lane has an `aftera
 predecessor solely to bound concurrency. The bound includes CPU selection/report
 jobs and GPU jobs. No automatic submission retry or self-resubmission occurs.
 Submitted job IDs are persisted after every successful `sbatch --parsable` call.
+
+## Weights & Biases tracking
+
+Tracking is enabled in `configs/base.yaml`, including the inherited debug configs.
+The default `offline` mode records W&B run data locally without credentials or
+network access. Training logs scalar metrics at the existing configured reporting
+cadence; evaluation logs episode outcomes and summaries. Only rank zero opens the
+training run under DDP. Gradient watching, automatic system polling and console
+capture are disabled to keep collection overhead small. The existing local
+checkpoints, metrics and per-episode results remain the durable experiment records.
+Model weights, videos and source files are not uploaded automatically. The SDK's
+[settings reference](https://docs.wandb.ai/models/ref/python/experiments/settings)
+documents the collection controls.
+
+`hpc/site.env` accepts these nonsecret settings:
+
+| Setting | Default in the example | Meaning |
+|---|---|---|
+| `WANDB_MODE` | `offline` | `offline` writes locally; `online` sends metrics to W&B; `disabled` opts out. |
+| `WANDB_PROJECT` | `chronotree` | W&B project for the run. |
+| `WANDB_ENTITY` | empty | Optional account/team; empty uses the tracker/account default. |
+| `WANDB_DIR` | empty | Optional absolute durable directory for W&B files; empty uses the stage/evaluation output directory. |
+
+These values override the tracking configuration. The planner imports these four
+variables from its environment and then applies assignments from the site file,
+so a value written in `hpc/site.env` takes precedence. Empty W&B site assignments
+clear inherited values. All four settings are explicitly carried into the
+generated batch script. A path containing spaces needs quotes; `$HOME`, `${...}`,
+command substitutions and `~` expansion are not supported in the site file.
+
+For live dashboards, authenticate once from a machine that can reach W&B, using
+the account that will run the jobs, then update the nonsecret site settings:
+
+```bash
+uv run wandb login
+```
+
+```bash
+# hpc/site.env
+WANDB_MODE=online
+WANDB_PROJECT=chronotree
+WANDB_ENTITY=your-account-or-team
+```
+
+The compute node must be able to reach W&B and access that account's login
+credentials. An existing virtual environment is sufficient; W&B login is separate
+from `STMEM_ACTIVATE`. Do not put API keys in the site file: `WANDB_API_KEY` and
+other unapproved W&B assignments are rejected, and ambient credentials are never
+copied into generated script text or plan JSON. Authentication stays in W&B's
+credential store or the site's external credential mechanism.
+
+Teacher, compact, tree-router, flat-router and Perceiver training retain separate
+run identities. Evaluations are separate runs for their method, split and shard.
+Each output directory has a `tracking.json` record mapping local work to its W&B
+run ID and latest local W&B directory. The ID survives a restart; online runs
+resume with that ID, while each offline invocation writes a separate segment.
+The local `tracking_history.jsonl` journal preserves increasing W&B history indices
+across restarts, with optimizer/episode progress logged separately as `progress/step`.
+Keep the journal alongside the checkpoints when resuming. An existing run's
+project/entity cannot be changed in place; use a new output directory for a new
+destination. Logging settings do not select checkpoints, change scientific seeds,
+or alter Slurm completion dependencies.
+
+For nodes without network access, leave `WANDB_MODE=offline`. After the allocation,
+sync a chosen offline directory from a machine with the files and Internet access:
+
+```bash
+uv run wandb login
+uv run wandb sync /absolute/path/to/wandb/offline-run-TIMESTAMP-RUNID-attempt1
+# For later segments of the same ID, sync in chronological order:
+uv run wandb sync --append /absolute/path/to/wandb/offline-run-TIMESTAMP-RUNID-attempt2
+```
+
+Use the actual directory paths from `tracking.json` and the selected W&B storage
+root. Retain all offline directories from resumed work until they have been synced.
+The installed `uv run wandb sync --help` and W&B's
+[sync command reference](https://docs.wandb.ai/models/ref/cli/wandb-sync)
+describe the upload command. No login, online upload or sync is performed
+automatically by the planner.
 
 ## Profiles and distributed training
 
@@ -159,6 +238,10 @@ python hpc/smoke.py --render --updates 3 --output "$STMEM_RUN_ROOT/node_smoke.js
 
 It measures the actual device and executes a conditioning-aware reset/step plus
 three synthetic debug updates. It does not predict core-shape throughput or cost.
+The training and rendering probes create separate W&B runs explicitly tagged
+`synthetic-debug` under the output path without its `.json` suffix; the doctor
+alone does not create a training or evaluation run. Logging occurs outside the
+timed updates.
 The Slurm semantics used here follow the [official sbatch manual](https://slurm.schedmd.com/sbatch.html).
 
 Job artifacts record measured process duration separately from full allocation

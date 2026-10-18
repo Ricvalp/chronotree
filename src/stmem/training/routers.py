@@ -1,6 +1,8 @@
 """Equal-capacity robust signed-gain regression for tree and flat scorers."""
 
 from __future__ import annotations
+from collections import defaultdict
+from itertools import combinations
 import json
 import os
 from pathlib import Path
@@ -10,7 +12,9 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 from stmem.config import run_dir, digest
+from stmem.evaluation.timing import process_memory
 from stmem.models.router import LocalRouter
+from stmem.tracking import RunTracker
 from stmem.training.gain_labels import label_path
 from stmem.training.runtime import seed_all, load_checkpoint, environment_manifest
 from stmem.training.checkpoints import (
@@ -22,6 +26,26 @@ from stmem.training.checkpoints import (
     mark_complete,
     file_sha256,
 )
+
+
+def _validation_ranking_pairs(context_arrays, validation_ids, validation_gain, epsilon):
+    """Prepare bounded within-context comparisons, keeping refresh draws separate."""
+    groups = defaultdict(list)
+    offset = 0
+    positions = {int(label_id): i for i, label_id in enumerate(validation_ids)}
+    for shard, contexts in enumerate(context_arrays):
+        for row, context in enumerate(contexts):
+            position = positions.get(offset + row)
+            if position is not None:
+                groups[(shard, int(context))].append(position)
+        offset += len(contexts)
+    pairs = [pair for members in groups.values() for pair in combinations(members, 2)]
+    if not pairs:
+        empty = torch.empty(0, dtype=torch.long)
+        return empty, empty
+    indices = torch.tensor(pairs, dtype=torch.long)
+    distinct = (validation_gain[indices[:, 0]] - validation_gain[indices[:, 1]]).abs() > epsilon
+    return indices[distinct, 0], indices[distinct, 1]
 
 
 def train_router(cfg, *, resume=None, stop_file=None):
@@ -81,87 +105,163 @@ def train_router(cfg, *, resume=None, stop_file=None):
         raise ValueError("Router checkpoint is beyond the intended optimizer-step budget")
     if start < steps:
         (directory / "complete.json").unlink(missing_ok=True)
+    else:
+        # An unchanged completed replay has no new optimization work to track.
+        mark_complete(
+            directory / "complete.json",
+            completed_steps=steps,
+            intended_steps=steps,
+            checkpoint=directory / "last.pt",
+        )
+        (directory / "partial.json").unlink(missing_ok=True)
+        return 0
     atomic_json(cfg, directory / "config.json")
     label_hashes = [file_sha256(p) for p in paths]
     batch = cfg["training"]["effective_batch"]
-    started = time.perf_counter()
-    for step in range(start, steps):
-        router.train()
-        indices = train_ids[torch.randint(len(train_ids), (batch,)).numpy()]
-        prediction = router(query[indices].to(device), candidate[indices].to(device))
-        loss = F.smooth_l1_loss(prediction, gain[indices].to(device) / scale)
-        if not torch.isfinite(loss):
-            raise FloatingPointError("Nonfinite router loss")
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            router.parameters(), cfg["training"]["grad_clip"], error_if_nonfinite=True
-        )
-        optimizer.step()
-        current = step + 1
-        stop = bool(stop_file and Path(stop_file).exists())
-        if current % cfg["training"]["log_every"] == 0 or current == steps or stop:
-            router.eval()
-            with torch.no_grad():
-                val_pred = torch.cat(
-                    [
-                        router(query[ids].to(device), candidate[ids].to(device)).cpu()
-                        for ids in np.array_split(val_ids, max(1, len(val_ids) // 1024 + 1))
-                    ]
+    ranking_left, ranking_right = _validation_ranking_pairs(
+        arrays["context_id"], val_ids, gain[val_ids], cfg.get("labels", {}).get("gain_epsilon", 1e-6)
+    )
+    environment = environment_manifest()
+    tracking_metadata = {
+        "reader": cfg["reader"],
+        "phase": "refresh" if cfg.get("labels", {}).get("use_refresh", False) else "initial",
+        "label_hashes": label_hashes,
+        "teacher_sha256": identities[0]["teacher"],
+        "compact_sha256": identities[0]["compact"],
+        "data_identity": identities[0]["data"],
+        "partition_sha256": digest(identities[0]["partition"]),
+        "diagnostic": "conditional router-label validation; policy/encoders may have seen these episodes",
+        "train_labels": len(train_ids),
+        "validation_labels": len(val_ids),
+        "planned_steps": steps,
+        "resume_step": start,
+        "environment": environment,
+    }
+    with RunTracker(
+        cfg,
+        directory,
+        job_type=f"router_{cfg['reader']}",
+        metadata=tracking_metadata,
+        resume=bool(resume),
+    ) as tracker:
+        started = time.perf_counter()
+        for step in range(start, steps):
+            router.train()
+            indices = train_ids[torch.randint(len(train_ids), (batch,)).numpy()]
+            prediction = router(query[indices].to(device), candidate[indices].to(device))
+            loss = F.smooth_l1_loss(prediction, gain[indices].to(device) / scale)
+            if not torch.isfinite(loss):
+                raise FloatingPointError("Nonfinite router loss")
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            gradient_norm = torch.nn.utils.clip_grad_norm_(
+                router.parameters(), cfg["training"]["grad_clip"], error_if_nonfinite=True
+            )
+            optimizer.step()
+            current = step + 1
+            stop = bool(stop_file and Path(stop_file).exists())
+            if current % cfg["training"]["log_every"] == 0 or current == steps or stop:
+                router.eval()
+                with torch.no_grad():
+                    val_pred = torch.cat(
+                        [
+                            router(query[ids].to(device), candidate[ids].to(device)).cpu()
+                            for ids in np.array_split(val_ids, max(1, len(val_ids) // 1024 + 1))
+                        ]
+                    )
+                    val_loss = F.smooth_l1_loss(val_pred, gain[val_ids] / scale)
+                    sign_agreement = ((val_pred > 0) == (gain[val_ids] > 0)).float().mean()
+                row = {
+                    "step": current,
+                    "training_gain_loss": float(loss.detach()),
+                    "conditional_label_validation_loss": float(val_loss),
+                    "validation_sign_agreement": float(sign_agreement),
+                    "target_scale_training_only": scale,
+                    "seconds": time.perf_counter() - started,
+                    "train_labels": len(train_ids),
+                    "validation_labels": len(val_ids),
+                    "validation_rank_pairs": len(ranking_left),
+                    "learning_rate": optimizer.param_groups[0]["lr"],
+                    "effective_batch": batch,
+                    "training_examples_this_allocation": (current - start) * batch,
+                    "gradient_norm_before_clip": float(gradient_norm.detach()),
+                    "gpu_peak_allocated_bytes_rank": torch.cuda.max_memory_allocated(device)
+                    if device == "cuda"
+                    else 0,
+                    "gpu_peak_reserved_bytes_rank": torch.cuda.max_memory_reserved(device)
+                    if device == "cuda"
+                    else 0,
+                    **process_memory(),
+                }
+                row["training_examples_per_second"] = row["training_examples_this_allocation"] / max(
+                    row["seconds"], 1e-9
                 )
-                val_loss = F.smooth_l1_loss(val_pred, gain[val_ids] / scale)
-                sign_agreement = ((val_pred > 0) == (gain[val_ids] > 0)).float().mean()
-            row = {
-                "step": current,
-                "training_gain_loss": float(loss.detach()),
-                "conditional_label_validation_loss": float(val_loss),
-                "validation_sign_agreement": float(sign_agreement),
+                if len(ranking_left):
+                    predicted_order = (val_pred[ranking_left] - val_pred[ranking_right]).sign()
+                    expected_order = (gain[val_ids][ranking_left] - gain[val_ids][ranking_right]).sign()
+                    row["validation_within_context_rank_agreement"] = float(
+                        (predicted_order == expected_order).float().mean()
+                    )
+                with (directory / "metrics.jsonl").open("a") as stream:
+                    stream.write(json.dumps(row) + "\n")
+                print(json.dumps(row), flush=True)
+                tracker.log(row, step=current)
+            if (
+                current % cfg["training"]["checkpoint_every"] == 0
+                or current == steps
+                or stop
+                or current in cfg["training"]["checkpoint_steps"]
+            ):
+                state = {
+                    "stage": "router",
+                    "environment": environment,
+                    "tracking": dict(getattr(tracker, "identity", {})),
+                    "reader": cfg["reader"],
+                    "model": router.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": None,
+                    "scaler": None,
+                    "step": current,
+                    "config": cfg,
+                    "rng_by_rank": [capture_rng()],
+                    "target_scale": scale,
+                    "label_hashes": label_hashes,
+                    "provenance": {
+                        "compact": identities[0]["compact"],
+                        "teacher": identities[0]["teacher"],
+                        "data": identities[0]["data"],
+                        "partition": digest(identities[0]["partition"]),
+                    },
+                }
+                atomic_save(state, directory / "last.pt")
+                checkpoint_path = directory / "last.pt"
+                if current in cfg["training"]["checkpoint_steps"]:
+                    candidate_path = directory / f"step_{current:08d}.pt"
+                    atomic_copy(directory / "last.pt", candidate_path, immutable=True)
+                    checkpoint_path = candidate_path
+                tracker.checkpoint(checkpoint_path, step=current)
+            if stop and current < steps:
+                atomic_json({"status": "checkpointed_partial", "step": current}, directory / "partial.json")
+                tracker.summary({"completed_steps": current, "planned_steps": steps})
+                tracker.finish(status="checkpointed_partial", exit_code=75)
+                return 75
+        mark_complete(
+            directory / "complete.json",
+            completed_steps=steps,
+            intended_steps=steps,
+            checkpoint=directory / "last.pt",
+        )
+        (directory / "partial.json").unlink(missing_ok=True)
+        tracker.summary(
+            {
+                "completed_steps": steps,
+                "planned_steps": steps,
                 "target_scale_training_only": scale,
-                "seconds": time.perf_counter() - started,
                 "train_labels": len(train_ids),
                 "validation_labels": len(val_ids),
+                "checkpoint/sha256": json.loads((directory / "complete.json").read_text())[
+                    "checkpoint_sha256"
+                ],
             }
-            with (directory / "metrics.jsonl").open("a") as stream:
-                stream.write(json.dumps(row) + "\n")
-            print(json.dumps(row), flush=True)
-        if (
-            current % cfg["training"]["checkpoint_every"] == 0
-            or current == steps
-            or stop
-            or current in cfg["training"]["checkpoint_steps"]
-        ):
-            state = {
-                "stage": "router",
-                "environment": environment_manifest(),
-                "reader": cfg["reader"],
-                "model": router.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "scheduler": None,
-                "scaler": None,
-                "step": current,
-                "config": cfg,
-                "rng_by_rank": [capture_rng()],
-                "target_scale": scale,
-                "label_hashes": label_hashes,
-                "provenance": {
-                    "compact": identities[0]["compact"],
-                    "teacher": identities[0]["teacher"],
-                    "data": identities[0]["data"],
-                    "partition": digest(identities[0]["partition"]),
-                },
-            }
-            atomic_save(state, directory / "last.pt")
-            if current in cfg["training"]["checkpoint_steps"]:
-                candidate_path = directory / f"step_{current:08d}.pt"
-                atomic_copy(directory / "last.pt", candidate_path, immutable=True)
-        if stop and current < steps:
-            atomic_json({"status": "checkpointed_partial", "step": current}, directory / "partial.json")
-            return 75
-    mark_complete(
-        directory / "complete.json",
-        completed_steps=steps,
-        intended_steps=steps,
-        checkpoint=directory / "last.pt",
-    )
-    (directory / "partial.json").unlink(missing_ok=True)
-    return 0
+        )
+        return 0

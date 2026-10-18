@@ -1,6 +1,6 @@
 # Implementation and verification status
 
-As of **17 October 2026**, the project installs and its complete bounded local
+As of **19 October 2026**, the project installs and its complete bounded local
 pipeline runs. The research comparison has **not yet run**. There is no remaining
 known local installation, action-alignment, calibration or simulator blocker.
 
@@ -22,6 +22,9 @@ known local installation, action-alignment, calibration or simulator blocker.
   per-episode atomic results, videos, timing/storage/transfer counters and reports.
 - Bounded memory/budget/routing diagnostics, checkpoint selection, exact resume,
   DDP launch, Slurm dependency/resume planner and frozen official-test protocol.
+- W&B logging for all training stages, evaluation/selection shards, label jobs,
+  aggregate reports and smoke diagnostics. Default offline recording, optional
+  online transport, stable resume identities and one writer per DDP allocation.
 
 ## Actually tested locally
 
@@ -31,7 +34,7 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 
 | Check | Measured outcome |
 |---|---|
-| Core test suite | **55 passed**; 10.07s in the final recorded run |
+| Core test suite | **86 passed**; 12.37s after W&B integration |
 | Package lock/install | `uv lock --check`, `uv pip check`, imports and lint pass |
 | Real data | One 1,251,608,544-byte VideoUnmask archive; SHA verified; two episodes prepared |
 | Expert replay | Both complete sampled training episodes reached official success; exact nonterminal post-command qpos match |
@@ -47,6 +50,7 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 | Analysis CLI | Synthetic memory interventions and exact tiny searches over 6 TREE and 120 FLAT contexts execute |
 | Reports | Measured debug summary/plot generated; absent runs remain null/“not yet run” |
 | HPC | 45-job core dry-run, maximum two concurrent allocations; scripts pass syntax checks; fake-submission tests only |
+| W&B | Real offline files decoded and checked; rewind/resume, interrupted journal recovery, failure cleanup and single-writer DDP pass |
 
 Portable measured summaries are saved in
 [evidence/validation.json](evidence/validation.json),
@@ -56,6 +60,15 @@ The full local artifacts remain ignored under `runs/final_smoke/`,
 `runs/real_debug/`, `runs/ddp_stop_audit/`, `runs/fp16_overflow_audit/`, and
 `data/diagnostics/`. Earlier debug artifacts may have different source hashes;
 cache validation deliberately rejects them after source edits.
+
+The W&B follow-up is recorded separately in
+[evidence/wandb_validation.json](evidence/wandb_validation.json), with fresh local
+artifacts under `runs/wandb_verified_smoke/` and `runs/wandb_real/`.
+The caller-side logging diagnostic measured 0.139 ms median and 0.205 ms p95 for
+1,000 records with 30 scalars each. This excludes startup/shutdown, background SDK
+work, network and cluster filesystem costs; it is not an end-to-end training
+slowdown estimate. Online authentication, dashboard delivery and offline upload
+have not been exercised against a W&B account.
 
 These checks do not establish manipulation performance. Expert replay verifies
 the data/control interface. A two-update learned model's deliberately short

@@ -6,11 +6,16 @@ import argparse
 import csv
 import json
 from pathlib import Path
+import re
 from typing import Any
 
+from stmem.config import digest, load_config, source_revision
+from stmem.evaluate import evaluation_tracking_scalars, numeric_scalars
 from stmem.evaluation.metrics import episode_key, paired_comparison, summarize_episodes
 from stmem.evaluation.timing import latency_summary
-from stmem.training.checkpoints import atomic_json
+from stmem.training.checkpoints import atomic_json, file_sha256
+from stmem.training.runtime import environment_manifest
+from stmem.tracking import RunTracker
 
 METHODS = ("FULL", "TREE", "FLAT", "UNIFORM", "PERCEIVER", "CURRENT")
 
@@ -45,7 +50,7 @@ def collect(directory: Path) -> tuple[list[dict], list[tuple[str, int]] | None]:
     return records, sorted(planned) if saw_plan else None
 
 
-def build_report(run_root: Path, split: str = "val") -> dict[str, Any]:
+def build_report(run_root: Path, split: str = "val", *, tracker=None) -> dict[str, Any]:
     # A seed directory is one analysis unit. A run root can contain many seeds.
     seed_roots = sorted(run_root.glob("seed[0-9]*")) or [run_root]
     seeds: dict[str, Any] = {}
@@ -87,6 +92,12 @@ def build_report(run_root: Path, split: str = "val") -> dict[str, Any]:
             summary["startup"]["model_load_seconds_per_shard"] = latency_summary(
                 list(shard_loads.values()), 0
             )["all"]
+            if tracker is not None:
+                tracker.log(
+                    evaluation_tracking_scalars(
+                        records, plan, summary=summary, prefix=f"report/{seed}/{method}"
+                    )
+                )
             methods[method], records_by_method[method] = summary, records
             rows.append(
                 {
@@ -165,8 +176,72 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--split", choices=("val", "test"), default="val")
+    parser.add_argument("--config", default="configs/base.yaml", help="Configuration for run tracking")
     args = parser.parse_args()
-    report = build_report(args.run_root, args.split)
+    cfg = load_config(args.config)
+    seed_match = re.fullmatch(r"seed(\d+)", args.run_root.name)
+    effective_root = args.run_root.parent if seed_match else args.run_root
+    cfg.setdefault("paths", {})["run_root"] = str(effective_root.resolve())
+    if seed_match:
+        cfg["seed"] = int(seed_match.group(1))
+    directory = args.run_root / "reports" / args.split
+    with RunTracker(
+        cfg,
+        directory,
+        job_type="report",
+        name=f"report-{args.run_root.name}-{args.split}",
+        metadata={
+            "run_root": str(args.run_root.resolve()),
+            "split": args.split,
+            "source": source_revision(),
+            "environment": environment_manifest(),
+        },
+        resume=(directory / "summary.json").exists(),
+    ) as tracker:
+        seed_roots = sorted(args.run_root.glob("seed[0-9]*")) or [args.run_root]
+        input_manifests = {}
+        input_provenance = {}
+        configurations = {}
+        for seed_root in seed_roots:
+            for path in sorted((seed_root / "evaluation" / args.split).glob("*/**/manifest.json")):
+                relative = str(path.relative_to(args.run_root))
+                manifest = json.loads(path.read_text())
+                input_manifests[relative] = file_sha256(path)
+                provenance = {
+                    key: manifest[key]
+                    for key in (
+                        "method",
+                        "split",
+                        "source",
+                        "environment",
+                        "checkpoints",
+                        "shard_index",
+                        "num_shards",
+                    )
+                    if key in manifest
+                }
+                if "config" in manifest:
+                    configuration_hash = digest(manifest["config"])
+                    configurations[configuration_hash] = manifest["config"]
+                    provenance["config_sha256"] = configuration_hash
+                input_provenance[relative] = provenance
+        tracker.summary(
+            {
+                "report/input_manifest_sha256": input_manifests,
+                "report/input_provenance": input_provenance,
+                "report/input_configurations": configurations,
+                "report/training_seeds": [root.name for root in seed_roots],
+            }
+        )
+        report = build_report(args.run_root, args.split, tracker=tracker)
+        scalars = numeric_scalars(report, "report")
+        for seed, values in report["seeds"].items():
+            interval = values["tree_minus_flat"].get("ci95")
+            if interval is not None:
+                scalars[f"report/seeds/{seed}/tree_minus_flat/ci95_lower"] = float(interval[0])
+                scalars[f"report/seeds/{seed}/tree_minus_flat/ci95_upper"] = float(interval[1])
+        tracker.log(scalars)
+        tracker.summary({**scalars, "report/status": "generated", "report/rows": report["rows"]})
     for row in report["rows"]:
         score = (
             "not yet run" if row["macro_success"] is None else f"{row['macro_success']:.4f} ({row['status']})"

@@ -31,6 +31,8 @@ from stmem.training.checkpoints import (
     mark_complete,
     file_sha256,
 )
+from stmem.tracking import RunTracker
+from stmem.evaluation.timing import process_memory
 
 
 def context_sample(policy, evidence, cfg, position):
@@ -50,10 +52,29 @@ def context_sample(policy, evidence, cfg, position):
 
 
 def train_policy(cfg, stage, *, resume=None, stop_file=None):
+    validate_config(cfg)
+    rank = int(os.environ.get("RANK", "0"))
+    directory = run_dir(cfg, stage)
+    if rank == 0 and not resume and (directory / "last.pt").exists():
+        raise FileExistsError(f"Existing run: {directory}; use --resume explicitly")
+    with RunTracker(
+        cfg,
+        directory,
+        job_type=stage,
+        rank=rank,
+        resume=bool(resume),
+        metadata={"resume_checkpoint": str(resume) if resume else None},
+    ) as tracker:
+        result = _train_policy(cfg, stage, resume=resume, stop_file=stop_file, tracker=tracker)
+        if result == 75:
+            tracker.finish(status="checkpointed_partial", exit_code=75)
+        return result
+
+
+def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
     from stmem.doctor import choose_precision
     from stmem.data.cache import FrozenCache
 
-    validate_config(cfg)
     device, rank, world = distributed_setup()
     seed_all(cfg["seed"] + rank)
     if device.type == "cpu":
@@ -151,9 +172,21 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None):
     )
     if world > 1:
         torch.distributed.barrier()
+    tracker.summary(
+        {
+            "training/start_step": start,
+            "training/intended_steps": steps,
+            "training/world_size": world,
+            "training/precision": precision,
+            "model/parameters": sum(p.numel() for p in policy.parameters()),
+            "model/trainable_parameters": sum(p.numel() for p in policy.parameters() if p.requires_grad),
+            "provenance": provenance,
+            "environment": environment_manifest(),
+        }
+    )
     started = time.perf_counter()
     records_seen = 0
-    allocated = int(os.environ.get("STMEM_GPUS", world))
+    allocated = int(os.environ.get("STMEM_ALLOCATED_GPUS", os.environ.get("STMEM_GPUS", world)))
 
     def save(step, candidate=False):
         own_rng = capture_rng()
@@ -176,8 +209,10 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None):
                 "provenance": provenance,
                 "source": source_revision(),
                 "environment": environment_manifest(),
+                "tracking": dict(tracker.identity),
             }
             atomic_save(payload, directory / "last.pt")
+            tracker.checkpoint(directory / "last.pt", step)
             if candidate:
                 path = directory / f"step_{step:08d}.pt"
                 if path.exists():
@@ -186,6 +221,7 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None):
 
     step = start
     consecutive_overflows = 0
+    total_overflows = 0
     while step < steps:
         optimizer.zero_grad(set_to_none=True)
         local_loss = 0.0
@@ -223,7 +259,7 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None):
             local_loss += float(loss.detach()) / local_n
             records_seen += len(evidence.archive.leaves)
         scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(
+        grad_norm = torch.nn.utils.clip_grad_norm_(
             policy.parameters(), cfg["training"]["grad_clip"], error_if_nonfinite=precision != "fp16"
         )
         old_scale = scaler.get_scale()
@@ -234,6 +270,7 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None):
             # gradients shared across ranks, so every rank retries this position.
             # Neither optimizer-step exposure nor scheduler advances on a skip.
             consecutive_overflows += 1
+            total_overflows += 1
             if consecutive_overflows >= 8:
                 raise FloatingPointError("Eight consecutive FP16 overflows; retry with FP32 debugging")
             continue
@@ -253,7 +290,7 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None):
             or current_step == steps
         ):
             save(current_step, current_step in cfg["training"]["checkpoint_steps"])
-        if current_step % cfg["training"]["log_every"] == 0 or stopped:
+        if current_step % cfg["training"]["log_every"] == 0 or stopped or current_step == steps:
             loss_tensor = torch.tensor(local_loss, device=device)
             if world > 1:
                 torch.distributed.all_reduce(loss_tensor)
@@ -270,11 +307,23 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None):
                 "allocated_gpu_hours": elapsed * allocated / 3600 if device.type == "cuda" else 0.0,
                 "gpu_profile": cfg["profile"],
                 "fine_leaves_processed_rank": records_seen,
+                "learning_rate": optimizer.param_groups[0]["lr"],
+                "gradient_norm_before_clip": float(grad_norm),
+                "amp_scale": scaler.get_scale(),
+                "amp_overflows_this_attempt": total_overflows,
+                "gpu_peak_allocated_bytes_rank": torch.cuda.max_memory_allocated(device)
+                if device.type == "cuda"
+                else 0,
+                "gpu_peak_reserved_bytes_rank": torch.cuda.max_memory_reserved(device)
+                if device.type == "cuda"
+                else 0,
+                **process_memory(),
             }
             if rank == 0:
                 with (directory / "metrics.jsonl").open("a") as stream:
                     stream.write(json.dumps(record) + "\n")
                 print(json.dumps(record), flush=True)
+                tracker.log({f"train/{key}": value for key, value in record.items()}, step=current_step)
         if stopped and current_step < steps:
             if rank == 0:
                 atomic_json(
@@ -298,6 +347,10 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None):
             synthetic=data.synthetic,
         )
         (directory / "partial.json").unlink(missing_ok=True)
+        tracker.summary({"training/completed_steps": steps})
+        tracker.summary(
+            {"checkpoint/sha256": json.loads((directory / "complete.json").read_text())["checkpoint_sha256"]}
+        )
     if world > 1:
         torch.distributed.destroy_process_group()
     return 0

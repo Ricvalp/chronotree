@@ -88,43 +88,76 @@ def main():
         )
         call("stmem.train", "--stage", "router", "--config", final, "--resume", checkpoint)
     call("stmem.train", "--stage", "perceiver", "--config", config("perceiver"))
+    evaluate_readers(root, compact)
+    print(f"Synthetic smoke complete: {root}")
+
+
+def evaluate_readers(root: Path, config_path: str):
+    """Exercise each reader once and track this explicitly synthetic diagnostic."""
     # Exercise every reader at inference, including selected CPU records -> GPU transfer.
     import torch
-    from stmem.config import load_config
+    from stmem.config import load_config, source_revision
+    from stmem.evaluate import numeric_scalars
     from stmem.training.data import TrainingData
-    from stmem.training.runtime import load_policy, load_router
+    from stmem.training.runtime import load_policy, load_router, environment_manifest
     from stmem.evaluation.runner import OnlinePolicy
     from stmem.evaluation.robomme_adapter import ResetResult
     from stmem.training.checkpoints import atomic_json, file_sha256
+    from stmem.tracking import RunTracker
 
-    cfg = load_config(compact)
+    cfg = load_config(config_path)
     data = TrainingData(cfg)
     episode = data.episode(0)
     output = {}
+    provenance = {"source": source_revision(), "environment": environment_manifest()}
     for method in ("FULL", "TREE", "FLAT", "UNIFORM", "PERCEIVER", "CURRENT"):
         stage = "teacher" if method == "FULL" else "perceiver" if method == "PERCEIVER" else "compact"
         path = root / "seed0" / stage / "last.pt"
-        policy, _ = load_policy(path, "cuda" if torch.cuda.is_available() else "cpu")
         router_path = root / "seed0" / f"router_{method.lower()}" / "last.pt"
-        router = load_router(router_path, policy.device)[0] if method in ("TREE", "FLAT") else None
-        online = OnlinePolicy(
-            policy,
+        hashes = {str(path): file_sha256(path)}
+        if method in ("TREE", "FLAT"):
+            hashes[str(router_path)] = file_sha256(router_path)
+        with RunTracker(
             cfg,
-            method,
-            cfg["model"]["budget"],
-            router=router,
-            router_hash=file_sha256(router_path) if router else "",
-        )
-        online.reset(ResetResult(episode.conditioning, episode.execution[0], episode.goal), 7)
-        for frame in episode.execution[1:7]:
-            online.observe(frame)
-        action, info = online.decide()
-        assert action.shape == (cfg["model"]["horizon"], 8) and torch.isfinite(action).all()
-        output[method] = info
+            root / "evaluation_smoke" / method,
+            job_type="evaluation_smoke",
+            name=f"synthetic-smoke-{method}",
+            metadata={
+                **provenance,
+                "method": method,
+                "synthetic_debug_only": True,
+                "checkpoints": hashes,
+                "purpose": "Single synthetic inference diagnostic, not benchmark success evaluation",
+            },
+        ) as tracker:
+            policy, _ = load_policy(path, "cuda" if torch.cuda.is_available() else "cpu")
+            router = load_router(router_path, policy.device)[0] if method in ("TREE", "FLAT") else None
+            online = OnlinePolicy(
+                policy,
+                cfg,
+                method,
+                cfg["model"]["budget"],
+                router=router,
+                router_hash=hashes[str(router_path)] if router else "",
+            )
+            online.reset(ResetResult(episode.conditioning, episode.execution[0], episode.goal), 7)
+            for frame in episode.execution[1:7]:
+                online.observe(frame)
+            action, info = online.decide()
+            assert action.shape == (cfg["model"]["horizon"], 8) and torch.isfinite(action).all()
+            output[method] = info
+            # Existing decision timing has ended before any tracker calls.
+            scalars = {
+                **numeric_scalars(info, "diagnostic"),
+                "diagnostic/finite_actions": 1,
+                "diagnostic/action_horizon": int(action.shape[0]),
+                "diagnostic/action_dimensions": int(action.shape[1]),
+            }
+            tracker.log(scalars, step=1)
+            tracker.summary({**scalars, "diagnostic/status": "passed", "synthetic_debug_only": True})
     atomic_json(
         {"status": "complete", "synthetic_debug_only": True, "readers": output}, root / "smoke_complete.json"
     )
-    print(f"Synthetic smoke complete: {root}")
 
 
 if __name__ == "__main__":
