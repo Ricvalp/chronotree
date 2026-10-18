@@ -1,0 +1,6 @@
+extends: base.yaml
+stage: router
+reader: tree
+training:
+  effective_batch: 8
+  lr: 0.001

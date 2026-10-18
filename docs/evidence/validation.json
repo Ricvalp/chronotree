@@ -1,0 +1,186 @@
+{
+  "date": "2026-10-17",
+  "source": {
+    "git": "uncommitted",
+    "dirty": true,
+    "source_sha256": "2aedaf4c1b27aee5256cb1853fcaf0606b2846ff80b4bd0a973a3f3ca8ed6daa"
+  },
+  "tests": {
+    "command": ".venv/bin/python -m pytest -q",
+    "passed": 55,
+    "seconds": 10.07
+  },
+  "environment_lock": "uv.lock",
+  "dependencies_compatible": true,
+  "synthetic_stage_cycle": {
+    "status": "complete",
+    "root": "runs/final_smoke",
+    "teacher_updates": 12,
+    "compact_updates": 12,
+    "perceiver_updates": 12,
+    "router_updates_per_reader": 12,
+    "initial_label_contexts_per_reader": 30,
+    "refresh_label_contexts_per_reader": 15,
+    "readers": {
+      "CURRENT": {
+        "history_tokens": 0,
+        "available_leaves": 33
+      },
+      "FLAT": {
+        "history_tokens": 16,
+        "available_leaves": 33
+      },
+      "FULL": {
+        "history_tokens": 33,
+        "available_leaves": 33
+      },
+      "PERCEIVER": {
+        "history_tokens": 16,
+        "available_leaves": 33
+      },
+      "TREE": {
+        "history_tokens": 16,
+        "available_leaves": 33
+      },
+      "UNIFORM": {
+        "history_tokens": 16,
+        "available_leaves": 33
+      }
+    }
+  },
+  "real_closed_loop_final": {
+    "task": "VideoUnmask",
+    "episode_idx": 0,
+    "status": "timeout",
+    "primitive_commands": 13,
+    "runtime_seconds": 4.797832855954766,
+    "environment": {
+      "action_space": "joint_angle",
+      "clock": "source_local_recorded_frame",
+      "conditioning_frames": 66,
+      "control_hz": 20.0,
+      "effective_max_steps": 14,
+      "physics_hz": 100.0,
+      "requested_max_steps": 12
+    },
+    "error": null
+  },
+  "ddp_stop_resume": {
+    "status": "passed",
+    "cpu_ranks": 2,
+    "optimizer_steps": 2,
+    "empty_conditioning": true,
+    "stop_at_step": 1,
+    "resumed_to_step": 2,
+    "max_parameter_difference_uninterrupted_vs_resumed": 0.0,
+    "stale_completion_removed": true
+  },
+  "fp16_overflow_recovery": {
+    "status": "passed",
+    "initial_scale": 1048576,
+    "final_scale": 65536.0,
+    "optimizer_steps": 2,
+    "scheduler_last_epoch": 2
+  },
+  "hardware": {
+    "bounded_training": {
+      "losses": [
+        0.38352787494659424,
+        0.8497039675712585,
+        0.9409063458442688
+      ],
+      "precision": "bf16",
+      "seconds": [
+        0.2447410710155964,
+        0.02120439149439335,
+        0.019685540348291397
+      ],
+      "synthetic_debug_only": true,
+      "updates": 3,
+      "warning": "Short debug shapes; not a core throughput or cost estimate"
+    },
+    "capability": [
+      8,
+      9
+    ],
+    "cuda_available": true,
+    "device": "cuda:0",
+    "driver": {
+      "gpu_query": "NVIDIA RTX 5000 Ada Generation, 580.159.04, 8.9, 32760 MiB",
+      "returncode": 0,
+      "stderr": ""
+    },
+    "fp16_requires_grad_scaler": true,
+    "gpu_name": "NVIDIA RTX 5000 Ada Generation",
+    "native_architecture_present": false,
+    "ok": true,
+    "platform": "Linux-6.17.0-1025-oem-x86_64-with-glibc2.39",
+    "python": "3.11.15 (main, Jun 11 2026, 04:03:40) [Clang 22.1.3 ]",
+    "recommended_precision": "bf16",
+    "rendering": {
+      "conditioning_frames": 66,
+      "reset_valid_points": 128,
+      "runtime_metadata": {
+        "action_space": "joint_angle",
+        "clock": "source_local_recorded_frame",
+        "conditioning_frames": 66,
+        "control_hz": 20.0,
+        "effective_max_steps": 10,
+        "physics_hz": 100.0,
+        "requested_max_steps": 8
+      },
+      "status": "passed",
+      "step_frames": 1,
+      "task": "VideoUnmask",
+      "terminal_status": "ongoing"
+    },
+    "supported_architectures": [
+      "sm_70",
+      "sm_75",
+      "sm_80",
+      "sm_86",
+      "sm_90",
+      "sm_100",
+      "sm_120"
+    ],
+    "tests": {
+      "bf16": {
+        "dtype": "torch.bfloat16",
+        "loss": 2.884805202484131,
+        "ok": true,
+        "output_dtype": "torch.bfloat16",
+        "seconds": 0.08535965718328953
+      },
+      "fp16": {
+        "dtype": "torch.float16",
+        "loss": 2.8845789432525635,
+        "ok": true,
+        "output_dtype": "torch.float16",
+        "seconds": 0.0952119380235672
+      },
+      "fp32": {
+        "dtype": "torch.float32",
+        "loss": 2.884392023086548,
+        "ok": true,
+        "output_dtype": "torch.float32",
+        "seconds": 0.21433559991419315
+      }
+    },
+    "torch": "2.9.1+cu128",
+    "total_memory_bytes": 33759035392,
+    "wheel_cuda_build": "12.8"
+  },
+  "hpc_plan": {
+    "jobs": 45,
+    "submitted": false,
+    "max_concurrent_allocations": 2,
+    "estimated_cost": "unknown"
+  },
+  "not_run": [
+    "full 16-task download/preparation",
+    "substantive training",
+    "H200/B200 hardware and rendering",
+    "official frozen test",
+    "central three-seed replication"
+  ]
+}

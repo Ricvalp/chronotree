@@ -1,0 +1,8 @@
+extends: base.yaml
+stage: router
+reader: tree
+training:
+  steps: 10000
+  effective_batch: 256
+  lr: 0.0003
+  checkpoint_steps: [10000]

@@ -1,0 +1,98 @@
+schema_version: 1
+seed: 0
+debug: false
+stage: teacher
+profile: h200_1gpu
+paths:
+  data_root: data
+  cache_root: cache
+  run_root: runs
+data:
+  tasks: [BinFill, PickXtimes, SwingXtimes, StopCube, VideoUnmask, VideoUnmaskSwap, ButtonUnmask, ButtonUnmaskSwap, PickHighlight, VideoRepick, VideoPlaceButton, VideoPlaceOrder, MoveCube, InsertPeg, PatternLock, RouteStick]
+  prepared_subdir: prepared
+  episodes_per_task: 100
+  fraction: 1.0
+  split: train
+  synthetic: false
+  alignment_path: data/alignment.json
+  alignment: verified_revision_registry_required
+  decision_stride: 4
+  nominal_control_hz: 20
+  clock: recorded_frame
+  process_every_observation: true
+  sensors: [front_rgb, wrist_rgb, front_depth, wrist_depth, camera_calibration, proprioception, goal_text, past_command]
+  dataset_revision: manifest_verified_at_download
+  benchmark_revision: 6503b26e00ff338611fceb039417fbc64826ccc8
+  simulator_revision: 07be6fbc66350ddca200abfb0a11b692f078f7fd
+geometry:
+  crop: [[-0.9, -0.75, -0.05], [0.75, 0.75, 1.25]]
+  voxel_size: 0.005
+  max_depth: 4.0
+  depth_unit: millimetres_signed_int16
+  extrinsic_convention: world_to_camera_cv
+model:
+  encoder: joint
+  points: 1024
+  block_size: 8
+  visual_tokens: 32
+  current_tokens: 64
+  width: 256
+  layers: 4
+  heads: 8
+  text_layers: 2
+  max_text_bytes: 256
+  horizon: 16
+  execute: 4
+  flow_steps: 8
+  solver: euler
+  decoder: flow
+  budget: 128
+  budgets: [64, 128, 256]
+  router_width: 128
+  mass_bias: true
+  max_execution_frames: 2600
+  max_conditioning_frames: 1300
+  action_space: joint_angle
+  checkpoint_blocks: true
+  archive_device: cpu
+  encoder_options: {}
+training:
+  steps: 50000
+  effective_batch: 32
+  microbatch: 1
+  lr: 0.0001
+  weight_decay: 0.01
+  warmup_steps: 1000
+  grad_clip: 1.0
+  precision: auto
+  checkpoint_every: 1000
+  checkpoint_steps: [25000, 50000]
+  log_every: 50
+  context_mix: {tree: 0.45, flat: 0.45, uniform: 0.05, current: 0.05}
+  intermediate_probability: 0.5
+  task_balanced: true
+  length_bucket_size: 32
+  resume_boundary: optimizer_step
+  workers: 0
+labels:
+  contexts: 16000
+  refresh_contexts: 8000
+  candidates: 4
+  budgets: [64, 128, 256]
+  split_fraction: 0.8
+  seed: 2026
+  exploration_fraction: 0.5
+  gain_epsilon: 0.000001
+evaluation:
+  split: val
+  episode_count: 50
+  selection_episode_count: 2
+  seed: 1701
+  max_steps: 1300
+  video_cap: 2
+  timeout_seconds: 1800
+  methods: [FULL, TREE, FLAT, UNIFORM, PERCEIVER, CURRENT]
+  test_frozen_manifest: null
+checkpoints:
+  teacher: '{run_root}/seed{seed}/teacher/selected.pt'
+  compact: '{run_root}/seed{seed}/compact/selected.pt'

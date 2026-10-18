@@ -1,0 +1,47 @@
+extends: ../base.yaml
+debug: true
+profile: a5000_debug
+paths:
+  run_root: runs/debug
+  cache_root: cache/debug
+data:
+  synthetic: true
+  tasks: [VideoUnmask, PickXtimes]
+  episodes_per_task: 5
+  decision_stride: 2
+  synthetic_execution_frames: 12
+  synthetic_conditioning_frames: 5
+model:
+  points: 128
+  block_size: 4
+  visual_tokens: 8
+  current_tokens: 16
+  width: 64
+  layers: 2
+  heads: 4
+  text_layers: 1
+  horizon: 8
+  execute: 2
+  flow_steps: 4
+  budget: 16
+  budgets: [16, 24, 32]
+  router_width: 32
+  max_execution_frames: 64
+  max_conditioning_frames: 32
+  checkpoint_blocks: false
+training:
+  steps: 12
+  effective_batch: 2
+  microbatch: 1
+  warmup_steps: 2
+  checkpoint_every: 6
+  checkpoint_steps: [6, 12]
+  log_every: 1
+labels:
+  contexts: 12
+  refresh_contexts: 6
+  candidates: 4
+  budgets: [16, 24, 32]
+evaluation:
+  episode_count: 2
+  video_cap: 0

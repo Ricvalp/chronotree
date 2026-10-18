@@ -1,0 +1,8 @@
+extends: real_teacher.yaml
+# Twelve requested primitive steps plus the benchmark's documented adjustment.
+evaluation:
+  episode_count: 1
+  selection_episode_count: 1
+  max_steps: 12
+  timeout_seconds: 180
+  video_cap: 1

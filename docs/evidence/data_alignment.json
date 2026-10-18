@@ -1,0 +1,97 @@
+{
+  "verified": true,
+  "convention": "post_action_v1",
+  "dataset_revision": "a5e4e25ffe8af34f64944f9533d06455ce5f8337",
+  "benchmark_revision": "6503b26e00ff338611fceb039417fbc64826ccc8",
+  "simulator_revision": "07be6fbc66350ddca200abfb0a11b692f078f7fd",
+  "candidate_convention": "post_action_v1",
+  "reset_initial_action": "not_replayed; not observable policy input",
+  "raw_sha256": {
+    "VideoUnmask": "05a653a8f8232882f82c84057f328e045f4a875ff5cfcf068738c429c6081427"
+  },
+  "episodes": [
+    {
+      "episode_id": "episode_0",
+      "conditioning_expected": 66,
+      "conditioning_returned": 66,
+      "conditioning_joint_max_rmse": 0.0,
+      "reset_initial_execution_joint_rmse": 0.0,
+      "reset_extrinsic_rmse": {
+        "front": 0.0,
+        "wrist": 0.0
+      },
+      "compared_commands": 161,
+      "median_pre_rmse": 0.0036107368296162887,
+      "median_post_rmse": 0.0,
+      "max_post_rmse": 0.006207583811758119,
+      "nonterminal_max_post_rmse": 0.0,
+      "terminal_protocol_note": "Continuous wrapper executes an automatic extra terminal step; terminal observation state is excluded from active-decision timing evidence.",
+      "post_action_supported": true,
+      "status": "success",
+      "effective_metadata": {
+        "requested_max_steps": 1300,
+        "action_space": "joint_angle",
+        "clock": "source_local_recorded_frame",
+        "control_hz": 20.0,
+        "physics_hz": 100.0,
+        "effective_max_steps": 1302,
+        "conditioning_frames": 66
+      },
+      "elapsed_seconds": 12.863743994385004,
+      "video_path": "data/diagnostics/VideoUnmask_episode_0_expert.mp4",
+      "terminal_differences": [
+        {
+          "raw_index": 227,
+          "stored_vs_pre_rmse": 0.009313028181733966,
+          "stored_vs_post_rmse": 0.006207583811758119,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "episode_id": "episode_1",
+      "conditioning_expected": 66,
+      "conditioning_returned": 66,
+      "conditioning_joint_max_rmse": 0.0,
+      "reset_initial_execution_joint_rmse": 0.0,
+      "reset_extrinsic_rmse": {
+        "front": 0.0,
+        "wrist": 0.0
+      },
+      "compared_commands": 152,
+      "median_pre_rmse": 0.004211492088838925,
+      "median_post_rmse": 0.0,
+      "max_post_rmse": 0.006435707943404039,
+      "nonterminal_max_post_rmse": 9.627797619743614e-06,
+      "terminal_protocol_note": "Continuous wrapper executes an automatic extra terminal step; terminal observation state is excluded from active-decision timing evidence.",
+      "post_action_supported": true,
+      "status": "success",
+      "effective_metadata": {
+        "requested_max_steps": 1300,
+        "action_space": "joint_angle",
+        "clock": "source_local_recorded_frame",
+        "control_hz": 20.0,
+        "physics_hz": 100.0,
+        "effective_max_steps": 1302,
+        "conditioning_frames": 66
+      },
+      "elapsed_seconds": 11.954481339082122,
+      "video_path": "data/diagnostics/VideoUnmask_episode_1_expert.mp4",
+      "terminal_differences": [
+        {
+          "raw_index": 218,
+          "stored_vs_pre_rmse": 0.009929234284031103,
+          "stored_vs_post_rmse": 0.006435707943404039,
+          "terminal": true
+        }
+      ]
+    }
+  ],
+  "environment": {
+    "gpu": "NVIDIA RTX 5000 Ada Generation",
+    "driver": "580.159.04",
+    "torch": "2.9.1+cu128",
+    "python": "3.11.15",
+    "numpy": "1.26.4"
+  }
+}

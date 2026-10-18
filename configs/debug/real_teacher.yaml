@@ -1,0 +1,25 @@
+extends: teacher.yaml
+# Two-step implementation diagnostic on two real episodes; not a scientific run.
+paths:
+  run_root: runs/real_debug
+  cache_root: cache/real_debug
+data:
+  synthetic: false
+  tasks: [VideoUnmask]
+  episodes_per_task: 2
+model:
+  points: 256
+  max_conditioning_frames: 1300
+  max_execution_frames: 2600
+  budgets: [64, 128]
+  budget: 64
+  checkpoint_blocks: true
+training:
+  steps: 2
+  effective_batch: 1
+  checkpoint_every: 1
+  checkpoint_steps: [1, 2]
+  warmup_steps: 1
+  log_every: 1
+labels:
+  budgets: [64, 128]

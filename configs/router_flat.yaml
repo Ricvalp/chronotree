@@ -1,0 +1,2 @@
+extends: router_tree.yaml
+reader: flat

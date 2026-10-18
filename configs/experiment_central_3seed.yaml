@@ -1,0 +1,30 @@
+name: central_3seed
+description: Explicit final replication of central comparison; existing seed0 work is resumed.
+seeds: [0, 1, 2]
+tasks: [BinFill, PickXtimes, SwingXtimes, StopCube, VideoUnmask, VideoUnmaskSwap, ButtonUnmask, ButtonUnmaskSwap, PickHighlight, VideoRepick, VideoPlaceButton, VideoPlaceOrder, MoveCube, InsertPeg, PatternLock, RouteStick]
+methods: [FULL, TREE, FLAT, UNIFORM]
+profile: h200_1gpu
+budget: 128
+training_budgets: [64, 128, 256]
+teacher_candidates: [25000, 50000]
+compact_candidates: [15000, 30000]
+checkpoint_selection:
+  split: val
+  episode_indices: [0, 1]
+  compact_families: [tree, flat]
+  criterion: task_macro_success_then_earlier_checkpoint
+router:
+  initial_contexts: 16000
+  refresh_contexts: 8000
+  candidate_moves: 4
+  initial_steps: 5000
+  total_steps: 10000
+evaluation:
+  split: val
+  episodes_per_task: 50
+  shards: 4
+  max_concurrent_allocations: 2
+  final_test_episodes_per_task: 50
+automatic_budget_sweeps: false
+automatic_ablations: false
+estimated_gpu_hours: null

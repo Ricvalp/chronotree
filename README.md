@@ -1,0 +1,185 @@
+# Chronotree
+
+A runnable PyTorch research implementation of query-adaptive space-time memory
+for RoboMME. TREE and learned FLAT retrieval consume the same frozen causal leaves
+and the same compact action policy. FULL, UNIFORM, PERCEIVER and CURRENT are also
+implemented. Bounded active context does **not** imply bounded archive storage.
+
+The implementation brief is [PROMPT_CHRONOTREE.md](PROMPT_CHRONOTREE.md).
+Measured checks and outstanding experiments are in [docs/status.md](docs/status.md).
+No benchmark performance or scaling result is claimed.
+
+## Run these next
+
+The environment and a two-episode VideoUnmask subset are already present on this
+workstation. Reproduce the bounded complete synthetic stage cycle, then inspect
+the cluster plan:
+
+```bash
+.venv/bin/python scripts/smoke.py
+.venv/bin/python hpc/plan.py --plan core_seed0 --dry-run
+```
+
+The smoke creates a fresh timestamped directory under `runs/smoke/`. It executes
+12 teacher, 12 compact and 12 Perceiver updates, two small router fits with one
+label refresh each, then all six readers at inference. Its checkpoint selections
+are explicitly synthetic debug copies, never official validation selections.
+
+Before cluster execution, copy `hpc/site.env.example` to `hpc/site.env` and set
+the shared paths, Python/activation file, partition, account/QoS and actual GPU
+resource name. Full data and assets must be staged first. Submission happens only
+with an explicit `--submit`; the default plan performs validation, not test tuning.
+
+## Install
+
+Linux, Python 3.11–3.12, and `uv` are required. The lock resolves Python 3.11.15,
+Torch 2.9.1 + CUDA 12.8, and compatible NumPy 1.26.4. Simulator dependencies are
+optional and pinned to the requested benchmark and ManiSkill fork revisions.
+
+```bash
+uv sync --locked --group dev                         # core training/tests
+uv sync --locked --extra simulator --group dev       # includes pinned RoboMME
+source .venv/bin/activate
+python scripts/fetch_sources.py
+python -m stmem.doctor --output runs/doctor.json
+python -m pytest -q
+```
+
+The unified environment works locally, so no policy service is needed. The
+optional `scripts/setup_sim.sh` installs the same locked simulator extra. No script
+changes system drivers. Prepare the environment and assets while Internet is
+available; jobs do not download packages on compute nodes. For offline `uv` use,
+stage its cache and run `uv sync --locked --offline --extra simulator --group dev`.
+
+The actual workstation is **RTX 5000 Ada, 32 GB**, not the anticipated A5000.
+H200/B200 support is documented but still needs an actual node check:
+
+```bash
+python hpc/smoke.py --render --output runs/node_smoke.json
+```
+
+This performs at most eight debug updates and one reset/step/render. It is not a
+core throughput estimate. The first node should also be profiled with the actual
+teacher shapes before deciding whether four replicated GPUs are worthwhile.
+
+## Real data and alignment
+
+The downloaded VideoUnmask archive is 1,251,608,544 bytes compressed and expands to
+14,445,442,112 bytes. Only two episodes were prepared. Episode limits apply after
+downloading an entire task archive. The downloader prints sizes before transfer,
+checks SHA256 and rejects unsafe archive members.
+
+```bash
+python -m stmem.data.download --tasks VideoUnmask --dry-run
+python -m stmem.data.download --tasks VideoUnmask
+python -m stmem.data.prepare --tasks VideoUnmask --episodes 2 --config configs/debug/data.yaml
+python -m stmem.data.inspect --config configs/debug/data.yaml
+python -m stmem.data.alignment --config configs/debug/data.yaml
+```
+
+Replay establishes `post_action_v1`: stored observation j predicts command j+1.
+The reset command is not replayed a second time. Conditioning/reset commands are
+unavailable model inputs; terminal duplicates and command gaps are masked.
+Evidence and calibration details are in [docs/data_contract.md](docs/data_contract.md).
+Training fails closed if the alignment registry or preprocessing contract does
+not match. The committed alignment evidence is documentation; the executable
+registry is generated against the actual local dataset under `data/`.
+
+A tiny **real-data diagnostic**, already run locally, is:
+
+```bash
+python -m stmem.train --stage teacher --config configs/debug/real_teacher.yaml
+python -m stmem.evaluate --config configs/debug/rollout.yaml --split val --method FULL \
+  --checkpoint runs/real_debug/seed0/teacher/last.pt --output runs/real_debug/rollout_full_val
+```
+
+Existing runs require `--resume` or a new `paths.run_root`. The two-update model
+has no demonstrated manipulation capability; the short rollout checks the
+conditioning/history/chunking/termination path.
+
+Full-data commands are prepared but **were not executed**:
+
+```bash
+python -m stmem.data.download --tasks all --dry-run
+# Explicit full transfer, when storage and network are ready:
+python -m stmem.data.download --tasks all
+python -m stmem.data.prepare --episodes 100 --config configs/teacher.yaml
+python -m stmem.data.alignment --config configs/debug/data.yaml
+```
+
+Use the core 1,024-point preprocessing config for the actual experiment. The
+256-point two-episode prepared subset is intentionally incompatible with core
+training. Each task is opened independently; there is no framewise train/test split.
+
+## Stages and comparisons
+
+| Stage | Behavior |
+|---|---|
+| Teacher | Train visual/event/text encoders and action-query full-leaf flow policy. |
+| Selection | Evaluate planned 25k/50k candidates on the same two official val seeds/task; freeze the winner. |
+| Cache | Immutable HDF5 task shards, completed blocks and only queried causal prefix variants. |
+| Compact | Freeze encoders; one decoder on 45% TREE, 45% FLAT, 5% UNIFORM, 5% CURRENT contexts across budgets. |
+| Selection | Compare 15k/30k candidates under both fixed tree and flat validation contexts. |
+| Labels/router | Signed paired teacher-velocity gains; episode-disjoint scorer diagnostics; one bounded refresh. |
+| Perceiver | Separately adapt B learned latents and decoder from teacher with frozen encoders. |
+
+Core configuration uses F=8, 32 visual leaves/block, 64 current visual tokens,
+d=256, H=16, execute=4, eight Euler flow steps and B=128. Training budgets are
+64/128/256. The debugging profile is explicitly smaller (d=64). Local Gaussian
+pooling uses metre-squared and recorded-frame-squared denominators; source-local
+time never depends on final episode duration. Frozen cached and streaming content
+is encoded in FP32 for parity; training and online decoding use device-tested
+autocast. Sensitive geometry, reductions and aggregates remain FP32.
+
+Each training sample uses microbatch one and gradient accumulation to preserve
+the global effective batch across one/four/eight workers. Larger microbatches are
+rejected rather than silently changing exposure. Teacher history is never
+truncated to make a profile fit. A plain regression debug head and an optional
+framewise encoder are available without expanding the default experiment.
+
+Examples after official checkpoint selection:
+
+```bash
+python -m stmem.data.cache --config configs/teacher.yaml --checkpoint runs/seed0/teacher/selected.pt
+python -m stmem.train --stage compact --config configs/compact.yaml
+python -m stmem.training.gain_labels --reader tree --config configs/router_tree.yaml
+python -m stmem.train --stage router --config configs/router_tree.yaml
+python -m stmem.evaluate --config configs/compact.yaml --split val --method TREE
+python -m stmem.report --run-root runs/seed0 --split val
+```
+
+The planner supplies initial/final router step budgets and the one refresh. Use
+it for the complete dependency chain, including checkpoint-selection evaluations:
+
+```bash
+python hpc/plan.py --plan core_seed0 --dry-run
+python hpc/plan.py --plan core_seed0 --resume --dry-run
+# Only when intentionally submitting:
+python hpc/plan.py --plan core_seed0 --submit
+```
+
+The rendered core plan has 45 jobs and at most two concurrent allocations by
+default. Costs remain unknown. Read [docs/hpc.md](docs/hpc.md) for selective stage
+resume, signals, resource profiles, final protocol freeze and accounting.
+
+## Analysis and artifacts
+
+`stmem.evaluate --budget 64|128|256` supports matched reader budget curves;
+`--intervention erase_execution|permute_execution|erase_conditioning` supports
+fixed-validation memory sensitivity. PERCEIVER has a fixed trained latent count
+and rejects budget overrides. `stmem.analyze` performs bounded frozen-checkpoint
+diagnostics, including tiny exact search with hard size guards. Commands are in
+[docs/analyses.md](docs/analyses.md).
+
+Runs contain resolved config/provenance, masked normalization statistics inside
+checkpoints, JSONL metrics, immutable candidate checkpoints, atomic per-episode
+actions/status/error/timing results, capped videos, and completion markers.
+Partial training exits 75 and cannot release `afterok` dependencies. Reports keep
+all planned episode denominators, use paired episode uncertainty, and render
+unrun methods as null/“not yet run”. Archive payload, keys, transfers, prefix
+updates, cold startup and warm decision latency are recorded. Process RSS and
+GPU peak memory are measured separately from logical tensor payload.
+
+Implementation decisions and limitations are recorded in
+[docs/decisions.md](docs/decisions.md). Upstream code, pinned revisions and license
+attribution are documented under [third_party](third_party/README.md).

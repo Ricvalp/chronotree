@@ -1,0 +1,5 @@
+extends: base.yaml
+stage: compact
+training:
+  steps: 30000
+  checkpoint_steps: [15000, 30000]

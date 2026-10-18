@@ -1,0 +1,82 @@
+{
+  "diagnostic_only": true,
+  "model_training_steps": 2,
+  "real_training_episodes": 2,
+  "training_metrics": [
+    {
+      "step": 1,
+      "training_action_loss": 5.462629795074463,
+      "objective": "flow",
+      "seconds": 0.4486801251769066,
+      "examples": 1,
+      "effective_batch": 1,
+      "examples_per_second": 2.2287592961817015,
+      "allocated_gpu_hours": 0.00012463336810469627,
+      "gpu_profile": "a5000_debug",
+      "fine_leaves_processed_rank": 216
+    },
+    {
+      "step": 2,
+      "training_action_loss": 4.190395355224609,
+      "objective": "flow",
+      "seconds": 0.6340608522295952,
+      "examples": 2,
+      "effective_batch": 1,
+      "examples_per_second": 3.154271380999555,
+      "allocated_gpu_hours": 0.00017612801450822088,
+      "gpu_profile": "a5000_debug",
+      "fine_leaves_processed_rank": 450
+    }
+  ],
+  "closed_loop_summary": {
+    "task": "VideoUnmask",
+    "episode_idx": 0,
+    "split": "val",
+    "method": "FULL",
+    "status": "timeout",
+    "primitive_commands": 13,
+    "startup_seconds": 3.5170179549604654,
+    "runtime_seconds": 4.331808557733893,
+    "environment": {
+      "action_space": "joint_angle",
+      "clock": "source_local_recorded_frame",
+      "conditioning_frames": 66,
+      "control_hz": 20.0,
+      "effective_max_steps": 14,
+      "physics_hz": 100.0,
+      "requested_max_steps": 12
+    },
+    "latency": {
+      "all": {
+        "count": 7,
+        "p50_seconds": 0.08065512031316757,
+        "p95_seconds": 0.0948945054784417,
+        "total_seconds": 0.5323325525969267
+      },
+      "cold": {
+        "count": 1,
+        "p50_seconds": 0.03406945429742336,
+        "p95_seconds": 0.03406945429742336,
+        "total_seconds": 0.03406945429742336
+      },
+      "warm": {
+        "count": 6,
+        "p50_seconds": 0.08120125997811556,
+        "p95_seconds": 0.09574300656095147,
+        "total_seconds": 0.4982630982995033
+      },
+      "warmup_decisions": 1
+    },
+    "accelerator_memory": {
+      "peak_allocated_bytes": 13003264,
+      "peak_reserved_bytes": 27262976
+    }
+  },
+  "decision_count": 7,
+  "checkpoint_sha256": "8d43f5f7d4464521fb8010858879c10b95d1203f64f33e4bb3d03d0fad43ed08",
+  "run_root": "runs/real_debug",
+  "commands": [
+    "OMP_NUM_THREADS=4 .venv/bin/python -m stmem.train --stage teacher --config configs/debug/real_teacher.yaml",
+    "OMP_NUM_THREADS=4 .venv/bin/python -m stmem.evaluate --config configs/debug/rollout.yaml --split val --method FULL --checkpoint runs/real_debug/seed0/teacher/last.pt --output runs/real_debug/rollout_full_val"
+  ]
+}

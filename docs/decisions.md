@@ -1,0 +1,81 @@
+# Implementation decisions — 17 October 2026
+
+1. **Unified pinned environment.** Core uses Torch 2.9.1 CUDA12.8, Python3.11,
+   NumPy1.26.4; the simulator extra pins the requested benchmark/fork and
+   torchvision0.24.1. NumPy2 was incompatible with the pinned simulator, so it
+   was removed before the real checks. A separate policy service is unnecessary
+   in the verified environment. `uv.lock` captures the exact dependency graph.
+
+2. **Measured hardware differs from the brief.** The available device is RTX5000
+   Ada32GB, capability8.9, driver580.159.04. A5000/H200/B200 are documented targets,
+   not measured machines. The historical profile name `a5000_debug` is retained,
+   but actual device identity appears in doctor evidence. Debug width64 keeps
+   tests small; scientific width256 is unchanged.
+
+3. **Alignment is post-action.** Two VideoUnmask episodes replayed with exact
+   nonterminal qpos agreement after each stored command. The automatic initial
+   execution command is consumed by reset. Terminal wrapper extra steps explain
+   terminal-only differences. No per-sample nearest-pose offset is used.
+   Conditioning actions and initial reset commands stay unavailable. Source-local
+   recorded-frame time is used because “NO RECORD” gaps prevent claiming physical
+   continuity. See data_contract.md and its measured evidence.
+
+4. **Deterministic evidence hierarchy.** Spatial balanced binary splits inside
+   visual blocks, temporal splits inside robot-event blocks, and binary-counter
+   merges across completed blocks. Temporary prefix trees are re-encoded only
+   from available frames and replaced on completion. Every valid leaf has mass1.
+   Parents aggregate FP32 latent sums before nonlinear adapters. Flat residuals
+   exclude selected leaves and refill zero-cost singleton replacements.
+
+5. **Compact policy is genuinely shared.** Tree and flat use one frozen encoder,
+   one metadata schema, one compact decoder/normalizer, matched scorer capacity,
+   and equal context-mixture weights at each training budget. No method ID or
+   expert/noisy action enters routing. The full reference only cross-attends from
+   action queries, so its historical attention cost is linear in leaf count.
+
+6. **Precision and caching.** Teacher gradients use tested BF16 (FP16+GradScaler
+   fallback, then FP32). Frozen cache and online evidence encoding use FP32 to
+   maintain numerical parity; online read-adapter/decoder uses tested autocast.
+   Geometry, distances, sums/counts, normalization and losses remain FP32.
+   Frozen keys are prepared in batches before CPU heap traversal; key construction,
+   full archive scans, transfer and storage costs are counted. No GPU key-network
+   call is hidden inside an individual tree split.
+
+7. **Explicit simple training implementation.** Variable-length teacher samples
+   use microbatch1, block gradient checkpointing and gradient accumulation.
+   Task-balanced global sample positions are partitioned across ranks without
+   sampler padding. Length buckets only order samples; they do not shorten history.
+   Empty-history branches require DDP dynamic unused-parameter detection. CPU2rank
+   stop/resume exactly reproduced uninterrupted weights. FP16 skipped steps retry
+   the same optimizer-step position without advancing the scheduler; eight repeated
+   overflows fail with an explicit FP32 diagnostic suggestion.
+
+8. **Limited action-utility supervision.** Initial16k and refresh8k contexts per
+   reader, up to four moves each. Budgets cross early/middle/late strata rather
+   than being coupled to them. Zero-cost flat moves are normalized without division.
+   One teacher/noise/time sample is reused before/after every candidate move.
+   Gain scaling is fitted on scorer-training episodes and retained on refresh.
+   These are conditional diagnostics, not unseen-policy-episode generalization.
+
+9. **Storage and durability.** Task-level HDF5 cache shards avoid millions of
+   files and full-dataset replication in workers. Cache identity includes code,
+   teacher, preprocessing, data/alignment and prefix contracts. Changing source
+   content conservatively invalidates caches, including semantically neutral edits.
+   Checkpoints contain optimizer/scheduler/scaler/RNG/sample position; one writer
+   uses atomic replacement and retains a previous known-good checkpoint. Selected
+   checkpoints require immutable validation-selection records outside synthetic
+   smoke runs. A partial stage exits nonzero and removes stale completion markers.
+
+10. **Evidence boundaries.** Real expert replay success verifies protocol, not
+    learned-policy performance. The two-update real model's short rollout timed
+    out as expected and has no useful-control claim. Synthetic cycles validate
+    plumbing only. No full download, long training, real Slurm submission, official
+    test evaluation, or architecture sweep was launched.
+
+11. **Deliberately limited first implementation.** CPU Python traversal and a
+    complete flat scan are measured honestly; there is no ANN/custom CUDA/FP8.
+    Process RSS and GPU peak allocation are recorded separately from logical
+    payload counters; GPU allocation excludes driver and external library memory.
+    Full-scale throughput, long-run learning and H200/B200 rendering remain to be
+    measured. The main contribution is the experimental memory interface, with
+    no claim of first hierarchical memory or an exact pooled-attention theorem.

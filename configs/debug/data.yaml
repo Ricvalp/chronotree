@@ -1,0 +1,8 @@
+extends: ../base.yaml
+debug: true
+data:
+  tasks: [VideoUnmask]
+  episodes_per_task: 2
+  synthetic: false
+model:
+  points: 256

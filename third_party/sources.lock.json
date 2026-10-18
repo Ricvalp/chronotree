@@ -1,0 +1,218 @@
+{
+  "benchmark_revision": "6503b26e00ff338611fceb039417fbc64826ccc8",
+  "maniskill_revision": "07be6fbc66350ddca200abfb0a11b692f078f7fd",
+  "policy_revision": "ecf086c3be7c2223167d9bb2f6ef1f0a6e24353b",
+  "dataset_revision": "a5e4e25ffe8af34f64944f9533d06455ce5f8337",
+  "files": [
+    {
+      "type": "file",
+      "oid": "bed0738c7eeb449bca98b5d2f33c89a1ee56349a",
+      "size": 2504,
+      "path": ".gitattributes"
+    },
+    {
+      "type": "file",
+      "oid": "a9bc89d0edc97662500f54799b8099431b35d2d3",
+      "size": 2120,
+      "path": "README.md"
+    },
+    {
+      "type": "file",
+      "oid": "30d3a25e0c6c5ef53f9898bf68707d13b6c28050",
+      "size": 4887351628,
+      "lfs": {
+        "oid": "c84493fc6b9fc6f8d4f2ac6c237655e5c764d08ca60cb3ce1af446f5ff4bf5a3",
+        "size": 4887351628,
+        "pointerSize": 135
+      },
+      "xetHash": "018a6b73295bf6ef2c027ab756927d575340b6e288a456bae44dc31f12f296bf",
+      "path": "record_dataset_BinFill.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "1d99bc6d565c63ae5ab08b2ab99f86eb1f5c9b44",
+      "size": 2153000020,
+      "lfs": {
+        "oid": "1ebba6090c0efc4dc17b6fc5ecdad7738b08de63271343c1721acaf0a473a16d",
+        "size": 2153000020,
+        "pointerSize": 135
+      },
+      "xetHash": "ef9e027a5b1a6cb488de4def3473de852be71a5414c84ae728c09b7dbdb696f0",
+      "path": "record_dataset_ButtonUnmask.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "7917003123d74f898c6ecab57b54dd48a7a0452b",
+      "size": 3162871472,
+      "lfs": {
+        "oid": "7c41a743a344186022512880b622ba3eede0c01d32fa1b34c10d00b688012a2a",
+        "size": 3162871472,
+        "pointerSize": 135
+      },
+      "xetHash": "80921a897ce5f93f0915bb4f6bbe029e9bccf5ee23d0c47a48c15b1b7fa7b011",
+      "path": "record_dataset_ButtonUnmaskSwap.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "cf54f8fabf485029389efdf558170a6e4186498f",
+      "size": 4243491884,
+      "lfs": {
+        "oid": "b86231afeea95175407df8f43e9638374256621d76f0e5b2c09e85a4a5d5891a",
+        "size": 4243491884,
+        "pointerSize": 135
+      },
+      "xetHash": "51abd83552a5d28723ed9d5261bb9b457806e14bb6af03b75427da330aefe83a",
+      "path": "record_dataset_InsertPeg.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "0ae28a9000bb1745e8d4921da0a5ce4055772732",
+      "size": 2807525884,
+      "lfs": {
+        "oid": "7ec562f822785ae61ca5073cedb35ed1900b06efc370108d423cc70aff86745f",
+        "size": 2807525884,
+        "pointerSize": 135
+      },
+      "xetHash": "14dc675ff43e28e6aab5537102f61f96cdced030d0d504bdae6b81a95a1cc369",
+      "path": "record_dataset_MoveCube.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "9b6d54b417f793efd0e754ee94118453b97615e1",
+      "size": 1696513512,
+      "lfs": {
+        "oid": "f95c89490cd6250a5fb0e2d634a4f0b2ab3b49a17e8938c6acb10ce3bf098a3b",
+        "size": 1696513512,
+        "pointerSize": 135
+      },
+      "xetHash": "9820003e1ed0bcbbf6ffc660b392c42fdc5badd4320a2d9f31e740aae6f643ae",
+      "path": "record_dataset_PatternLock.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "04f18f081ed52fb7c19cc7ea04acc889a8ae6dd1",
+      "size": 2731100684,
+      "lfs": {
+        "oid": "1e28cade340bfecd58a7e9af03881491268de6c3e229b3e34ad4887ea1aead3d",
+        "size": 2731100684,
+        "pointerSize": 135
+      },
+      "xetHash": "f74d940b764b5ee9ead08933ac2c6d90928da34a280ef71a11e8bd1aacd7ded5",
+      "path": "record_dataset_PickHighlight.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "afbdb72b1188297e4f39ec4c4ce3e61fe45fc92b",
+      "size": 4200453984,
+      "lfs": {
+        "oid": "46a0c493f725d78a57a106966d4b8d5a319674db4c3818939636416494917373",
+        "size": 4200453984,
+        "pointerSize": 135
+      },
+      "xetHash": "570afe1b5bfbe7d3ef1ed0c6e1d27e6f4a9455d9332b6aad8024bac4e385b5ef",
+      "path": "record_dataset_PickXtimes.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "4d4165789f4e342fb65c56a27d237f7c2ec68b79",
+      "size": 3035469204,
+      "lfs": {
+        "oid": "8280aaff38ed22b8d19b1ded3644edf70006a8137de0c833d052122e380250d6",
+        "size": 3035469204,
+        "pointerSize": 135
+      },
+      "xetHash": "5d995521e9060f0248c4aaef6fa06858636a026481741bec3a1f92991cd21429",
+      "path": "record_dataset_RouteStick.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "ede08d134cf9d975e2e5cdcaf12bae67d848f94a",
+      "size": 964971180,
+      "lfs": {
+        "oid": "b936e52b6f63dccadba998e83f3e480e5cb74130185c3b022826416469bf0565",
+        "size": 964971180,
+        "pointerSize": 134
+      },
+      "xetHash": "04de2d28547bddd18bd68b72bb790bcd694e84543a53f2eee9c88958dc1b4259",
+      "path": "record_dataset_StopCube.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "442eb9fa963f97a323825f12100d97e5e7b9adf1",
+      "size": 3589589824,
+      "lfs": {
+        "oid": "7093d84b1de9077f9141a4b5a98f3d6f41ee9982068f5471e1db253e95dbc6a1",
+        "size": 3589589824,
+        "pointerSize": 135
+      },
+      "xetHash": "ed2e5bc684bc46ddfd366e4797e8c6db32cf509ec2c634393ab1a40eb755cf61",
+      "path": "record_dataset_SwingXtimes.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "e770c4b92dbf608ed02eb246942e81c4da1cf45e",
+      "size": 6973907472,
+      "lfs": {
+        "oid": "37272953d0a9c69e5884623eee88aeddc745f43d6000554805a7a4bc0d8f0e98",
+        "size": 6973907472,
+        "pointerSize": 135
+      },
+      "xetHash": "4685e1f3b746dd5595fbe93783dc5c7f5e3f17071174dc9b5194e502b3664642",
+      "path": "record_dataset_VideoPlaceButton.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "9262c8439a78b0934c0b8b1cd315a35552e325f2",
+      "size": 8325385768,
+      "lfs": {
+        "oid": "14fd15f6b6578336ba96231b14762b2ad1e2928ae6d9e96e1a43efe1f485c26b",
+        "size": 8325385768,
+        "pointerSize": 135
+      },
+      "xetHash": "c1c09da7bb21938716c3d8e49a500e2a23d39edab93b01f702813c92f0021f87",
+      "path": "record_dataset_VideoPlaceOrder.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "a016511cb9a5d09b2daac1b5183cfdf571bd5d28",
+      "size": 4755594792,
+      "lfs": {
+        "oid": "969bc1937399e506b73a2b9842ef52104f448f5d9e2d84c2e7872c05e9f0a670",
+        "size": 4755594792,
+        "pointerSize": 135
+      },
+      "xetHash": "a9b535137b6716cb7290250303a8949f501117731ad4d5967805ddc8d2e51bc4",
+      "path": "record_dataset_VideoRepick.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "7979e473cb584e27436ca2f12be583ec36ea10fc",
+      "size": 1251608544,
+      "lfs": {
+        "oid": "5069f03981eee6ecf0c7b996ecdfb8ce64a554a9fc0ac4045d2354bab2a4e28e",
+        "size": 1251608544,
+        "pointerSize": 135
+      },
+      "xetHash": "b6669e8f9b2b4e7509989f8336c89adee8e619c393077b8698c478e84d1793d5",
+      "path": "record_dataset_VideoUnmask.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "b46b19061a85f900dd628988a7e90380af9a64f3",
+      "size": 1656888076,
+      "lfs": {
+        "oid": "45f7e19d891f33842ada22850f6a16b99baab64acc83f367455880210e779b79",
+        "size": 1656888076,
+        "pointerSize": 135
+      },
+      "xetHash": "ea8e21d83c4af18dc0b8db415e66aed45d983a27985595c6347251c60361ed88",
+      "path": "record_dataset_VideoUnmaskSwap.h5.tar.xz"
+    },
+    {
+      "type": "file",
+      "oid": "460def3939123953ffc3853f06fdb0bdc5eeb03b",
+      "size": 9455,
+      "path": "tarxz_h5.py"
+    }
+  ]
+}
