@@ -37,7 +37,7 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 
 | Check | Measured outcome |
 |---|---|
-| Core test suite | **135 passed**; 12.42s after W&B scene integration |
+| Core test suite | **214 passed**; 33.09s after parallel preparation integration |
 | Package lock/install | `uv lock --check`, `uv pip check`, imports and lint pass |
 | Real data | One 1,251,608,544-byte VideoUnmask archive; SHA verified; two episodes prepared |
 | Expert replay | Both complete sampled training episodes reached official success; exact nonterminal post-command qpos match |
@@ -54,6 +54,7 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 | Reports | Measured debug summary/plot generated; absent runs remain null/“not yet run” |
 | HPC | 45-job core dry-run, maximum two concurrent allocations; scripts pass syntax checks; fake-submission tests only |
 | W&B | Real offline files decoded and checked; rewind/resume, interrupted journal recovery, failure cleanup and single-writer DDP pass |
+| CPU preparation | Serial/parallel arrays exactly equal; safe interruption/reuse and CPU limits pass; two real episodes prepared at 1,024 points |
 
 Portable measured summaries are saved in
 [evidence/validation.json](evidence/validation.json),
@@ -92,6 +93,19 @@ before the first scene callback (maximum 2.91e-11; final maximum 2.98e-8). It
 verifies distributed completion and media ownership, not exact CPU numerical
 reproducibility. Artifacts are under `runs/wandb_scenes_ddp/`.
 
+Parallel preparation checks are recorded in
+[evidence/parallel_preparation.json](evidence/parallel_preparation.json). A local
+synthetic four-task/192-frame diagnostic took 14.42 s with one worker and 4.65 s
+with four; every prepared array and scientific manifest matched exactly. These
+single-pair timings include Python/process startup, hashing, conversion and writes,
+and reflect warm local storage, not HPC throughput. Separately, two existing real
+VideoUnmask episodes (464 frames) were prepared at 1,024 points in 30.27 s; verified
+reuse took 4.98 s and preserved bytes/timestamps. Raw inputs were freshly hashed
+both times; the legacy local manifest lacks a member digest, so no new independent
+archive verification is claimed. Original prepared data remained unchanged.
+Full artifacts are ignored under `runs/preparation_benchmark/` and
+`runs/preparation_real/`. No full-data preparation or Slurm job was launched.
+
 These checks do not establish manipulation performance. Expert replay verifies
 the data/control interface. A two-update learned model's deliberately short
 timeout is a protocol check. Synthetic label quality is not a research result.
@@ -129,4 +143,5 @@ python hpc/smoke.py --render --updates 3 --output "$STMEM_RUN_ROOT/node_smoke.js
 ```
 
 The README supplies the installation, full-data preparation and subsequent stage
-commands. No Slurm job is submitted without `--submit`.
+commands. The planner submits only with `--submit`; standalone templates, including
+CPU preparation on the GPU queue, require an explicit user `sbatch` command.

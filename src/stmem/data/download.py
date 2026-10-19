@@ -32,11 +32,15 @@ DATASET = "Yinpei/robomme_data_h5"
 REVISION = "a5e4e25ffe8af34f64944f9533d06455ce5f8337"
 
 
-def sha256(path: Path) -> str:
+def sha256(path: Path, *, progress=None) -> str:
     h = hashlib.sha256()
+    processed = 0
     with Path(path).open("rb") as f:
         for b in iter(lambda: f.read(8 * 1024 * 1024), b""):
             h.update(b)
+            processed += len(b)
+            if progress is not None:
+                progress(processed)
     return h.hexdigest()
 
 

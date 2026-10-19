@@ -30,7 +30,13 @@ class EpisodeDataset:
         data_root = self.root.parent.parent if self.root.is_file() else self.root.parent
         self.alignment_path = Path(alignment_path) if alignment_path else data_root / "alignment.json"
         self.alignment = json.loads(self.alignment_path.read_text()) if self.alignment_path.exists() else {}
-        files = sorted(self.root.glob("*.h5")) if self.root.is_dir() else [self.root]
+        if self.root.is_file() and self.root.name.endswith(".partial.h5"):
+            raise ValueError("An incomplete .partial.h5 preparation file cannot be used as a dataset")
+        files = (
+            sorted(path for path in self.root.glob("*.h5") if not path.name.endswith(".partial.h5"))
+            if self.root.is_dir()
+            else [self.root]
+        )
         for path in files:
             with h5py.File(path, "r") as f:
                 manifest = json.loads(f.attrs["manifest"])

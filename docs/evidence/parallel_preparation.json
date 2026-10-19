@@ -1,0 +1,132 @@
+{
+  "date": "2026-10-19",
+  "scope": "CPU task-parallel preparation, bounded local diagnostics only",
+  "source_sha256": {
+    "src/stmem/data/prepare.py": "71d1a177ce6feb03bffd26fc333549c9a178a1c4bf35e0865d36d06d1817d287",
+    "src/stmem/data/pointcloud.py": "bfae323fabaaa1f7eeb25cfdf1549dcae8708510dea6f77000c4d5fb5779e0b3",
+    "src/stmem/data/preparation_state.py": "fec4f30f693c4cf2d35c3548abec4aeab6f7a23205b6acaecaf786920eec7518",
+    "src/stmem/data/download.py": "d240a241c6f8440f31d8f42dba216774969f27ac78263e3fac9eeaf1ca5b510f"
+  },
+  "validation": {
+    "command": "uv run pytest -q",
+    "passed": 214,
+    "duration_seconds": 33.09,
+    "warnings": [
+      "Existing Torch import warning about deprecated pynvml"
+    ],
+    "lint": "uv run ruff check src tests hpc scripts: passed",
+    "format": "uv run ruff format --check on all seven changed/new Python files: passed",
+    "batch_syntax": "bash -n hpc/jobs/prepare.sbatch: passed",
+    "coverage": [
+      "Serial/parallel arrays and scientific manifests exactly equal",
+      "Causal boundaries, terminal masks, unavailable gripper dimension and numeric chronology preserved",
+      "Exact configuration and episode-set verification before reusing completed outputs",
+      "Fresh raw SHA256 checked even when skipping; provided malformed/mismatched digests rejected",
+      "Legacy manifests supported with explicit unverified download-manifest integrity event",
+      "Partial files excluded from dataset inputs; failed conversion preserves previous completed output",
+      "SIGINT/SIGTERM and abrupt worker death clean up peer processes",
+      "Signals during child startup deferred until worker registration and cleanup",
+      "CPU affinity/Slurm limits enforced before launch; native thread settings and signal handlers restored",
+      "Exclusive output locks, crash release, missing/stale sidecar repair",
+      "Slurm template resource bounds and literal CLI forwarding tested with fake srun only"
+    ]
+  },
+  "synthetic_timing": {
+    "artifact": "runs/preparation_benchmark/20261019T090801Z/evidence.json",
+    "kind": "synthetic_cpu_preparation_diagnostic",
+    "fixture": {
+      "synthetic": true,
+      "tasks": [
+        "VideoUnmask",
+        "VideoUnmaskSwap",
+        "ButtonUnmask",
+        "PatternLock"
+      ],
+      "episodes_per_task": 1,
+      "frames_per_task": 48,
+      "cameras": 2,
+      "image_shape": [
+        256,
+        256
+      ],
+      "output_points_per_frame": 1024,
+      "raw_bytes_per_trial": 127468296,
+      "fixture_creation_excluded_from_timing": true
+    },
+    "cpu_model": "Intel(R) Core(TM) Ultra 9 285K",
+    "available_cpu_count": 24,
+    "trials": [
+      {
+        "workers": 1,
+        "threads_per_worker": 1,
+        "wall_seconds_including_startup_hash_write_shutdown": 14.421555418521166,
+        "frames_per_second_including_startup": 13.313404444115662
+      },
+      {
+        "workers": 4,
+        "threads_per_worker": 1,
+        "wall_seconds_including_startup_hash_write_shutdown": 4.653903692960739,
+        "frames_per_second_including_startup": 41.255688270990554
+      }
+    ],
+    "observed_elapsed_ratio_one_over_four": 3.098808305881896,
+    "verification": {
+      "all_prepared_arrays_exactly_equal": true,
+      "datasets_compared": 36,
+      "elements_compared": 1382976,
+      "scientific_manifests_and_episode_attributes_equal": true
+    },
+    "source_consistency": {
+      "stable_within_each_trial": [
+        true,
+        true
+      ],
+      "same_at_trial_start": true,
+      "changed_files": []
+    },
+    "limitations": [
+      "Synthetic local diagnostic, not real Robomme data or an HPC measurement.",
+      "One sequential trial per worker count, in order 1 then 4; no statistical confidence interval.",
+      "Input fixtures were just written/copied, so filesystem cache effects are present; no cache flush.",
+      "Other local processes may run concurrently and CPU cores can differ in speed.",
+      "Elapsed time includes Python startup, worker creation, raw hashing, conversion, writes, and shutdown.",
+      "Geometry and prepared arrays are compared; file byte layout/timestamps are not required identical.",
+      "This stable-source pair supersedes a preliminary pair that overlapped a preparation_state.py edit; repeat ordering and warm-cache limitations remain."
+    ]
+  },
+  "real_subset": {
+    "artifact": "runs/preparation_real/result.json",
+    "task": "VideoUnmask",
+    "dataset_revision": "a5e4e25ffe8af34f64944f9533d06455ce5f8337",
+    "episodes": 2,
+    "frames": 464,
+    "points": 1024,
+    "workers": 1,
+    "threads_per_worker": 1,
+    "raw_bytes": 14445442112,
+    "raw_sha256": "05a653a8f8232882f82c84057f328e045f4a875ff5cfcf068738c429c6081427",
+    "prepared_bytes": 7095256,
+    "prepare_wall_seconds": 30.269116770476103,
+    "skip_wall_seconds": 4.979210264980793,
+    "raw_hash_seconds_prepare_and_skip": [
+      3.911492194980383,
+      3.5703318882733583
+    ],
+    "download_manifest_verified": false,
+    "archive_verification_performed": false,
+    "integrity_note": "Legacy copied manifest has no extracted-file SHA256; both CLI invocations computed the full current raw digest. No archive/member-integrity verification claim.",
+    "skip_preserved_bytes_and_mtime": true,
+    "original_files_unchanged": true,
+    "all_non_point_arrays_equal_original_256_point_preparation": true,
+    "limitations": [
+      "One existing real task, two episodes only; not a full-data ETA or parallel cluster benchmark",
+      "No training, replay or revision-level alignment decision was performed in this check"
+    ]
+  },
+  "not_run": [
+    "Full-data download or preparation",
+    "HPC execution or Slurm submission",
+    "GPU acceleration (preparation remains on CPU)",
+    "Long training or evaluation"
+  ]
+}

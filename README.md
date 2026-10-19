@@ -158,9 +158,29 @@ Full-data commands are prepared but **were not executed**:
 python -m stmem.data.download --tasks all --dry-run
 # Explicit full transfer, when storage and network are ready:
 python -m stmem.data.download --tasks all
-python -m stmem.data.prepare --episodes 100 --config configs/teacher.yaml
+# Run preprocessing inside a compute allocation, with at least eight CPUs:
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
+  python -u -m stmem.data.prepare --episodes 100 --config configs/teacher.yaml \
+  --workers 8 --threads-per-worker 1 --skip-existing
 python -m stmem.data.alignment --config configs/debug/data.yaml
 ```
+
+Preparation parallelizes independent tasks across CPU worker processes. It does
+not use the GPU. For this cluster's GPU-only queue, the supplied batch template
+requests one GPU allocation with 16 CPUs and starts eight single-threaded workers:
+
+```bash
+mkdir -p hpc/logs
+sbatch hpc/jobs/prepare.sbatch
+```
+
+`--skip-existing` rehashes raw inputs and skips only matching, complete outputs.
+An interrupted task restarts from its beginning; completed matching tasks can be
+reused. Start with four to eight workers and monitor storage throughput before
+increasing concurrency. JSON progress identifies the hashing and conversion
+phases; frame progress includes an estimated remaining conversion time per task.
+Details and resource overrides are in the
+[preparation guide](docs/hpc.md#parallel-data-preparation).
 
 Use the core 1,024-point preprocessing config for the actual experiment. The
 256-point two-episode prepared subset is intentionally incompatible with core

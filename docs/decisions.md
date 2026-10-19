@@ -99,3 +99,29 @@
     Partial-stop saves skip visualization; per-event costs and the final loop
     wall time including diagnostics are logged. See
     [evidence/wandb_scenes.json](evidence/wandb_scenes.json) for measured checks.
+
+13. **CPU task-parallel preparation (19 October follow-up).** Spawn one process
+    per active task, each opening its own HDF5 files; cap concurrency by requested
+    workers, selected task count and the CPU allocation/affinity. Default to one
+    Torch/native-library thread per worker. A GPU-only queue may allocate one GPU,
+    but preprocessing remains on CPU. Frame geometry, numeric chronology, causal
+    action masks and unresolved alignment metadata are unchanged. No episode
+    sharding, shared HDF5 writer or CUDA context is introduced.
+
+    A completed task is published by atomic replacement under an exclusive
+    per-output OS lock. Workers stop on parent interruption or peer failure;
+    cancellation is deferred across child startup so every live writer can be
+    joined. Readers exclude partial files. Optional reuse freshly hashes raw
+    inputs and checks the exact configuration, episode set, array layouts and
+    chronology metadata. It does not scan all prepared payloads for bit rot;
+    interrupted tasks restart from their beginning. Legacy download manifests
+    without extracted-file digests remain usable, with an explicit unverified
+    download-manifest integrity event; fresh hashes alone do not establish archive
+    membership. Current download manifests retain their SHA256 integrity check.
+
+    The parent emits serialized JSON progress, including hashing and per-task
+    conversion ETA. Local synthetic parallel parity/timing and a bounded real
+    two-episode check are recorded in
+    [evidence/parallel_preparation.json](evidence/parallel_preparation.json).
+    These are not full-data/HPC throughput estimates. No data download, long run
+    or Slurm submission was performed for this follow-up.

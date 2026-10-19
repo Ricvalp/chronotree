@@ -37,6 +37,115 @@ predecessor solely to bound concurrency. The bound includes CPU selection/report
 jobs and GPU jobs. No automatic submission retry or self-resubmission occurs.
 Submitted job IDs are persisted after every successful `sbatch --parsable` call.
 
+## Parallel data preparation
+
+Run full preparation in a compute allocation. It uses CPU point-cloud geometry,
+hashing, HDF5 reads and compression; the GPU does not accelerate this path. Tasks
+can be prepared independently by spawned worker processes, each opening its own
+raw HDF5 file and writing a separate prepared task file. At most 16 tasks can run
+concurrently. This is preprocessing parallelism, not distributed model training.
+The number of GPUs in `STMEM_PROFILE` does not set the preparation worker count.
+
+`hpc/jobs/prepare.sbatch` is supplied for the GPU-only `gpuq` queue. Its literal
+defaults request one node, one Slurm task, one GPU, 16 CPUs, 64 GB RAM and a 24-hour
+time limit. Eight single-threaded CPU workers leave room within that CPU allocation
+for the parent process and I/O. The memory request provides headroom for several
+Torch processes and their frame-processing buffers; it is not a measured peak or
+an assurance for every task. The allocated GPU remains unused and still counts
+toward the site's allocation charges.
+
+From the repository root, after configuring `hpc/site.env` and staging the raw
+archives, extracted HDF5 files and download integrity manifests:
+
+```bash
+mkdir -p hpc/logs
+# This command submits an allocation:
+sbatch hpc/jobs/prepare.sbatch
+```
+
+The template sources `hpc/jobs/common.sh` to load the site paths, Python executable
+and optional activation file. It launches Python through `srun` directly; the
+training stop-file wrapper is not used. Logs go to
+`hpc/logs/stmem_prepare_JOBID.out` and `.err`. It prepares 100 episodes per task
+with `configs/teacher.yaml` and enables `--skip-existing`.
+
+`STMEM_PREP_WORKERS` overrides the worker count, subject to the allocated CPU count
+and the 16-task maximum. Set it in `hpc/site.env` or the submission environment;
+an assignment in the site file takes precedence. Without an override, the default
+is the smallest of eight, the allocated CPU count and 16. More workers compete
+for shared storage bandwidth, so start with four to eight and measure progress.
+Eight workers do not imply an eightfold speedup. Each worker uses one Torch thread,
+and the template sets `OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS`
+and `NUMEXPR_NUM_THREADS` to one before Python starts.
+
+The batch defaults do not change when shell code reads `STMEM_MEM` or
+`STMEM_WALLTIME`. Override resources explicitly, within the site's limits:
+
+```bash
+# Example for a site that permits a 48-hour allocation:
+STMEM_PREP_WORKERS=4 sbatch --cpus-per-task=16 --mem=64G --time=48:00:00 \
+  hpc/jobs/prepare.sbatch
+```
+
+Supply `--account`, `--qos`, `--partition` or a typed `--gres` to `sbatch` when
+required by the site. A CPU partition, if available, can avoid reserving an unused
+GPU; this particular template is intended for the supplied GPU-only queue. Use
+`--tasks VideoUnmask` after the script name for a selected task. `STMEM_CONFIG`
+can choose another preparation configuration; the worker controls remain fixed
+by the template so optional CLI arguments cannot oversubscribe the allocation.
+
+If already inside a compute allocation with at least eight CPUs, no second batch
+job is needed:
+
+```bash
+source hpc/jobs/common.sh
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
+"$STMEM_PYTHON" -u -m stmem.data.prepare --config configs/teacher.yaml --episodes 100 \
+  --workers 8 --threads-per-worker 1 --skip-existing
+```
+
+Use fewer workers for a smaller CPU allocation. Outside this template the CLI
+defaults to one worker and one thread per worker. `--workers` parallelizes tasks,
+so selecting one task still runs only one worker for that task. Preparation
+continues to use the configured point count and the complete causal observation
+data; worker count does not reduce data or change preprocessing geometry.
+
+To move a foreground preparation process off a login node, interrupt it once
+with Ctrl-C and wait for it to exit before starting another process on the same
+outputs. Raw data and finalized task files remain available. A current
+`<task>.partial.h5` is not a completed task and cannot resume at its last episode;
+that task restarts from the beginning. With `--skip-existing`, completed files are
+reused only after checking a fresh raw-file hash, the preprocessing configuration,
+the exact episode count and the prepared layout. Merely finding an output file is
+insufficient. The 256-point/two-episode debug subset therefore does not satisfy a
+1,024-point/100-episode request. Keep interrupted-task files out of training until
+preparation completes, and do not run independent writers on the same task output.
+
+Every task freshly hashes the raw file, even when checking a completed output.
+The `raw_integrity` record reports whether that digest was also checked against
+the download manifest. Current downloads include the extracted-file checksum;
+legacy manifests without it remain supported and explicitly report
+`download_manifest_verified: false`. Recording a new digest alone does not prove
+archive membership. Reuse checks compare the fresh digest with the completed
+file's embedded manifest and inspect metadata/layout and small chronology arrays;
+they do not checksum every prepared point-cloud/action chunk for storage corruption.
+
+After checking the input paths and manifests, the parent immediately prints a
+`preparation_started` JSON record with the active worker count and CPU budget.
+Each worker reports `task_started` before hashing its raw file. Hashing and frame
+conversion report progress approximately every ten seconds while processing
+continues, with additional records at hash and episode completion. Only the
+parent prints these JSON records, so concurrent workers do not interleave them.
+
+Frame records include `frames_done`, `frames_total`, `frames_per_second` and
+`eta_seconds`. This ETA estimates the remaining frame conversion for that task
+from its average rate so far; it excludes hashing and queued tasks and is not a
+whole-run estimate. Episode lengths and shared filesystem load vary, so early
+estimates can change substantially. Use these records and each task's final
+`prepared/<task>.manifest.json` to assess throughput. The final
+`preparation_complete` record reports total elapsed time and the number of
+verified files skipped; no measured full-data preparation ETA is claimed.
+
 ## Weights & Biases tracking
 
 Tracking is enabled in `configs/base.yaml`, including the inherited debug configs.

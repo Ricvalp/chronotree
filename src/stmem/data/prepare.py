@@ -3,16 +3,25 @@
 from __future__ import annotations
 import argparse
 import json
+import multiprocessing as mp
+from multiprocessing.connection import wait
 import os
 from pathlib import Path
 import re
+import signal
 import time
 import h5py
 import numpy as np
 from .download import TASKS, REVISION, sha256
 from .pointcloud import DEFAULT_CROP, CALIBRATION_VERSION, rgbd_to_points, proprioception
+from .preparation_state import preparation_lock, verify_prepared
+from stmem.training.checkpoints import atomic_json
 
 FORMAT_VERSION = "canonical_v1"
+
+
+def _print_progress(record):
+    print(json.dumps(record, allow_nan=False), flush=True)
 
 
 def numeric_keys(group, prefix):
@@ -52,13 +61,45 @@ def prepare_task(
     max_depth_m=4.0,
     dataset_revision=REVISION,
     expected_raw_sha256=None,
+    skip_existing=False,
+    progress=None,
 ):
+    """Prepare one independently opened task file; never change alignment rules.
+
+    CLI parallelism lives outside this function. A task has exactly one writer,
+    and its previous completed file survives any failure before atomic replace.
+    """
+    raw_path, output = Path(raw_path), Path(output)
     started = time.monotonic()
-    raw_hash = sha256(raw_path)
+    progress = progress or _print_progress
+
+    def emit(event, **values):
+        progress({"event": event, "task": task, "pid": os.getpid(), **values})
+
+    raw_bytes = raw_path.stat().st_size
+    emit("task_started", phase="hashing", raw_bytes=raw_bytes)
+    last_hash_progress = started
+
+    def hash_progress(processed):
+        nonlocal last_hash_progress
+        now = time.monotonic()
+        if now - last_hash_progress >= 10 or processed == raw_bytes:
+            emit("hash_progress", bytes_done=processed, bytes_total=raw_bytes, elapsed_seconds=now - started)
+            last_hash_progress = now
+
+    raw_hash = sha256(raw_path, progress=hash_progress)
     if expected_raw_sha256 is not None and raw_hash != expected_raw_sha256:
         raise ValueError(f"Extracted HDF5 failed its download-manifest SHA256: {raw_path}")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_suffix(".partial.h5")
+    emit(
+        "raw_integrity",
+        sha256=raw_hash,
+        download_manifest_verified=expected_raw_sha256 is not None,
+        message=(
+            "Extracted file matches the download-manifest SHA256"
+            if expected_raw_sha256 is not None
+            else "Legacy manifest has no extracted-file SHA256; current raw digest recorded for provenance"
+        ),
+    )
     report = {
         "format": FORMAT_VERSION,
         "task": task,
@@ -76,10 +117,70 @@ def prepare_task(
         "alignment": "unresolved",
         "episodes": [],
     }
-    with h5py.File(raw_path, "r") as src, h5py.File(temporary, "w") as dst:
+    with preparation_lock(output), h5py.File(raw_path, "r") as src:
         keys = numeric_keys(src, "episode_")
         if episodes is not None:
+            if len(keys) < episodes:
+                raise ValueError(f"{task}: requested {episodes} episodes, found only {len(keys)}")
             keys = keys[:episodes]
+        if not keys:
+            raise ValueError(f"{task}: no raw episodes")
+        layout = {key: len(numeric_keys(src[key], "timestep_")) for key in keys}
+        if not all(layout.values()):
+            raise ValueError(f"{task}: empty raw episode")
+        if skip_existing:
+            existing = verify_prepared(output, report, layout)
+            if existing is not None:
+                sidecar = output.with_suffix(".manifest.json")
+                current_output = {
+                    "output": str(output.resolve()),
+                    "prepared_bytes": output.stat().st_size,
+                }
+                expected_sidecar = {**existing, **current_output}
+                try:
+                    saved = json.loads(sidecar.read_text())
+                    matches = all(saved.get(key) == value for key, value in expected_sidecar.items())
+                except (OSError, ValueError, AttributeError):
+                    matches = False
+                if not matches:
+                    atomic_json(expected_sidecar, sidecar)
+                return {
+                    **existing,
+                    "skipped": True,
+                    "verification_seconds": time.monotonic() - started,
+                    **current_output,
+                }
+        emit(
+            "task_preparing",
+            episodes_total=len(keys),
+            frames_total=sum(layout.values()),
+            rebuilding=output.exists(),
+        )
+        return _write_prepared(src, output, keys, report, layout, started, emit)
+
+
+def _write_prepared(src, output, keys, report, layout, started, emit):
+    task, points, crop, voxel_size, max_depth_m = (
+        report[key] for key in ("task", "points", "crop", "voxel_size", "max_depth_m")
+    )
+    temporary = output.with_suffix(".partial.h5")
+    processed_frames = 0
+    total_frames = sum(layout.values())
+    processing_started = last_progress = time.monotonic()
+
+    def frame_progress(event, **values):
+        elapsed = time.monotonic() - processing_started
+        emit(
+            event,
+            frames_done=processed_frames,
+            frames_total=total_frames,
+            frames_per_second=processed_frames / max(elapsed, 1e-9),
+            eta_seconds=elapsed * (total_frames - processed_frames) / max(processed_frames, 1),
+            elapsed_seconds=time.monotonic() - started,
+            **values,
+        )
+
+    with h5py.File(temporary, "w") as dst:
         for key in keys:
             raw = src[key]
             setup = raw["setup"]
@@ -164,6 +265,10 @@ def prepare_task(
                 source = "conditioning" if demos[i] else "execution"
                 source_indices.append(source_index[source])
                 source_index[source] += 1
+                processed_frames += 1
+                if time.monotonic() - last_progress >= 10:
+                    frame_progress("frame_progress", episode_id=key, frame=i + 1, episode_frames=n)
+                    last_progress = time.monotonic()
             group.create_dataset("source_index", data=source_indices)
             episode_report = {
                 "episode_id": key,
@@ -180,7 +285,12 @@ def prepare_task(
                 "raw_indices_contiguous": all(int(b[9:]) - int(a[9:]) == 1 for a, b in zip(steps, steps[1:])),
             }
             report["episodes"].append(episode_report)
-            print(json.dumps(episode_report), flush=True)
+            frame_progress(
+                "episode_complete",
+                episodes_done=len(report["episodes"]),
+                episodes_total=len(keys),
+                **episode_report,
+            )
         dst.attrs["manifest"] = json.dumps(report)
     temporary.replace(output)
     report.update(
@@ -188,8 +298,210 @@ def prepare_task(
         prepared_bytes=output.stat().st_size,
         output=str(output.resolve()),
     )
-    output.with_suffix(".manifest.json").write_text(json.dumps(report, indent=2))
+    atomic_json(report, output.with_suffix(".manifest.json"))
     return report
+
+
+def _worker(job, threads, connection):
+    """Fresh process and independent HDF5 handles, with parent-owned progress."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    try:
+        import torch
+
+        torch.set_num_threads(threads)
+        torch.set_num_interop_threads(1)
+        result = prepare_task(**job, progress=connection.send)
+        connection.send({"event": "_result", "report": result})
+    except BaseException as exc:
+        # Also detect abrupt death in the parent: OOM/SIGKILL cannot send this.
+        connection.send({"event": "_error", "task": job["task"], "error": f"{type(exc).__name__}: {exc}"})
+        raise
+    finally:
+        connection.close()
+
+
+def _cpu_budget():
+    limits = [len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1]
+    if os.environ.get("SLURM_CPUS_PER_TASK"):
+        value = int(os.environ["SLURM_CPUS_PER_TASK"])
+        if value < 1:
+            raise ValueError("SLURM_CPUS_PER_TASK must be positive")
+        limits.append(value)
+    return min(limits)
+
+
+def run_preparation(jobs, *, workers=1, threads_per_worker=1):
+    """Bound task concurrency and cancel all child writers on any failed task.
+
+    Per-child pipes avoid a shared Queue becoming unreadable if a worker dies
+    mid-message. No HDF5 handles or point-cloud tensors cross process boundaries.
+    """
+    if not jobs:
+        return []
+    active_count = min(workers, len(jobs))
+    if workers < 1 or threads_per_worker < 1:
+        raise ValueError("workers and threads_per_worker must be positive")
+    if active_count * threads_per_worker > _cpu_budget():
+        raise ValueError(
+            f"{active_count} active workers x {threads_per_worker} threads exceeds "
+            f"the {_cpu_budget()} available/allocated CPUs; reduce --workers or --threads-per-worker"
+        )
+    # Set before spawning: NumPy/BLAS/Torch may initialize at module import.
+    environment = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+    previous = {key: os.environ.get(key) for key in environment}
+    context = mp.get_context("spawn")
+    active, reports = {}, []
+    remaining = iter(jobs)
+    pending = True
+    started = time.monotonic()
+    cancellation = None
+    old_handlers = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+
+    def interrupted(signum, _frame):
+        # Raising inside Process.start() could leave a live child unregistered.
+        # Defer cancellation until the parent can account for every writer.
+        nonlocal cancellation
+        cancellation = signum
+
+    def check_interruption():
+        if cancellation is not None:
+            raise SystemExit(128 + cancellation)
+
+    def consume(state):
+        connection = state["connection"]
+        if state["eof"] or not connection.poll():
+            return
+        try:
+            event = connection.recv()
+        except EOFError:
+            state["eof"] = True
+            return
+        if event["event"] == "_error":
+            raise RuntimeError(f"Preparation failed for {event['task']}: {event['error']}")
+        if event["event"] == "_result":
+            state["report"] = event["report"]
+        else:
+            _print_progress(event)
+
+    try:
+        for signum in old_handlers:
+            signal.signal(signum, interrupted)
+        for key in environment:
+            os.environ[key] = str(threads_per_worker)
+        _print_progress(
+            {
+                "event": "preparation_started",
+                "tasks": len(jobs),
+                "workers": active_count,
+                "threads_per_worker": threads_per_worker,
+                "cpu_budget": _cpu_budget(),
+            }
+        )
+        while active or pending:
+            check_interruption()
+            while pending and len(active) < active_count:
+                check_interruption()
+                try:
+                    job = next(remaining)
+                except StopIteration:
+                    pending = False
+                    break
+                receive, send = context.Pipe(duplex=False)
+                process = context.Process(target=_worker, args=(job, threads_per_worker, send))
+                try:
+                    process.start()
+                except BaseException:
+                    receive.close()
+                    process.close()
+                    raise
+                finally:
+                    send.close()
+                active[process.pid] = {
+                    "process": process,
+                    "connection": receive,
+                    "task": job["task"],
+                    "report": None,
+                    "eof": False,
+                }
+                check_interruption()
+            if not active:
+                break
+            wait(
+                [item["connection"] for item in active.values() if not item["eof"]]
+                + [item["process"].sentinel for item in active.values()],
+                timeout=0.2,
+            )
+            check_interruption()
+            for pid, state in list(active.items()):
+                while not state["eof"] and state["connection"].poll():
+                    consume(state)
+                    check_interruption()
+                process = state["process"]
+                if process.exitcode is None:
+                    continue
+                process.join()
+                # The final result can arrive between poll() and exitcode.
+                # Once the child exits, drain its pipe before checking success.
+                while not state["eof"] and state["connection"].poll():
+                    consume(state)
+                    check_interruption()
+                if process.exitcode or state["report"] is None:
+                    raise RuntimeError(
+                        f"Preparation worker for {state['task']} exited with code {process.exitcode} "
+                        "without completing its task"
+                    )
+                report = state["report"]
+                reports.append(report)
+                _print_progress(
+                    {
+                        "event": "task_skipped" if report.get("skipped") else "task_complete",
+                        "task": state["task"],
+                        "pid": pid,
+                        "episodes": len(report["episodes"]),
+                        "output": report["output"],
+                        "prepared_bytes": report["prepared_bytes"],
+                        "elapsed_seconds": report.get("verification_seconds", report.get("elapsed_seconds")),
+                        "tasks_done": len(reports),
+                        "tasks_total": len(jobs),
+                    }
+                )
+                state["connection"].close()
+                process.close()
+                del active[pid]
+        check_interruption()
+        _print_progress(
+            {
+                "event": "preparation_complete",
+                "tasks": len(reports),
+                "skipped": sum(bool(report.get("skipped")) for report in reports),
+                "elapsed_seconds": time.monotonic() - started,
+            }
+        )
+        return reports
+    finally:
+        # Keep deferred signal handlers installed until every child has exited.
+        try:
+            for state in active.values():
+                process = state["process"]
+                if process.is_alive():
+                    process.terminate()
+            for state in active.values():
+                process = state["process"]
+                process.join(timeout=5)
+                if process.is_alive():
+                    process.kill()
+                    process.join()
+                state["connection"].close()
+                process.close()
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            for signum, handler in old_handlers.items():
+                signal.signal(signum, handler)
 
 
 def main(argv=None):
@@ -205,9 +517,22 @@ def main(argv=None):
     p.add_argument("--data-root", default=os.getenv("STMEM_DATA_ROOT", "data"))
     p.add_argument("--points", type=int)
     p.add_argument("--voxel-size", type=float)
+    p.add_argument(
+        "--workers", type=int, default=1, help="Concurrent task files (default: 1; at most selected tasks)"
+    )
+    p.add_argument(
+        "--threads-per-worker", type=int, default=1, help="CPU threads per task worker (default: 1)"
+    )
+    p.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Reuse completed files only after raw checksum and layout/config verification",
+    )
     args = p.parse_args(argv)
     if args.episodes is not None and args.episodes < 1:
         p.error("--episodes must be positive")
+    if args.workers < 1 or args.threads_per_worker < 1:
+        p.error("--workers and --threads-per-worker must be positive")
     config = {}
     if args.config:
         from stmem.config import load_config
@@ -219,10 +544,19 @@ def main(argv=None):
             args.episodes = config["data"]["episodes_per_task"]
     if not args.tasks:
         p.error("--tasks or --config is required")
+    if len(set(args.tasks)) != len(args.tasks):
+        p.error("Duplicate task names would create concurrent writers; each task must appear once")
+    if any(task not in TASKS for task in args.tasks):
+        p.error("Configuration contains unknown tasks")
+    if args.episodes is not None and args.episodes < 1:
+        p.error("--episodes/config episodes_per_task must be positive")
     geometry = config.get("geometry", {})
-    points = args.points or config.get("model", {}).get("points", 1024)
+    points = args.points if args.points is not None else config.get("model", {}).get("points", 1024)
     voxel_size = args.voxel_size if args.voxel_size is not None else geometry.get("voxel_size", 0.005)
     root = Path(args.data_root)
+    if points < 1:
+        p.error("--points must be positive")
+    jobs = []
     for task in args.tasks:
         candidates = list((root / "raw").rglob(f"record_dataset_{task}.h5"))
         if len(candidates) != 1:
@@ -236,29 +570,41 @@ def main(argv=None):
         revision = download_manifest["revision"]
         expected_raw_sha256 = next(
             (
-                member["sha256"]
+                member.get("sha256")
                 for member in download_manifest.get("members", [])
-                if Path(member["path"]).name == candidates[0].name and member.get("sha256")
+                if Path(member["path"]).name == candidates[0].name
             ),
             None,
         )
-        print(
-            json.dumps(
-                prepare_task(
-                    candidates[0],
-                    root / "prepared" / f"{task}.h5",
-                    task,
-                    args.episodes,
-                    points=points,
-                    voxel_size=voxel_size,
-                    crop=geometry.get("crop", DEFAULT_CROP),
-                    max_depth_m=geometry.get("max_depth", 4.0),
-                    dataset_revision=revision,
-                    expected_raw_sha256=expected_raw_sha256,
-                ),
-                indent=2,
+        if expected_raw_sha256 is not None and (
+            not isinstance(expected_raw_sha256, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_raw_sha256)
+        ):
+            raise ValueError(f"Invalid extracted-file SHA256 in {manifest_path}; reverify the task archive")
+        jobs.append(
+            dict(
+                raw_path=candidates[0],
+                output=root / "prepared" / f"{task}.h5",
+                task=task,
+                episodes=args.episodes,
+                points=points,
+                voxel_size=voxel_size,
+                crop=geometry.get("crop", DEFAULT_CROP),
+                max_depth_m=geometry.get("max_depth", 4.0),
+                dataset_revision=revision,
+                expected_raw_sha256=expected_raw_sha256.lower() if expected_raw_sha256 is not None else None,
+                skip_existing=args.skip_existing,
             )
         )
+    # Preflight all paths/manifests before starting any task. This command does
+    # not download missing data or submit any scheduler job.
+    try:
+        return run_preparation(jobs, workers=args.workers, threads_per_worker=args.threads_per_worker)
+    except (KeyboardInterrupt, SystemExit):
+        _print_progress(
+            {"event": "preparation_interrupted", "message": "Workers stopped; completed task files retained"}
+        )
+        raise
 
 
 if __name__ == "__main__":
