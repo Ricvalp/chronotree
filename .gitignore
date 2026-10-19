@@ -11,6 +11,7 @@ wandb/
 /assets/
 third_party/checkouts/
 hpc/site.env
+hpc/site_*.env
 hpc/generated/
 hpc/logs/*
 !hpc/logs/.gitkeep

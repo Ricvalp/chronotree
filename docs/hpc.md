@@ -37,6 +37,50 @@ predecessor solely to bound concurrency. The bound includes CPU selection/report
 jobs and GPU jobs. No automatic submission retry or self-resubmission occurs.
 Submitted job IDs are persisted after every successful `sbatch --parsable` call.
 
+## Directory layout
+
+Keep manually maintained cluster settings directly under `hpc/`. The default is
+`hpc/site.env`; optional local variants such as `hpc/site_4gpu.env` are selected
+with `--site`. Both the default file and `hpc/site_*.env` variants are ignored by
+Git. `hpc/site.env.example` remains the tracked template.
+
+```text
+hpc/
+  site.env.example              tracked settings template
+  site.env                      local default settings
+  site_4gpu.env                  optional local four-GPU settings
+  plan.py                       planner
+  jobs/                         maintained job templates
+  generated/
+    core_seed0_validation_h200_1gpu/
+      plan.json                 rendered commands, resources and dependencies
+      configs/                  generated stage YAML files
+      jobs/                     generated submit-ready .sbatch files
+      submitted.json            job IDs and signatures, created on submission
+      stops/                    allocation-specific stop requests
+    core_seed0_validation_h200_4gpu/
+      ...                       same structure for the four-GPU plan
+  logs/                         Slurm stdout/stderr, named with job IDs
+```
+
+`hpc/generated/` holds rendered plans and their execution state. It should not
+hold manually maintained site settings. Dry-run and submission regenerate
+`plan.json`, stage configurations and scripts, so edit their source configs or
+site settings instead of editing the generated files. Preserve a plan directory
+while its jobs are active or you need its submission/accounting history; in
+particular, `submitted.json` and stop files are execution state, not source
+configuration. `--output-dir` is an optional override for additional independent
+plans; the default `<plan>_<phase>_<profile>` directories suffice for a one-GPU
+versus four-GPU comparison.
+
+Training checkpoints and metrics go under `$STMEM_RUN_ROOT/seed<seed>/<stage>/`;
+W&B files default there too unless a separate W&B directory is configured.
+These training artifacts are separate from `hpc/generated/`. Changing the GPU
+profile creates a different default plan directory but does not change the run
+root. Use a different `STMEM_RUN_ROOT` for an independent comparison to isolate
+its checkpoints, W&B identity and stage markers. Prepared data stays under the
+configured data root.
+
 ## Parallel data preparation
 
 Run full preparation in a compute allocation. It uses CPU point-cloud geometry,
@@ -431,6 +475,32 @@ one GPU and use independent processes. Four replicas do not pool memory; use the
 configured microbatch/accumulation and block checkpointing to address a teacher
 replica OOM. The effective batch is fixed by the scientific config and must remain
 divisible by the world size. Do not alter it silently for throughput.
+
+For a fresh four-GPU comparison alongside the one-GPU run, copy the site settings:
+
+```bash
+cp hpc/site.env hpc/site_4gpu.env
+```
+
+In the copy, set `STMEM_PROFILE=h200_4gpu` and change `STMEM_RUN_ROOT` to an
+absolute shared path for the comparison, for example
+`/hpc/home/phi/rvalperga/chronotree/runs/h200_4gpu`. Keep the existing data paths
+and site-specific resource and W&B settings. Then render:
+
+```bash
+"$STMEM_PYTHON" hpc/plan.py --site hpc/site_4gpu.env \
+  --plan core_seed0 --profile h200_4gpu --only seed0_teacher \
+  --log-every 1 --progress-every-seconds 30 --dry-run
+```
+
+Inspect `hpc/generated/core_seed0_validation_h200_4gpu/plan.json` and its
+`jobs/seed0_teacher.sbatch`, then replace `--dry-run` with `--submit` to launch.
+An existing directory from an earlier dry-run can be reused. If it already
+contains active jobs, keep that live plan intact until the jobs finish or use
+an explicit separate `--output-dir` for another allocation. The comparison starts
+fresh: exact checkpoint resume requires the original GPU count. With effective
+batch 32, four ranks each accumulate eight microbatches of one example per
+update. The global batch and 50,000-update teacher schedule are unchanged.
 
 No downloads run inside these jobs. Stage the locked environment, pinned benchmark
 and simulator, task archives, prepared training data, assets and caches beforehand.
