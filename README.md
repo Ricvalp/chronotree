@@ -56,8 +56,19 @@ in the shell instead. `site.env` is read by the HPC launcher, not local training
 The logger records resolved configuration, source/data/checkpoint provenance,
 training losses, LR, gradient norm, throughput, memory, router diagnostics,
 episode outcomes/errors, planned denominators and evaluation timing/storage.
-Only rank zero logs under DDP. Training uses `training.log_every` (50 updates in
-the core config), plus final/stop metrics; evaluation logs after each episode.
+Only rank zero logs under DDP. Policy training logs startup milestones and the
+first completed optimizer update of each attempt, then `training.log_every`
+(50 updates in the core config), plus final/stop metrics; evaluation logs after
+each episode. Startup builds the decision index and normalization statistics in
+one pass over source/action arrays, without loading point-cloud observations.
+No data re-preparation is needed; see [training startup](docs/hpc.md#training-startup).
+For a slow run, pass `--log-every 1 --progress-every-seconds 30` to `hpc/plan.py`
+or policy training. This logs each completed update to W&B, including
+`train/step_seconds`, and prints a heartbeat every 30 seconds while an update
+is running. Heartbeats also append to the stage's `progress.jsonl`; they report
+the current phase and completed examples without querying CUDA or calling W&B.
+These runtime settings can change on resume without changing the scientific
+configuration. See [diagnosing slow training](docs/hpc.md#diagnosing-slow-training).
 W&B's service handles writes/uploads asynchronously. There are no model watch
 hooks, gradient histograms, automatic checkpoint/video uploads or background
 system polling. Initialization and final flushing occur outside training loops
@@ -84,6 +95,16 @@ Offline attempts produce separate files with the same ID; sync them in attempt
 order, using `wandb sync --append` for subsequent attempts. Keep each attempt's
 `files/media` directory with its `.wandb` file so point clouds and action tables
 can also be uploaded. Detailed setup and commands are in [docs/hpc.md](docs/hpc.md).
+
+## Inspect point clouds and encoder structure
+
+The optional offline HTML inspector shows prepared XYZRGB clouds, the encoder's
+actual FPS centers and weighted space-time pooling edges, and the local trees
+and temporal forest built from the causal history. It also shows the current
+frame separately and marks pending execution blocks. See the
+[visualization guide](docs/visualization.md) for installation, cluster export
+commands and checkpoint-based inspection. Exporting does not change training
+or data loading.
 
 ## Install
 

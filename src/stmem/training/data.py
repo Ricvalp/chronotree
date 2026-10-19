@@ -4,14 +4,23 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 import random
+import time
 import torch
 from stmem.config import digest
+from stmem.data.canonical import valid_decision_indices
 from stmem.data.dataset import EpisodeDataset, synthetic_episode
 from stmem.data.paths import alignment_path
 
 
 class TrainingData:
-    def __init__(self, cfg):
+    def __init__(self, cfg, *, progress=None):
+        started = time.perf_counter()
+
+        def report(phase, **values):
+            if progress is not None:
+                progress({"phase": phase, "elapsed_seconds": time.perf_counter() - started, **values})
+
+        report("catalog_started")
         self.cfg = cfg
         self.tasks = list(cfg["data"]["tasks"])
         self.synthetic = cfg["data"].get("synthetic", False)
@@ -52,22 +61,54 @@ class TrainingData:
                 }
             )
         self.candidates = {}
-        # Inspect source masks once: no samples with only terminal/padding targets.
+        self._action_count = torch.zeros(8, dtype=torch.long)
+        self._action_total = torch.zeros(8, dtype=torch.float64)
+        self._action_squares = torch.zeros(8, dtype=torch.float64)
+        done = 0
+        report("index_started", episodes_done=done, episodes_total=len(self.refs))
+        # One action-only pass builds the index and training normalization stats.
+        # Accumulate in the same task/episode order as the original full reader.
         for task in self.tasks:
             items = []
             for index in self.by_task[task]:
-                episode = self.episode(index)
+                if self.synthetic:
+                    episode = self.episode(index)
+                    execution_length = len(episode.execution)
+                    conditioning_length = len(episode.conditioning)
+                else:
+                    episode = self.dataset.load_episode_actions(self.refs[index])
+                    execution_length = episode.execution_length
+                    conditioning_length = episode.conditioning_length
                 if (
-                    len(episode.execution) > cfg["model"]["max_execution_frames"]
-                    or len(episode.conditioning) > cfg["model"]["max_conditioning_frames"]
+                    execution_length > cfg["model"]["max_execution_frames"]
+                    or conditioning_length > cfg["model"]["max_conditioning_frames"]
                 ):
                     raise ValueError(f"Episode {episode.episode_id} exceeds declared memory length bound")
-                for t in range(0, len(episode), self.stride):
-                    if episode.decision(t, self.horizon).target_valid.any():
-                        items.append((index, t))
+                items.extend(
+                    (index, t)
+                    for t in valid_decision_indices(
+                        episode.action_valid, episode.alignment, horizon=self.horizon, stride=self.stride
+                    )
+                )
+                # Each issued execution command contributes once, independent of
+                # candidate selection, chunk overlaps and partially valid joints.
+                mask = episode.action_valid.bool() & torch.isfinite(episode.actions)
+                actions = episode.actions.double().masked_fill(~mask, 0)
+                self._action_count += mask.sum(0)
+                self._action_total += actions.sum(0)
+                self._action_squares += actions.square().sum(0)
+                done += 1
             if not items:
                 raise ValueError(f"No valid decisions for {task}")
             self.candidates[task] = items
+            report("index_progress", task=task, episodes_done=done, episodes_total=len(self.refs))
+        self.startup_seconds = time.perf_counter() - started
+        report(
+            "ready",
+            episodes_done=done,
+            episodes_total=len(self.refs),
+            decisions=sum(len(items) for items in self.candidates.values()),
+        )
 
     @lru_cache(maxsize=2)
     def episode(self, index):
@@ -109,17 +150,9 @@ class TrainingData:
         return self.decision(ep, time)
 
     def fit_normalizer(self, normalizer):
-        # Streaming sums over actual issued training commands, not overlapped chunks.
-        count = torch.zeros(8, dtype=torch.long)
-        total = torch.zeros(8, dtype=torch.float64)
-        squares = torch.zeros(8, dtype=torch.float64)
-        for i in range(len(self.refs)):
-            ep = self.episode(i)
-            mask = ep.action_valid.bool() & torch.isfinite(ep.actions)
-            a = ep.actions.double().masked_fill(~mask, 0)
-            count += mask.sum(0)
-            total += a.sum(0)
-            squares += a.square().sum(0)
+        # The small sufficient statistics were collected during indexing. No
+        # second dataset pass, observation reads, or episode-LRU churn is needed.
+        count, total, squares = self._action_count, self._action_total, self._action_squares
         mean = total / count.clamp_min(1)
         var = (squares / count.clamp_min(1) - mean.square()).clamp_min(0)
         normalizer.mean.copy_(mean.float())

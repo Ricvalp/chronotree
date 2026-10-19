@@ -1,6 +1,7 @@
 """Tracking must preserve staged router work, resume steps, and label provenance."""
 
 from copy import deepcopy
+import argparse
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from stmem.memory.hierarchy import Archive
 from stmem.memory.records import leaf_record
 from stmem.models.router import LocalRouter
 from stmem.training import gain_labels, routers
+from stmem.training.logging_options import resolve_logging
 
 
 class RecordingTracker:
@@ -168,6 +170,105 @@ def test_partial_router_tracks_stop_and_preserves_exact_resume(tmp_path, tracker
     actual = torch.load(checkpoint, weights_only=False, map_location="cpu")
     for name in expected["model"]:
         torch.testing.assert_close(actual["model"][name], expected["model"][name], rtol=0, atol=0)
+
+
+def _assert_identical_optimization(actual, expected):
+    for name in expected["model"]:
+        torch.testing.assert_close(actual["model"][name], expected["model"][name], rtol=0, atol=0)
+    assert actual["optimizer"]["param_groups"] == expected["optimizer"]["param_groups"]
+    for parameter, state in expected["optimizer"]["state"].items():
+        for key, value in state.items():
+            torch.testing.assert_close(actual["optimizer"]["state"][parameter][key], value, rtol=0, atol=0)
+    assert actual["step"] == expected["step"]
+
+
+def test_router_frequent_scalars_preserve_validation_cadence_and_weights(tmp_path, monkeypatch, trackers):
+    cfg = router_config(tmp_path / "control")
+    cfg["training"].update(steps=5, checkpoint_steps=[5], log_every=3)
+    write_labels(cfg)
+    validation_calls = []
+    original_forward = LocalRouter.forward
+
+    def observed_forward(self, *args, **kwargs):
+        if not self.training:
+            validation_calls.append(True)
+        return original_forward(self, *args, **kwargs)
+
+    monkeypatch.setattr(LocalRouter, "forward", observed_forward)
+    assert routers.train_router(cfg) == 0
+    assert len(validation_calls) == 2
+    control_logs = trackers[-1].logs
+    assert [step for step, _ in control_logs] == [1, 3, 5]
+    expected = torch.load(run_dir(cfg, "router") / "last.pt", weights_only=False, map_location="cpu")
+
+    frequent = deepcopy(cfg)
+    frequent["paths"]["run_root"] = str(tmp_path / "frequent")
+    write_labels(frequent)
+    before = deepcopy(frequent)
+    validation_calls.clear()
+    assert routers.train_router(frequent, log_every=1) == 0
+    assert frequent == before
+    assert len(validation_calls) == 2  # Frequent diagnostics do not rerun the held-out label evaluation.
+    tracker = trackers[-1]
+    assert [step for step, _ in tracker.logs] == [1, 2, 3, 4, 5]
+    assert tracker.options["metadata"]["logging"] == {
+        "log_every": 1,
+        "progress_every_seconds": None,
+        "validation_every": 3,
+    }
+    validation_logs = {step: row for step, row in tracker.logs if "conditional_label_validation_loss" in row}
+    assert set(validation_logs) == {3, 5}
+    for step, row in control_logs:
+        if step in validation_logs:
+            for key in row:
+                if key.startswith("validation_") or key == "conditional_label_validation_loss":
+                    assert row[key] == validation_logs[step][key]
+    actual = torch.load(run_dir(frequent, "router") / "last.pt", weights_only=False, map_location="cpu")
+    _assert_identical_optimization(actual, expected)
+    assert actual["config"] == before
+
+
+def test_router_runtime_logging_override_can_change_on_exact_resume(tmp_path, trackers):
+    cfg = router_config(tmp_path / "stopped")
+    cfg["training"].update(steps=5, checkpoint_steps=[5], log_every=3)
+    write_labels(cfg)
+    marker = tmp_path / "stop"
+    marker.touch()
+    assert routers.train_router(cfg, stop_file=marker) == 75
+    checkpoint = run_dir(cfg, "router") / "last.pt"
+    marker.unlink()
+    assert routers.train_router(cfg, resume=checkpoint, log_every=1) == 0
+    assert [step for step, _ in trackers[-1].logs] == [2, 3, 4, 5]
+    assert trackers[-1].options["metadata"]["logging"]["log_every"] == 1
+
+    control = deepcopy(cfg)
+    control["paths"]["run_root"] = str(tmp_path / "control")
+    write_labels(control)
+    assert routers.train_router(control) == 0
+    expected = torch.load(run_dir(control, "router") / "last.pt", weights_only=False, map_location="cpu")
+    actual = torch.load(checkpoint, weights_only=False, map_location="cpu")
+    _assert_identical_optimization(actual, expected)
+    assert actual["config"]["training"] == cfg["training"]
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "1.5", "no"])
+def test_runtime_logging_rejects_invalid_update_interval(value):
+    with pytest.raises(argparse.ArgumentTypeError, match="positive integer"):
+        resolve_logging({"training": {"log_every": 50}}, log_every=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, True, float("nan"), float("inf"), "no"])
+def test_runtime_logging_rejects_invalid_progress_interval(value):
+    with pytest.raises(argparse.ArgumentTypeError, match="finite positive"):
+        resolve_logging({"training": {"log_every": 50}}, progress_every_seconds=value)
+
+
+def test_runtime_logging_resolution_preserves_scientific_configuration():
+    cfg = {"training": {"log_every": 50}}
+    before = deepcopy(cfg)
+    assert resolve_logging(cfg) == {"log_every": 50, "progress_every_seconds": None}
+    assert resolve_logging(cfg, "1", "0.5") == {"log_every": 1, "progress_every_seconds": 0.5}
+    assert cfg == before
 
 
 def test_ranking_ignores_ties_and_never_compares_different_label_shards():

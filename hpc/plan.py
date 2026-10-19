@@ -7,6 +7,7 @@ import argparse
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,48 @@ PROFILES = {"a5000_debug": 1, "h200_1gpu": 1, "h200_4gpu": 4, "b200_1gpu": 1, "b
 # Only nonsecret W&B settings belong in rendered scripts or site.env. Credentials
 # remain in the account's W&B login store or its external runtime environment.
 WANDB_SITE_VARIABLES = frozenset({"WANDB_MODE", "WANDB_PROJECT", "WANDB_ENTITY", "WANDB_DIR"})
+
+
+def positive_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a positive integer") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def positive_seconds(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a finite positive number of seconds") from error
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a finite positive number of seconds")
+    return parsed
+
+
+def scientific_training_command(command: list[str]) -> list[str]:
+    """Remove only validated runtime logging flag/value pairs from identity."""
+    if command[1:3] != ["-m", "stmem.train"]:
+        return command
+    validators = {"--log-every": positive_integer, "--progress-every-seconds": positive_seconds}
+    result = []
+    index = 0
+    while index < len(command):
+        validator = validators.get(command[index])
+        if validator is not None and index + 1 < len(command):
+            try:
+                validator(command[index + 1])
+            except argparse.ArgumentTypeError:
+                pass
+            else:
+                index += 2
+                continue
+        result.append(command[index])
+        index += 1
+    return result
 
 
 def sha256(path: Path) -> str:
@@ -130,6 +173,8 @@ def build_jobs(
     phase: str,
     walltime: str,
     eval_walltime: str,
+    log_every: int | None = None,
+    progress_every_seconds: float | None = None,
 ) -> list[Job]:
     jobs: list[Job] = []
     gpu_count = PROFILES[profile]
@@ -166,6 +211,13 @@ def build_jobs(
     ) -> str:
         name = f"seed{seed}_{short}"
         commands = command if command and isinstance(command[0], list) else [command]
+        if stage in ("teacher", "compact", "perceiver", "router"):
+            commands = [list(item) for item in commands]
+            for item in commands:
+                if log_every is not None:
+                    item += ["--log-every", str(log_every)]
+                if progress_every_seconds is not None and stage != "router":
+                    item += ["--progress-every-seconds", str(progress_every_seconds)]
         jobs.append(
             Job(
                 name=name,
@@ -502,7 +554,7 @@ def render_job(
             # Validate inheritance for cycles, then hash the actual merged content.
             config_hashes(Path(command[index]))
             normalized[index] = json.dumps(resolved_config(Path(command[index])), sort_keys=True)
-        signature["commands"].append(normalized)
+        signature["commands"].append(scientific_training_command(normalized))
     signature["data_roots"] = {key: site.get(key) for key in ("STMEM_DATA_ROOT", "STMEM_CACHE_ROOT")}
     signature["source_sha256"] = source_hash(repo)
     job.signature = hashlib.sha256(json.dumps(signature, sort_keys=True).encode()).hexdigest()
@@ -665,6 +717,16 @@ def main() -> None:
     parser.add_argument("--freeze-manifest", type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
+        "--log-every",
+        type=positive_integer,
+        help="Runtime training metric interval in optimizer updates; leaves scientific config unchanged",
+    )
+    parser.add_argument(
+        "--progress-every-seconds",
+        type=positive_seconds,
+        help="Runtime policy accumulation progress interval; not passed to router training",
+    )
+    parser.add_argument(
         "--only", nargs="+", help="Stage categories or exact job names, without rerunning ancestors"
     )
     parser.add_argument("--output-dir", type=Path)
@@ -714,6 +776,8 @@ def main() -> None:
         phase=args.phase,
         walltime=site.get("STMEM_WALLTIME", "30:00:00"),
         eval_walltime=site.get("STMEM_EVAL_WALLTIME", "06:00:00"),
+        log_every=args.log_every,
+        progress_every_seconds=args.progress_every_seconds,
     )
     # Configuration provenance contains bounded label totals explicitly.
     for seed in manifest["seeds"]:

@@ -228,6 +228,119 @@ The installed `uv run wandb sync --help` and W&B's
 describe the upload command. No login, online upload or sync is performed
 automatically by the planner.
 
+### Training startup
+
+Teacher, compact and Perceiver startup reads episode headers and the small
+`source`, `actions`, and `action_valid` arrays. One pass builds the deterministic
+decision index and gathers action-normalization counts/sums/squared sums. The
+normalizer consumes those statistics without a second data scan. Point clouds,
+point-validity arrays and proprioception payloads are loaded only when a training
+example is requested. Their shapes and validity dtypes are still checked from
+HDF5 headers during startup; alignment, preprocessing, episode-count and memory
+length checks remain mandatory. The prepared file format is unchanged.
+
+This removes the previous two full-episode startup passes. It does not preload
+the complete dataset or change per-example loading during training. Every launch
+still performs the small action/header scan, including resume; no persistent
+index cache can go stale. The local two-episode measurement and exact parity
+checks are in [the startup evidence](evidence/training_startup.json); cluster
+filesystem timing still needs to be measured on the full dataset.
+
+Rank zero emits flushed JSON events with `event: training_startup`, including
+catalog start, per-task index progress, normalization, and `training_ready`.
+W&B summaries show `startup/phase`, episode progress and elapsed time. Once the
+checkpoint position is known, startup durations are logged at that optimizer
+step (zero for a fresh run). `startup/data_seconds` includes gathering the
+normalization statistics; `startup/normalizer_seconds` measures only applying
+them to the model. `startup/total_seconds` includes data/model/device setup and
+resume loading, but excludes the earlier W&B initialization.
+
+Policy loss/speed/memory metrics are emitted after the first completed optimizer
+update of each launch, then at the configured cadence (every 50 updates by
+default), final completion and a requested partial stop. This introduces no
+per-example W&B calls or extra point-cloud previews.
+
+To use the fix, copy the updated source to the cluster checkout before the next
+launch. Existing prepared data, configuration, normalization and checkpoints
+remain compatible. A running process does not pick up the optimization; its
+already-paid initialization time cannot be recovered. After an existing job has
+checkpointed and exited, inspect a resume plan with:
+
+```bash
+"$STMEM_PYTHON" hpc/plan.py --plan core_seed0 --profile h200_1gpu \
+  --only seed0_teacher --resume --dry-run
+```
+
+Use the same site file/run root as the original job. Replace `--dry-run` with
+`--submit` when launching that resumed job. Do not submit a second writer into
+the same teacher run directory while its original allocation is active.
+
+### Diagnosing slow training
+
+Both the planner and `python -m stmem.train` accept runtime logging overrides:
+
+```bash
+"$STMEM_PYTHON" hpc/plan.py --plan core_seed0 --profile h200_1gpu \
+  --only seed0_teacher --resume \
+  --log-every 1 --progress-every-seconds 30 --dry-run
+```
+
+`--log-every 1` sends scalar metrics after every completed optimizer update.
+For policies, `train/step_seconds` measures the latest update: sample loading,
+history encoding, forward/backward passes, optimizer work and existing control
+synchronization. It excludes checkpoint writes, metric reporting and point-cloud
+diagnostics. `train/data_loading_seconds_rank` measures the reporting rank's
+`sample_position` calls within that update; frozen-cache reads are not included
+in this narrower counter. The cumulative `train/examples_per_second` includes
+overhead from previous checkpoints and diagnostics. Under DDP, per-update timing
+and heartbeat fields describe rank zero, not a reduction of all ranks' timings.
+
+`--progress-every-seconds 30` enables a small background thread that writes a
+flushed JSON heartbeat to stdout and `<stage>/progress.jsonl` even while the main
+thread is inside a long operation. It reports `phase` (for example,
+`loading_sample`, `encoding_history`, `forward`, `backward` or `checkpoint`),
+`optimizer_steps_completed`, the update in progress, completed examples on this
+rank, and elapsed phase/update time. Available task, episode and history lengths
+identify the current example. With one GPU and effective batch 32, a full update
+processes 32 examples sequentially; seeing `examples_completed_rank: 5` means
+five of those examples have finished their backward pass.
+
+Heartbeat timings describe where the host is working or waiting; they are not
+synchronized CUDA kernel timings. Heartbeats make no tensor reads, CUDA calls,
+collectives, RNG operations or W&B calls. They do small CPU/file writes, so their
+overhead is not literally zero. W&B receives completed-update metrics through
+the main thread; a heartbeat does not invent a completed step or partial loss.
+Watch ongoing work with:
+
+```bash
+tail -f "$STMEM_RUN_ROOT/seed0/teacher/progress.jsonl"
+```
+
+Without flags, scalar cadence comes from `training.log_every` and periodic
+heartbeats are disabled. Both intervals must be positive (seconds may be
+fractional). Effective settings are recorded separately in the manifest,
+checkpoint and W&B metadata; generated scientific YAML and checkpoint provenance
+are unchanged. Router training supports `--log-every` but preserves its original
+full-validation cadence. The planner passes heartbeats only to teacher, compact
+and Perceiver jobs.
+
+Existing processes cannot pick up these flags. To preserve progress from a
+running generated job, create its configured `STMEM_STOP_FILE`. For example,
+job 58082 in the original one-GPU teacher plan uses:
+
+```bash
+touch hpc/generated/core_seed0_validation_h200_1gpu/stops/seed0_teacher_58082.stop
+```
+
+The request takes effect at the next completed optimizer update, when the job
+writes `last.pt` and exits with the intentional partial-run code 75. It can take
+time if the current update is slow. Wait for the job to exit and verify that
+`$STMEM_RUN_ROOT/seed0/teacher/last.pt` exists. Then copy the updated source to the
+cluster, generate the resume plan above, and replace `--dry-run` with `--submit`
+to launch. Keep the original run root; never run two writers in that directory.
+The planner retains already active allocations when invoked with `--resume`;
+it cannot change their logging options in place. No data re-preparation is needed.
+
 ### Training point clouds and action comparisons
 
 Teacher, compact and Perceiver policy training reuse two fixed early training
@@ -293,6 +406,14 @@ small debug-model measurement, not a full-size/H200 or online-upload estimate.
 The core checkpoint interval is 1,000 updates; measure its actual cost on the
 cluster using the emitted counters. Offline media decoding was tested; live
 dashboard delivery was not tested against an authenticated W&B account.
+
+For manual inspection of the encoder's input geometry, pooling neighborhoods
+and binary memory structure, use the separate
+[offline HTML inspector](visualization.md). It exports a selected prepared
+episode on CPU, supports optional checkpoint bandwidths, and requires only that
+task's final `.h5` file and the verified alignment record. Install the optional
+`visualization` extra while retaining `--extra simulator`; no Slurm submission
+or training change is part of the export.
 
 ## Profiles and distributed training
 

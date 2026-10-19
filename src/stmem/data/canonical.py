@@ -11,6 +11,30 @@ ACTION_DIM = 8
 SOURCES = ("conditioning", "execution")
 
 
+def action_alignment_offset(alignment: str) -> int:
+    if alignment not in {"post_action_v1", "pre_action_v1", "synthetic_post_action_v1"}:
+        raise RuntimeError(
+            "Action alignment unresolved. Run stmem.data.alignment with simulator replay; substantive training is blocked."
+        )
+    return 0 if alignment == "pre_action_v1" else 1
+
+
+def valid_decision_indices(action_valid: Tensor, alignment: str, *, horizon: int, stride: int = 1):
+    """Indices with nonempty supervision, without constructing observations/chunks.
+
+    Episode.decision masks a chunk from its first incomplete joint command on.
+    Consequently, for any positive horizon a usable chunk must start with all
+    seven joint dimensions available; a later command cannot rescue a gap.
+    The optional gripper dimension does not determine command continuity.
+    """
+    offset = action_alignment_offset(alignment)
+    if horizon < 1 or stride < 1:
+        raise IndexError("invalid decision horizon or stride")
+    usable = action_valid[offset:, :7].all(-1)
+    indices = torch.arange(0, len(usable), stride, device=usable.device)
+    return indices[usable[::stride]].tolist()
+
+
 @dataclass
 class Frame:
     points: Tensor
@@ -102,13 +126,9 @@ class Episode:
 
     def decision(self, index: int, horizon: int) -> Decision:
         # Unresolved samples are never made available to a substantive trainer.
-        if self.alignment not in {"post_action_v1", "pre_action_v1", "synthetic_post_action_v1"}:
-            raise RuntimeError(
-                "Action alignment unresolved. Run stmem.data.alignment with simulator replay; substantive training is blocked."
-            )
+        offset = action_alignment_offset(self.alignment)
         if not 0 <= index < len(self.execution) or horizon < 1:
             raise IndexError("invalid decision index or horizon")
-        offset = 0 if self.alignment == "pre_action_v1" else 1
         target = self.actions.new_zeros((horizon, ACTION_DIM))
         valid = torch.zeros_like(target, dtype=torch.bool)
         start = index + offset

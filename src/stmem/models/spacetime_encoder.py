@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import torch
 from torch import Tensor, nn
@@ -18,6 +18,9 @@ from torch.utils.checkpoint import checkpoint
 from stmem.memory.hierarchy import stable_id
 from stmem.memory.records import MemoryRecord, leaf_record
 from .event_encoder import EventEncoder
+
+
+VisualTrace = Callable[[dict[str, Any]], None]
 
 
 @dataclass
@@ -110,7 +113,15 @@ class SpacetimeEncoder(nn.Module):
         valid: Sequence[Tensor] | Tensor,
         times: Tensor | Sequence[float],
         centers_per_frame: int | Sequence[int],
+        *,
+        trace: VisualTrace | None = None,
     ) -> EncodedLeaves:
+        """Pool observed points; an optional observer receives the actual pooling graph.
+
+        Trace tensors are borrowed from this forward, with no hidden features.
+        Observers must detach/copy any values they retain and must not mutate them.
+        The ordinary training path does not collect or transfer trace tensors.
+        """
         if len(points) != len(valid) or len(points) != len(times):
             raise ValueError("Points, masks and source-local timestamps must describe the same frames")
         if isinstance(centers_per_frame, int):
@@ -125,6 +136,8 @@ class SpacetimeEncoder(nn.Module):
             raise ValueError("Use finite chronological source-local timestamps")
         ordered, frame_indices, point_times = [], [], []
         anchors, center_times, center_frames, center_valid = [], [], [], []
+        center_point_indices = [] if trace is not None else None
+        trace_neighbors, trace_masks, trace_weights = [], [], []
         # Selection is discrete and content-independent except observed coordinates/RGB.
         for frame_index, (frame_points, frame_valid, quota) in enumerate(zip(points, valid, quotas)):
             frame_points = frame_points.to(device=device, dtype=torch.float32)
@@ -139,6 +152,13 @@ class SpacetimeEncoder(nn.Module):
             cloud = _lexicographic(frame_points[frame_valid])
             chosen = _fps(cloud.detach(), quota)
             usable = len(chosen)
+            if center_point_indices is not None:
+                offset = sum(len(previous) for previous in ordered)
+                center_point_indices.append(
+                    torch.cat(
+                        [chosen + offset, torch.full((quota - usable,), -1, device=device, dtype=torch.long)]
+                    )
+                )
             ordered.append(cloud)
             frame_indices.append(torch.full((len(cloud),), frame_index, device=device, dtype=torch.long))
             point_times.append(times[frame_index].expand(len(cloud)))
@@ -149,7 +169,7 @@ class SpacetimeEncoder(nn.Module):
         m = sum(quotas)
         if not m:
             z = torch.zeros(0, device=device)
-            return EncodedLeaves(
+            result = EncodedLeaves(
                 torch.zeros(0, self.width, device=device),
                 z.bool(),
                 torch.zeros(0, 3, device=device),
@@ -160,11 +180,29 @@ class SpacetimeEncoder(nn.Module):
                 z,
                 z,
             )
+            if trace is not None:
+                empty_index = torch.empty(0, device=device, dtype=torch.long)
+                self._emit_trace(
+                    trace,
+                    result,
+                    quotas,
+                    times,
+                    torch.cat(ordered) if ordered else torch.zeros(0, 6, device=device),
+                    torch.cat(frame_indices) if frame_indices else empty_index,
+                    torch.cat(point_times) if point_times else z,
+                    empty_index,
+                    empty_index,
+                    z.bool(),
+                    torch.empty(0, 0, device=device, dtype=torch.long),
+                    torch.empty(0, 0, device=device, dtype=torch.bool),
+                    torch.empty(0, 0, device=device),
+                )
+            return result
         anchor, ct, cf, cv = map(torch.cat, (anchors, center_times, center_frames, center_valid))
         cloud, pt, pf = map(torch.cat, (ordered, point_times, frame_indices))
         if not len(cloud):
             z = torch.zeros(m, device=device)
-            return EncodedLeaves(
+            result = EncodedLeaves(
                 torch.zeros(m, self.width, device=device),
                 cv,
                 anchor,
@@ -175,6 +213,23 @@ class SpacetimeEncoder(nn.Module):
                 ct.clone(),
                 z,
             )
+            if trace is not None:
+                self._emit_trace(
+                    trace,
+                    result,
+                    quotas,
+                    times,
+                    cloud,
+                    pf,
+                    pt,
+                    torch.cat(center_point_indices),
+                    cf,
+                    cv,
+                    torch.empty(m, 0, device=device, dtype=torch.long),
+                    torch.empty(m, 0, device=device, dtype=torch.bool),
+                    torch.empty(m, 0, device=device),
+                )
+            return result
         features = self.point_mlp(cloud)
         contents, valids, minima, maxima, tmins, tmaxs, occupancies = [], [], [], [], [], [], []
         for start in range(0, m, self.center_chunk):
@@ -201,6 +256,10 @@ class SpacetimeEncoder(nn.Module):
             logits = logits.masked_fill(~mask, -torch.inf)
             logits = torch.where(row_valid[:, None], logits, torch.zeros_like(logits))
             weights = torch.softmax(logits.float(), dim=-1) * mask.float()
+            if trace is not None:
+                trace_neighbors.append(nearest)
+                trace_masks.append(mask)
+                trace_weights.append(weights)
             relative = torch.cat(
                 [dx.gather(1, nearest[..., None].expand(-1, -1, 3)), dt.gather(1, nearest)[..., None]], dim=-1
             )
@@ -218,7 +277,7 @@ class SpacetimeEncoder(nn.Module):
             tmaxs.append(torch.where(row_valid, hi_t, ct[start:end]))
             occupancies.append((torch.exp(-distance.gather(1, nearest)) * mask).sum(-1))
             valids.append(row_valid)
-        return EncodedLeaves(
+        result = EncodedLeaves(
             torch.cat(contents),
             torch.cat(valids),
             anchor,
@@ -228,6 +287,58 @@ class SpacetimeEncoder(nn.Module):
             torch.cat(tmins),
             torch.cat(tmaxs),
             torch.cat(occupancies),
+        )
+        if trace is not None:
+            self._emit_trace(
+                trace,
+                result,
+                quotas,
+                times,
+                cloud,
+                pf,
+                pt,
+                torch.cat(center_point_indices),
+                cf,
+                cv,
+                torch.cat(trace_neighbors),
+                torch.cat(trace_masks),
+                torch.cat(trace_weights),
+            )
+        return result
+
+    @staticmethod
+    def _emit_trace(
+        trace: VisualTrace,
+        result: EncodedLeaves,
+        quotas: list[int],
+        times: Tensor,
+        points: Tensor,
+        point_frames: Tensor,
+        point_times: Tensor,
+        center_points: Tensor,
+        center_frames: Tensor,
+        center_candidates: Tensor,
+        neighbors: Tensor,
+        masks: Tensor,
+        weights: Tensor,
+    ) -> None:
+        trace(
+            {
+                "frame_quotas": tuple(quotas),
+                "frame_times": times,
+                "points": points,
+                "point_frame_indices": point_frames,
+                "point_times": point_times,
+                "center_point_indices": center_points,
+                "center_frame_indices": center_frames,
+                "center_candidate_valid": center_candidates,
+                "anchor": result.anchor,
+                "center_times": result.time_anchor,
+                "valid": result.valid,
+                "neighbor_indices": neighbors,
+                "neighbor_mask": masks,
+                "weights": weights,
+            }
         )
 
 
@@ -269,6 +380,7 @@ class BlockEncoder(nn.Module):
         block_id: str | None = None,
         *,
         completed: bool = True,
+        trace: VisualTrace | None = None,
     ) -> list[MemoryRecord]:
         if not frames:
             return []
@@ -288,12 +400,12 @@ class BlockEncoder(nn.Module):
         if self.checkpoint_blocks and self.training and torch.is_grad_enabled():
 
             def pool():
-                output = self.visual(points, valid, times, quotas)
+                output = self.visual(points, valid, times, quotas, trace=trace)
                 return tuple(getattr(output, name) for name in EncodedLeaves.__dataclass_fields__)
 
             pooled = EncodedLeaves(*checkpoint(pool, use_reentrant=False))
         else:
-            pooled = self.visual(points, valid, times, quotas)
+            pooled = self.visual(points, valid, times, quotas, trace=trace)
         records = self._visual_records(pooled, source, block_id, completed)
         device = self.visual.raw_tau_x.device
         state = torch.stack([f.proprio for f in frames]).to(device=device, dtype=torch.float32)
@@ -316,8 +428,8 @@ class BlockEncoder(nn.Module):
             )
         return records
 
-    def current(self, frame: Any) -> list[MemoryRecord]:
-        pooled = self.visual([frame.points], [frame.valid], [frame.time], [self.current_tokens])
+    def current(self, frame: Any, *, trace: VisualTrace | None = None) -> list[MemoryRecord]:
+        pooled = self.visual([frame.points], [frame.valid], [frame.time], [self.current_tokens], trace=trace)
         return self._visual_records(pooled, frame.source, f"current:{frame.event_id}", True)
 
     @staticmethod

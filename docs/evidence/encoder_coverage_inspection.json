@@ -1,0 +1,264 @@
+{
+  "above_table_threshold_m": 0.01,
+  "all_causal_historical_visual_leaves": {
+    "anchor_z_max_m": 0.001840252778492868,
+    "anchor_z_min_m": -0.0015535559505224228,
+    "count": 344,
+    "count_by_source": {
+      "conditioning": 264,
+      "execution": 80
+    },
+    "leaves_with_neighbor_support_above_1cm": 0,
+    "neighbor_support_z_max_m": 0.001840252778492868,
+    "neighbor_support_z_min_m": -0.0021167241502553225
+  },
+  "artifact": {
+    "config_sha256_at_export": "d0a4a1881c18cd2d08c03bb364e8dff21e6a6a1c255192167e294345c9382045",
+    "path": "runs/visualizations/VideoUnmask_ep0_t20.json",
+    "prepared_path": "runs/preparation_real/prepared/VideoUnmask.h5",
+    "prepared_sha256_at_export": "2cc96324ab19cd60341ccf3a959b463c4464b20b90633aa5969e9971e4025d19",
+    "sha256": "bd8415b32701b706a875d4d3c2770b48ab70a0dbad99f9712997dc0ee1f683b2",
+    "source_files_sha256_at_inspection": {
+      "src/stmem/data/dataset.py": "a9c0baca51f1478806df1fb49c258c19890a1c1f416a4bb4346aa96341e1b548",
+      "src/stmem/data/pointcloud.py": "bfae323fabaaa1f7eeb25cfdf1549dcae8708510dea6f77000c4d5fb5779e0b3",
+      "src/stmem/memory/hierarchy.py": "6c9a325190f4f859aead04bc11969fc563e00a49aa87559f59018f7b83388c0f",
+      "src/stmem/memory/streaming.py": "08a4765b6515e472264346713ed8c0b35cba7cf75b44076ae3de811ad9c98796",
+      "src/stmem/models/spacetime_encoder.py": "0b8a52b3fbce1bbffc60a31996d497e4faa61751ec5accb9fe81b01dd562ed39",
+      "src/stmem/visualization/encoder_structure.py": "ca824ecb5ba070be7ae9c146372ab5af8c6f968828d70e8fab1596371b35ed64",
+      "src/stmem/visualization/inspect_encoder.py": "9aba3c19dfae51af23ac13e07dbb3fcb5c61aafd65e4e90119f814ec8a94abf6"
+    },
+    "source_revision_at_export": {
+      "dirty": true,
+      "git": "d2ccb165ced67ecead999304937e37c73fa87b5b",
+      "source_sha256": "195ed5a88385fcbaac2b53f833f3a111f2b63991ac45f5a807abc8662dba97d9"
+    }
+  },
+  "detailed_blocks": [
+    {
+      "block_id": "conditioning:complete:c8f476586ef64bd59f532009",
+      "center_z_max_m": 0.0014594636159017682,
+      "center_z_min_m": -0.0005477311788126826,
+      "completed": true,
+      "elevated_nearest_center_distance_median_m": 0.6951934385542176,
+      "elevated_nearest_center_distance_min_m": 0.54289911866569,
+      "elevated_points_within_any_center_spatial_radius": 0,
+      "kind": "history",
+      "neighbor_union_z_max_m": 0.001840252778492868,
+      "neighbor_union_z_min_m": -0.0005477311788126826,
+      "point_z_max_m": 0.5305041670799255,
+      "point_z_min_m": -0.0005477311788126826,
+      "points_above_10cm": 40,
+      "points_above_1cm": 296,
+      "pooled_points_above_10cm": 0,
+      "pooled_points_above_1cm": 0,
+      "source": "conditioning",
+      "source_frame_indices": [
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63
+      ],
+      "unique_points_in_neighbor_union": 840,
+      "valid_centers": 32,
+      "valid_points": 8192
+    },
+    {
+      "block_id": "conditioning:complete:2706e7b16af0fc249e4aa275",
+      "center_z_max_m": 0.0014594636159017682,
+      "center_z_min_m": -0.0005477311788126826,
+      "completed": true,
+      "elevated_nearest_center_distance_median_m": 0.6951934385542176,
+      "elevated_nearest_center_distance_min_m": 0.54289911866569,
+      "elevated_points_within_any_center_spatial_radius": 0,
+      "kind": "history",
+      "neighbor_union_z_max_m": 0.001840252778492868,
+      "neighbor_union_z_min_m": -0.0005477311788126826,
+      "point_z_max_m": 0.5305041670799255,
+      "point_z_min_m": -0.0005477311788126826,
+      "points_above_10cm": 10,
+      "points_above_1cm": 74,
+      "pooled_points_above_10cm": 0,
+      "pooled_points_above_1cm": 0,
+      "source": "conditioning",
+      "source_frame_indices": [
+        64,
+        65
+      ],
+      "unique_points_in_neighbor_union": 330,
+      "valid_centers": 8,
+      "valid_points": 2048
+    },
+    {
+      "block_id": "execution:complete:877ead58eda9bec8d1d6dfff",
+      "center_z_max_m": 0.001840252778492868,
+      "center_z_min_m": -0.0015535559505224228,
+      "completed": true,
+      "elevated_nearest_center_distance_median_m": 0.6878994784472203,
+      "elevated_nearest_center_distance_min_m": 0.45156239484388677,
+      "elevated_points_within_any_center_spatial_radius": 0,
+      "kind": "history",
+      "neighbor_union_z_max_m": 0.001840252778492868,
+      "neighbor_union_z_min_m": -0.0017767956014722586,
+      "point_z_max_m": 0.5389276742935181,
+      "point_z_min_m": -0.0017767956014722586,
+      "points_above_10cm": 40,
+      "points_above_1cm": 293,
+      "pooled_points_above_10cm": 0,
+      "pooled_points_above_1cm": 0,
+      "source": "execution",
+      "source_frame_indices": [
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "unique_points_in_neighbor_union": 870,
+      "valid_centers": 32,
+      "valid_points": 8192
+    },
+    {
+      "block_id": "execution:prefix:8ed4abc979ce3352c4e5f98a",
+      "center_z_max_m": 0.0012847420293837786,
+      "center_z_min_m": -0.00016820892051327974,
+      "completed": false,
+      "elevated_nearest_center_distance_median_m": 0.6737867238337171,
+      "elevated_nearest_center_distance_min_m": 0.4661595671653355,
+      "elevated_points_within_any_center_spatial_radius": 0,
+      "kind": "history",
+      "neighbor_union_z_max_m": 0.001840252778492868,
+      "neighbor_union_z_min_m": -0.0021167241502553225,
+      "point_z_max_m": 0.5408180952072144,
+      "point_z_min_m": -0.0021167241502553225,
+      "points_above_10cm": 11,
+      "points_above_1cm": 160,
+      "pooled_points_above_10cm": 0,
+      "pooled_points_above_1cm": 0,
+      "source": "execution",
+      "source_frame_indices": [
+        16,
+        17,
+        18,
+        19
+      ],
+      "unique_points_in_neighbor_union": 485,
+      "valid_centers": 16,
+      "valid_points": 4096
+    },
+    {
+      "block_id": "current:VideoUnmask/episode_0/86",
+      "center_z_max_m": 0.4924234449863434,
+      "center_z_min_m": -0.00026460012304596603,
+      "completed": true,
+      "elevated_nearest_center_distance_median_m": 0.07703658927718653,
+      "elevated_nearest_center_distance_min_m": 0.0,
+      "elevated_points_within_any_center_spatial_radius": 33,
+      "kind": "current",
+      "neighbor_union_z_max_m": 0.4924234449863434,
+      "neighbor_union_z_min_m": -0.002084715524688363,
+      "point_z_max_m": 0.4924234449863434,
+      "point_z_min_m": -0.002084715524688363,
+      "points_above_10cm": 3,
+      "points_above_1cm": 33,
+      "pooled_points_above_10cm": 3,
+      "pooled_points_above_1cm": 33,
+      "source": "execution",
+      "source_frame_indices": [
+        20
+      ],
+      "unique_points_in_neighbor_union": 1024,
+      "valid_centers": 64,
+      "valid_points": 1024
+    }
+  ],
+  "encoder": {
+    "center_selection": "Per-frame deterministic farthest-point sampling in xyz, starting at the lexicographically first valid xyzrgb point; historical budget is four centers per frame (32 visual candidates per 8-frame block).",
+    "checkpoint_sha256": null,
+    "config": {
+      "block_size": 8,
+      "current_tokens": 64,
+      "neighbor_cap": 128,
+      "spatial_radius": 0.3,
+      "tau_t": 4.0,
+      "tau_t_units": "recorded frames squared",
+      "tau_x": 0.010000000707805157,
+      "tau_x_units": "metres squared",
+      "temporal_radius": 8.0,
+      "variant": "joint",
+      "visual_tokens": 32
+    },
+    "neighbors": "Actual forward trace; only indices with True neighbor_mask enter the union. Gaussian weights are normalized over the capped radius/time-valid neighborhood.",
+    "parameters": "configuration_defaults"
+  },
+  "episode": {
+    "conditioning_frames": 66,
+    "decision_index": 20,
+    "episode_id": "episode_0",
+    "execution_prefix_frames": 20,
+    "task": "VideoUnmask"
+  },
+  "findings": [
+    "All 344 historical visual leaves in this causal prefix pool only the near-tabletop band, despite observed elevated points.",
+    "For every detailed historical block, every observed point above 1cm is beyond the hard 0.3m spatial radius of every selected center; its absence is not a viewer transform, low Gaussian weight, or the neighbor cap.",
+    "The separate current-scene path uses 64 centers and its neighborhood union includes all 1024 observed points, including all 33 points above 1cm.",
+    "Robot-event leaves preserve observed end-effector anchors independently of the visual coverage gap."
+  ],
+  "historical_robot_event_leaves": {
+    "anchor_z_max_m": 0.5211001038551331,
+    "anchor_z_min_m": 0.505257248878479,
+    "count": 86
+  },
+  "kind": "measured_encoder_coverage_diagnostic",
+  "limitations": [
+    "Single real VideoUnmask episode 0 at execution decision 20; a diagnostic, not a dataset-wide claim or benchmark result.",
+    "Configuration-initialized encoder with core geometry/token counts; no trained checkpoint or policy evaluation was used.",
+    "The above-1cm threshold is a geometric proxy relative to world tabletop z=0, not a semantic robot/object label.",
+    "Per-point coverage is available only for exported detailed blocks; the statement about all historical leaves uses their exact pooled-neighbor support bounds.",
+    "This report does not independently validate raw-camera calibration or semantic visibility. No encoder, training configuration, preparation pipeline, or learned weights were changed."
+  ],
+  "pending_center_zero": {
+    "anchor_m": [
+      -0.7383812665939331,
+      -0.7440313100814819,
+      0.0012847420293837786
+    ],
+    "block_id": "execution:prefix:8ed4abc979ce3352c4e5f98a",
+    "center_index": 0,
+    "effective_neighbor_count_inverse_sum_squared_weights": 9.190290795163511,
+    "largest_normalized_point_weight": 0.22455979883670807,
+    "masked_neighbor_slots": 45,
+    "same_frame_neighbor_count": 20,
+    "source_frame_contributions": [
+      {
+        "neighbor_count": 20,
+        "normalized_weight_sum": 0.3540239492576802,
+        "source_frame_index": 16
+      },
+      {
+        "neighbor_count": 20,
+        "normalized_weight_sum": 0.40291166799761413,
+        "source_frame_index": 17
+      },
+      {
+        "neighbor_count": 19,
+        "normalized_weight_sum": 0.18306050786668493,
+        "source_frame_index": 18
+      },
+      {
+        "neighbor_count": 24,
+        "normalized_weight_sum": 0.0600038371383107,
+        "source_frame_index": 19
+      }
+    ],
+    "top10_normalized_weight_sum": 0.8229134846478701,
+    "valid_neighbor_count": 83
+  },
+  "schema_version": 1
+}

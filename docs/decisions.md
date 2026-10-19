@@ -125,3 +125,78 @@
     [evidence/parallel_preparation.json](evidence/parallel_preparation.json).
     These are not full-data/HPC throughput estimates. No data download, long run
     or Slurm submission was performed for this follow-up.
+
+14. **Offline inspection of exact encoder structure (19 October follow-up).**
+    A CPU diagnostic exports standalone HTML and JSON for one selected prepared
+    episode/decision. Optional trace callbacks capture actual FPS centers,
+    capped neighbor indices, masks and normalized Gaussian weights from the
+    existing forward calculation. The standard streaming builder constructs
+    the complete source/modality-separated binary archive. Point-level detail
+    is limited to the last requested blocks per source plus the separate current
+    observation; the full historical hierarchy retains exact leaf coverage.
+    Pending execution evidence is explicitly marked and never merged as a
+    completed block. Display time offsets change no model inputs or graph edges.
+
+    Verified alignment and preprocessing checks are reused. Only a completed
+    selected task file is opened; it is hashed for provenance. Input/output
+    aliasing is rejected so an adjacent JSON cannot overwrite alignment or a
+    checkpoint. No loader, training schedule, action targets, retrieval policy,
+    or scientific preprocessing is changed. Default exports explicitly use
+    initial configured bandwidths; an optional compatible trusted checkpoint
+    supplies learned parameters. CPU distance ties may differ across devices.
+
+    Plotly is an optional locked extra and is embedded into each HTML alongside
+    the data. Browser tests run with external networking blocked. Synthetic
+    invariants and bounded real-data exports are recorded in
+    [evidence/encoder_visualization.json](evidence/encoder_visualization.json).
+    They establish inspectability and forward/gradient parity, not learned
+    representation quality or manipulation success.
+
+15. **Action-only training startup (19 October follow-up).** A user-reported
+    H200 job spent approximately 26 minutes before writing its training manifest.
+    Source inspection found two full-episode scans, including unnecessary visual
+    payload reads, to build the decision index and fit action normalization.
+    Startup now makes one pass over source/action arrays, retaining only the
+    candidate index and small FP64 action moments. It checks visual array headers
+    without reading/decompressing the point-cloud, point-mask or proprioception
+    payloads. This requires neither data re-preparation nor a persistent cache.
+
+    A candidate is usable exactly when its immediate aligned command has seven
+    available joint components; canonical chunk continuity masks prevent a later
+    command from rescuing a gap. Normalization still includes every finite valid
+    execution action component once, in the same episode order, including partial
+    commands. It excludes conditioning actions and does not count overlapping
+    chunks. Data identity, alignment verification, sampling order, model and
+    optimizer configuration are unchanged, preserving checkpoint compatibility.
+
+    Startup emits bounded per-task progress and measured durations. Policy
+    training additionally logs its first completed update per attempt; pre-update
+    duration metrics use the validated resume step rather than claiming an
+    optimizer update occurred. No extra inference or inner-example synchronization
+    is introduced. Full-size HPC startup/throughput remains unmeasured after the
+    fix; the bounded local comparison and correctness checks are recorded in
+    [evidence/training_startup.json](evidence/training_startup.json).
+
+16. **Runtime training diagnostics (19 October follow-up).** A further report of
+    an hour without metrics from the original job cannot distinguish a slow
+    update from a stalled operation. `--log-every` overrides scalar cadence for
+    policy/router training and the HPC planner without mutating scientific
+    configuration or resume provenance. Router held-out validation keeps its
+    original cadence, so additional scalar rows do not add validation passes.
+    Planner identity excludes only validated logging override pairs; generated
+    commands retain them, and effective settings are recorded as runtime metadata.
+
+    Optional `--progress-every-seconds` policy heartbeats report the host phase,
+    per-rank example counters and completed/in-progress optimizer steps to stdout
+    and `progress.jsonl`. A rank-zero background thread reads Python scalar
+    snapshots and monotonic clocks only. It does not query CUDA, synchronize
+    tensors, use RNGs, run inference or call W&B. Completed-update W&B rows add
+    latest-update wall time and sample-loading time; heartbeat phase times are
+    host observations, not kernel profiling. Checkpoint and preview costs are
+    excluded from latest-update time and remain in cumulative throughput.
+
+    Bounded CPU tests compare complete model, optimizer, scheduler, scaler,
+    sampler and RNG states across different logging frequencies and across
+    stop/resume. They also cover heartbeats while the main thread is blocked,
+    exception cleanup, nonprimary ranks and dry-run planner propagation. These
+    checks establish diagnostic correctness, not full-data H200 throughput.

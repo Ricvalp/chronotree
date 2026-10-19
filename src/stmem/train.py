@@ -15,6 +15,8 @@ from stmem.config import load_config, validate_config, run_dir, dependency, dige
 from stmem.models.policy import MemoryPolicy, choose_records
 from stmem.models.action_flow import flow_sample, masked_mse
 from stmem.training.data import TrainingData
+from stmem.training.logging_options import positive_log_every, positive_progress_seconds, resolve_logging
+from stmem.training.progress import TrainingProgress, print_json
 from stmem.training.runtime import (
     distributed_setup,
     seed_all,
@@ -51,8 +53,9 @@ def context_sample(policy, evidence, cfg, position):
     return choose_records(evidence, method, budget, rng=rng).records
 
 
-def train_policy(cfg, stage, *, resume=None, stop_file=None):
+def train_policy(cfg, stage, *, resume=None, stop_file=None, log_every=None, progress_every_seconds=None):
     validate_config(cfg)
+    logging = resolve_logging(cfg, log_every, progress_every_seconds)
     rank = int(os.environ.get("RANK", "0"))
     directory = run_dir(cfg, stage)
     if rank == 0 and not resume and (directory / "last.pt").exists():
@@ -63,18 +66,29 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None):
         job_type=stage,
         rank=rank,
         resume=bool(resume),
-        metadata={"resume_checkpoint": str(resume) if resume else None},
+        metadata={"resume_checkpoint": str(resume) if resume else None, "logging": logging},
     ) as tracker:
-        result = _train_policy(cfg, stage, resume=resume, stop_file=stop_file, tracker=tracker)
+        with TrainingProgress(directory, logging["progress_every_seconds"], rank=rank) as progress:
+            progress.update("device_setup", stage=stage, run_attempt=tracker.identity.get("attempt"))
+            result = _train_policy(
+                cfg,
+                stage,
+                resume=resume,
+                stop_file=stop_file,
+                tracker=tracker,
+                logging=logging,
+                progress=progress,
+            )
         if result == 75:
             tracker.finish(status="checkpointed_partial", exit_code=75)
         return result
 
 
-def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
+def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, progress):
     from stmem.doctor import choose_precision
     from stmem.data.cache import FrozenCache
 
+    startup_started = time.perf_counter()
     device, rank, world = distributed_setup()
     seed_all(cfg["seed"] + rank)
     if device.type == "cpu":
@@ -84,11 +98,39 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
         raise ValueError("Variable-length reference trainer uses microbatch=1 with gradient accumulation")
     if batch % world:
         raise ValueError("Effective batch must be divisible by world size")
-    data = TrainingData(cfg)
+
+    def startup_progress(phase, **values):
+        if rank != 0:
+            return
+        record = {
+            "event": "training_startup",
+            "stage": stage,
+            "phase": phase,
+            "elapsed_seconds": time.perf_counter() - startup_started,
+            **values,
+        }
+        print_json(record)
+        progress.update("startup/" + phase)
+        # Resume's optimizer position is not known yet. Publish summaries, not
+        # history rows with an invented optimizer step, during initialization.
+        tracker.summary({f"startup/{key}": value for key, value in record.items() if key != "event"})
+
+    def data_progress(event):
+        values = dict(event)
+        phase = values.pop("phase")
+        values["data_elapsed_seconds"] = values.pop("elapsed_seconds")
+        startup_progress(phase, **values)
+
+    data_started = time.perf_counter()
+    data = TrainingData(cfg, progress=data_progress if rank == 0 else None)
+    data_seconds = time.perf_counter() - data_started
+    startup_progress("model_initializing", data_seconds=data_seconds)
     policy = MemoryPolicy(cfg)
     dependencies = {}
     cache = None
+    normalizer_seconds = None
     if stage != "teacher":
+        startup_progress("dependencies_loading")
         teacher = dependency(cfg, "teacher")
         validate_selection(teacher, debug=cfg.get("debug", False) and data.synthetic)
         initial = load_checkpoint(teacher)
@@ -99,7 +141,11 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
         cache = FrozenCache(cfg, teacher, data)
         dependencies["cache"] = digest(cache.manifest)
     else:
+        startup_progress("normalizer_started")
+        normalizer_started = time.perf_counter()
         data.fit_normalizer(policy.normalizer)
+        normalizer_seconds = time.perf_counter() - normalizer_started
+        startup_progress("normalizer_ready", normalizer_seconds=normalizer_seconds)
     if stage == "perceiver":
         policy.add_perceiver()
     policy.to(device).train()
@@ -133,6 +179,7 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
         "training": digest(cfg["training"]),
     }
     if resume:
+        startup_progress("resume_loading")
         saved = load_checkpoint(resume)
         if saved["stage"] != stage or saved["provenance"] != provenance:
             raise ValueError("Resume stage/data/config/dependencies/world size mismatch")
@@ -160,6 +207,7 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
                 "device": str(device),
                 "environment": environment_manifest(),
                 "synthetic": data.synthetic,
+                "logging": logging,
             },
             directory / "manifest.json",
         )
@@ -182,14 +230,27 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
             "model/trainable_parameters": sum(p.numel() for p in policy.parameters() if p.requires_grad),
             "provenance": provenance,
             "environment": environment_manifest(),
+            "logging": logging,
         }
     )
-    started = time.perf_counter()
     records_seen = 0
     allocated = int(os.environ.get("STMEM_ALLOCATED_GPUS", os.environ.get("STMEM_GPUS", world)))
     from stmem.visualization.diagnostics import PolicyScenes
 
     scenes = PolicyScenes(cfg, data, policy, tracker, stage=stage, cache=cache, precision=precision)
+    startup_metrics = {
+        "data_seconds": data_seconds,
+        "total_seconds": time.perf_counter() - startup_started,
+    }
+    if normalizer_seconds is not None:
+        startup_metrics["normalizer_seconds"] = normalizer_seconds
+    startup_progress("training_ready", optimizer_step=start, **startup_metrics)
+    progress.update("training_ready", optimizer_steps_completed=start)
+    if rank == 0:
+        # The checkpoint has now been validated and the optimizer position is
+        # known. This row describes startup, not a completed optimizer update.
+        tracker.log({f"startup/{key}": value for key, value in startup_metrics.items()}, step=start)
+    started = time.perf_counter()
 
     def save(step, candidate=False):
         own_rng = capture_rng()
@@ -213,6 +274,7 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
                 "source": source_revision(),
                 "environment": environment_manifest(),
                 "tracking": dict(tracker.identity),
+                "logging": logging,
             }
             atomic_save(payload, directory / "last.pt")
             tracker.checkpoint(directory / "last.pt", step)
@@ -226,19 +288,43 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
     consecutive_overflows = 0
     total_overflows = 0
     while step < steps:
+        update_started = time.perf_counter()
         optimizer.zero_grad(set_to_none=True)
         local_loss = 0.0
         local_n = batch // world
+        data_loading_seconds = 0.0
+        progress.begin_update(step, local_n)
         for local_index, offset in enumerate(range(rank, batch, world)):
             position = step * batch + offset
+            progress.update(
+                "loading_sample",
+                example_in_update_rank=local_index + 1,
+                global_sample_position=position,
+                task=None,
+                episode_id=None,
+                decision_index=None,
+                conditioning_frames=None,
+                execution_history_frames=None,
+            )
+            loading_started = time.perf_counter()
             decision = data.sample_position(position)
+            data_loading_seconds += time.perf_counter() - loading_started
             action = decision.target_chunk.to(device)
             valid = decision.target_valid.to(device)
+            progress.update(
+                "cache_loading" if cache is not None else "encoding_history",
+                task=decision.task,
+                episode_id=decision.episode_id,
+                decision_index=decision.index,
+                conditioning_frames=len(decision.conditioning),
+                execution_history_frames=len(decision.execution_prefix),
+            )
             evidence = None if cache is None else cache.evidence(decision)
             sync = model.no_sync() if world > 1 and local_index < local_n - 1 else nullcontext()
             with sync, torch.autocast(device.type, dtype=dtype, enabled=precision != "fp32"):
                 if evidence is None:
                     evidence = policy.encode(decision)
+                progress.update("forward")
                 context_records = (
                     context_sample(policy, evidence, cfg, position)
                     if stage == "compact"
@@ -258,9 +344,12 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
                 loss = masked_mse(prediction, target, valid)
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Nonfinite loss at optimizer step {step}")
+            progress.update("backward")
             scaler.scale(loss / local_n).backward()
             local_loss += float(loss.detach()) / local_n
             records_seen += len(evidence.archive.leaves)
+            progress.update("example_complete", examples_completed_rank=local_index + 1)
+        progress.update("optimizer_step")
         scaler.unscale_(optimizer)
         grad_norm = torch.nn.utils.clip_grad_norm_(
             policy.parameters(), cfg["training"]["grad_clip"], error_if_nonfinite=precision != "fp16"
@@ -286,6 +375,8 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
         if world > 1:
             torch.distributed.broadcast(flag, 0)
         stopped = bool(flag.item())
+        step_seconds = time.perf_counter() - update_started
+        progress.finish_update(current_step)
         checkpoint_due = (
             current_step % cfg["training"]["checkpoint_every"] == 0
             or current_step in cfg["training"]["checkpoint_steps"]
@@ -293,8 +384,15 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
             or current_step == steps
         )
         if checkpoint_due:
+            progress.update("checkpoint")
             save(current_step, current_step in cfg["training"]["checkpoint_steps"])
-        if current_step % cfg["training"]["log_every"] == 0 or stopped or current_step == steps:
+        if (
+            current_step == start + 1
+            or current_step % logging["log_every"] == 0
+            or stopped
+            or current_step == steps
+        ):
+            progress.update("logging")
             loss_tensor = torch.tensor(local_loss, device=device)
             if world > 1:
                 torch.distributed.all_reduce(loss_tensor)
@@ -305,6 +403,8 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
                 "training_action_loss": float(loss_tensor),
                 "objective": cfg["model"]["decoder"],
                 "seconds": elapsed,
+                "step_seconds": step_seconds,
+                "data_loading_seconds_rank": data_loading_seconds,
                 "examples": (current_step - start) * batch,
                 "effective_batch": batch,
                 "examples_per_second": (current_step - start) * batch / elapsed,
@@ -326,11 +426,13 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
             if rank == 0:
                 with (directory / "metrics.jsonl").open("a") as stream:
                     stream.write(json.dumps(record) + "\n")
-                print(json.dumps(record), flush=True)
+                print_json(record)
                 tracker.log({f"train/{key}": value for key, value in record.items()}, step=current_step)
         if checkpoint_due and not (stopped and current_step < steps):
+            progress.update("scene_diagnostics")
             scenes.log(current_step)
         if stopped and current_step < steps:
+            progress.update("checkpointed_partial")
             if rank == 0:
                 atomic_json(
                     {
@@ -371,6 +473,7 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
         )
     if world > 1:
         torch.distributed.destroy_process_group()
+    progress.update("complete", optimizer_steps_completed=steps)
     return 0
 
 
@@ -380,6 +483,16 @@ def main():
     parser.add_argument("--stage", choices=["teacher", "compact", "router", "perceiver"])
     parser.add_argument("--resume")
     parser.add_argument("--stop-file", default=os.environ.get("STMEM_STOP_FILE"))
+    parser.add_argument(
+        "--log-every",
+        type=positive_log_every,
+        help="Log scalar metrics every N optimizer updates; runtime-only override, safe to change on resume",
+    )
+    parser.add_argument(
+        "--progress-every-seconds",
+        type=positive_progress_seconds,
+        help="Policy-training wall-clock heartbeat interval for stdout/progress.jsonl (disabled by default)",
+    )
     args = parser.parse_args()
     cfg = load_config(args.config)
     stage = args.stage or cfg["stage"]
@@ -387,9 +500,18 @@ def main():
     if stage == "router":
         from stmem.training.routers import train_router
 
-        result = train_router(cfg, resume=args.resume, stop_file=args.stop_file)
+        if args.progress_every_seconds is not None:
+            parser.error("--progress-every-seconds applies to teacher, compact and perceiver training")
+        result = train_router(cfg, resume=args.resume, stop_file=args.stop_file, log_every=args.log_every)
     else:
-        result = train_policy(cfg, stage, resume=args.resume, stop_file=args.stop_file)
+        result = train_policy(
+            cfg,
+            stage,
+            resume=args.resume,
+            stop_file=args.stop_file,
+            log_every=args.log_every,
+            progress_every_seconds=args.progress_every_seconds,
+        )
     raise SystemExit(result)
 
 

@@ -8,7 +8,7 @@ import random
 import h5py
 import numpy as np
 import torch
-from .canonical import Frame, Episode
+from .canonical import ACTION_DIM, PROPRIO_DIM, Frame, Episode, action_alignment_offset
 from .prepare import numeric_keys
 
 
@@ -19,6 +19,18 @@ class EpisodeRef:
     task: str
     execution_length: int
     metadata: dict
+
+
+@dataclass(frozen=True)
+class EpisodeActions:
+    """Execution supervision and source lengths; no observation payloads."""
+
+    actions: torch.Tensor
+    action_valid: torch.Tensor
+    execution_length: int
+    conditioning_length: int
+    episode_id: str
+    alignment: str
 
 
 class EpisodeDataset:
@@ -76,8 +88,7 @@ class EpisodeDataset:
     def __len__(self):
         return len(self.episodes)
 
-    def load_episode(self, index):
-        ref = self.episodes[index]
+    def _alignment_for(self, ref):
         alignment = self.alignment.get("convention", "unresolved")
         if self.alignment.get("dataset_revision") != ref.metadata["dataset_revision"]:
             alignment = "unresolved"
@@ -87,6 +98,50 @@ class EpisodeDataset:
         audited_hashes = self.alignment.get("raw_sha256", {})
         if ref.task in audited_hashes and audited_hashes[ref.task] != ref.metadata["raw_sha256"]:
             alignment = "unresolved"
+        return alignment
+
+    @staticmethod
+    def _validate_episode_layout(group):
+        """Preserve structural checks without reading/decompressing observations."""
+        source = group["source"]
+        points = group["points"]
+        if source.ndim != 1 or source.dtype != np.dtype(bool):
+            raise ValueError(f"{group.name}: source must be bool [frames]")
+        frames = source.shape[0]
+        if points.ndim != 3 or points.shape[0] != frames or points.shape[-1] != 6:
+            raise ValueError(f"{group.name}: points must be [frames,N,6] xyzrgb")
+        shapes = {
+            "valid": (frames, points.shape[1]),
+            "proprio": (frames, PROPRIO_DIM),
+            "actions": (frames, ACTION_DIM),
+            "action_valid": (frames, ACTION_DIM),
+            "source_index": (frames,),
+            "raw_index": (frames,),
+        }
+        for name, shape in shapes.items():
+            if group[name].shape != shape:
+                raise ValueError(f"{group.name}: {name} must have shape {shape}")
+        for name in ("valid", "action_valid"):
+            if group[name].dtype != np.dtype(bool):
+                raise ValueError(f"{group.name}: {name} must be bool")
+
+    def load_episode_actions(self, index):
+        """Read only small source/action arrays for startup indexing/statistics."""
+        ref = self.episodes[index]
+        alignment = self._alignment_for(ref)
+        action_alignment_offset(alignment)  # Fail before exposing unverified supervision.
+        with h5py.File(ref.path, "r") as f:
+            group = f[ref.key]
+            self._validate_episode_layout(group)
+            source = np.asarray(group["source"])
+            execution = ~source
+            actions = torch.from_numpy(np.asarray(group["actions"])[execution])
+            valid = torch.from_numpy(np.asarray(group["action_valid"])[execution])
+        return EpisodeActions(actions, valid, len(actions), int(source.sum()), ref.key, alignment)
+
+    def load_episode(self, index):
+        ref = self.episodes[index]
+        alignment = self._alignment_for(ref)
         with h5py.File(ref.path, "r") as f:
             g = f[ref.key]
             source = np.asarray(g["source"])

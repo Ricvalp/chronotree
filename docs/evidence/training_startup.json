@@ -1,0 +1,132 @@
+{
+  "kind": "bounded_real_data_startup_diagnostic",
+  "scope": "Two existing real VideoUnmask episodes, local storage, warm filesystem cache, CPU only.",
+  "prepared_path": "runs/preparation_real/prepared/VideoUnmask.h5",
+  "prepared_bytes": 7095256,
+  "episodes": [
+    {
+      "episode_id": "episode_0",
+      "conditioning_frames": 66,
+      "execution_frames": 173
+    },
+    {
+      "episode_id": "episode_1",
+      "conditioning_frames": 66,
+      "execution_frames": 159
+    }
+  ],
+  "configuration": {
+    "base": "configs/debug/data.yaml",
+    "points": 1024,
+    "tasks": [
+      "VideoUnmask"
+    ],
+    "episodes_per_task": 2,
+    "horizon": 16,
+    "decision_stride": 4,
+    "cpu_intraop_threads": 1,
+    "cpu_interop_threads": 1
+  },
+  "provenance": {
+    "baseline_commit": "d2ccb165ced67ecead999304937e37c73fa87b5b",
+    "baseline_training_data_sha256": "5d07bef4db56f9418fffc52c95365e6db7d2c2f89a7c18ae2feae25f3507f6a0",
+    "optimized_source_sha256": {
+      "src/stmem/data/canonical.py": "696c7f6c19e7f7454f2cf090b1bfd0e2f7bc3de9a4e1e1e725213def1c568606",
+      "src/stmem/data/dataset.py": "f6923c61e33bd386f115e9bbc781f136b6bc4b5f50b3fe3bea08f49b9be61a86",
+      "src/stmem/training/data.py": "fd301c5ca71bfde8974b50314298b571c4b721b6e55133f3dcf42787dff1bf67"
+    },
+    "data_identity": "b10400fad7364c2597431fbbbbd994022f65d2cdb510b34dc663d1f5cf684b8b",
+    "prepared_manifest_sha256": "7c91515475915fd957f6da4180cea1ce89aea95d5d96f810c089ada1b7ba72b7",
+    "dataset_revision": "a5e4e25ffe8af34f64944f9533d06455ce5f8337",
+    "raw_sha256": "05a653a8f8232882f82c84057f328e045f4a875ff5cfcf068738c429c6081427",
+    "alignment_sha256": "9fe7ec9adb2ec1f36f6d1bfbd39781c1ff5a896251fbc4f303ac129334ca7f09"
+  },
+  "measurements": [
+    {
+      "repeat": 1,
+      "order": [
+        "baseline",
+        "optimized"
+      ],
+      "timings": {
+        "baseline": {
+          "index_seconds": 0.11579487659037113,
+          "fit_normalizer_seconds": 0.0001513306051492691,
+          "total_seconds": 0.1159462071955204
+        },
+        "optimized": {
+          "index_seconds": 0.003758711740374565,
+          "fit_normalizer_seconds": 4.4638291001319885e-05,
+          "total_seconds": 0.003803350031375885
+        }
+      }
+    },
+    {
+      "repeat": 2,
+      "order": [
+        "optimized",
+        "baseline"
+      ],
+      "timings": {
+        "optimized": {
+          "index_seconds": 0.0036768782883882523,
+          "fit_normalizer_seconds": 4.4444575905799866e-05,
+          "total_seconds": 0.003721322864294052
+        },
+        "baseline": {
+          "index_seconds": 0.11574838869273663,
+          "fit_normalizer_seconds": 0.00015460699796676636,
+          "total_seconds": 0.11590299569070339
+        }
+      }
+    },
+    {
+      "repeat": 3,
+      "order": [
+        "baseline",
+        "optimized"
+      ],
+      "timings": {
+        "baseline": {
+          "index_seconds": 0.11601686663925648,
+          "fit_normalizer_seconds": 0.0001559089869260788,
+          "total_seconds": 0.11617277562618256
+        },
+        "optimized": {
+          "index_seconds": 0.0037399325519800186,
+          "fit_normalizer_seconds": 4.554726183414459e-05,
+          "total_seconds": 0.003785479813814163
+        }
+      }
+    }
+  ],
+  "median_total_seconds": {
+    "baseline": 0.1159462071955204,
+    "optimized": 0.003785479813814163
+  },
+  "median_ratio_baseline_over_optimized": 30.629197063052263,
+  "checks": {
+    "candidate_lists_exact": true,
+    "refs_and_task_membership_exact": true,
+    "first_three_epoch_permutations_exact": true,
+    "data_identity_exact": true,
+    "normalizer_mean_std_count_bitwise_exact": true,
+    "decisions": 79
+  },
+  "limitations": [
+    "Measures TrainingData construction plus fit_normalizer, excluding Python imports, W&B, model/device initialization, and training.",
+    "Both implementations warmed once; three timed paired repetitions alternate execution order.",
+    "The two-episode baseline LRU retains both episodes, so its normalization pass is already cached; the full 1600-episode startup rereads episode payloads.",
+    "Baseline TrainingData is loaded from the recorded git commit; current EpisodeDataset full-episode loading and canonical decision semantics are unchanged.",
+    "No timing instrumentation guards run inside the benchmark; separate regression tests prohibit visual-payload reads in optimized startup.",
+    "Local subset results do not establish cold-start or full-data HPC speedup; neither full-data training nor Slurm jobs were run."
+  ],
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Linux-6.17.0-1025-oem-x86_64-with-glibc2.39",
+    "torch": "2.9.1+cu128",
+    "h5py": "3.14.0",
+    "cpu_model": "Intel(R) Core(TM) Ultra 9 285K",
+    "cuda_visible_devices": ""
+  }
+}

@@ -4,6 +4,17 @@ As of **19 October 2026**, the project installs and its complete bounded local
 pipeline runs. The research comparison has **not yet run**. There is no remaining
 known local installation, action-alignment, calibration or simulator blocker.
 
+**Known representation problem found during manual HTML inspection:** in the
+exported VideoUnmask episode 0 at decision 20, all 344 historical visual leaves
+pool only tabletop points (support height at most 1.84 mm). Four FPS centers per
+frame select tabletop corners; the hard 0.3 m neighborhoods exclude the elevated
+objects. The current-frame 64-center path does cover the elevated observations.
+This requires a scientifically documented coverage correction before relying on
+the core historical encoder for substantive training. Passing implementation
+tests does not establish useful scene coverage. No encoder/configuration change
+has been made in response to this finding. Measurements and their single-episode
+scope are in [evidence/encoder_coverage_inspection.json](evidence/encoder_coverage_inspection.json).
+
 ## Implemented
 
 - Locked PyTorch/core and optional pinned simulator environments; actual-device
@@ -25,9 +36,18 @@ known local installation, action-alignment, calibration or simulator blocker.
 - W&B logging for all training stages, evaluation/selection shards, label jobs,
   aggregate reports and smoke diagnostics. Default offline recording, optional
   online transport, stable resume identities and one writer per DDP allocation.
+- One action-only startup pass for deterministic decision indexing and exact
+  normalization statistics, without visual payload reads; startup progress and
+  first-completed-update metrics for teacher/compact/Perceiver training.
+- Runtime scalar logging intervals and optional policy heartbeats exposing the
+  current phase and accumulation progress; latest-update and sample-loading
+  timings without extra heartbeat CUDA synchronization or W&B calls.
 - Two fixed W&B point-cloud/action comparisons at policy-training checkpoints,
   calibrated Panda TCP projections, exact action tables, bounded scene size and
   separately measured diagnostic overhead.
+- Offline HTML inspection of actual point-to-center pooling edges, normalized
+  weights, local trees and temporal forests, with separate current observations,
+  pending-block labels, checkpoint bandwidths and JSON provenance.
 
 ## Actually tested locally
 
@@ -37,7 +57,7 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 
 | Check | Measured outcome |
 |---|---|
-| Core test suite | **214 passed**; 33.09s after parallel preparation integration |
+| Core test suite | **322 passed**; 41.45s after startup and runtime logging integration |
 | Package lock/install | `uv lock --check`, `uv pip check`, imports and lint pass |
 | Real data | One 1,251,608,544-byte VideoUnmask archive; SHA verified; two episodes prepared |
 | Expert replay | Both complete sampled training episodes reached official success; exact nonterminal post-command qpos match |
@@ -55,6 +75,8 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 | HPC | 45-job core dry-run, maximum two concurrent allocations; scripts pass syntax checks; fake-submission tests only |
 | W&B | Real offline files decoded and checked; rewind/resume, interrupted journal recovery, failure cleanup and single-writer DDP pass |
 | CPU preparation | Serial/parallel arrays exactly equal; safe interruption/reuse and CPU limits pass; two real episodes prepared at 1,024 points |
+| Training startup | Exact candidate/normalizer parity with zero visual payload reads; local two-episode median 115.95 ms → 3.79 ms |
+| Frequent training diagnostics | Logging overrides preserve exact model/optimizer/RNG/sampler state and resume; blocked-phase heartbeats, cleanup and planner forwarding pass |
 
 Portable measured summaries are saved in
 [evidence/validation.json](evidence/validation.json),
@@ -106,20 +128,84 @@ archive verification is claimed. Original prepared data remained unchanged.
 Full artifacts are ignored under `runs/preparation_benchmark/` and
 `runs/preparation_real/`. No full-data preparation or Slurm job was launched.
 
+Encoder inspection checks are recorded in
+[evidence/encoder_visualization.json](evidence/encoder_visualization.json).
+The new optional tracing preserves exact forward outputs and parameter gradients,
+including checkpointed blocks. An independent comparison against the prior
+committed encoder on a real eight-frame, 1,024-point block was also bit-identical.
+Two initial-parameter exports at execution decisions 16 and 20 preserve the
+complete causal archive and show the separate 64-center current path; decision
+20 includes a four-frame pending prefix. Their HTML files are approximately
+9–10 MB. On this local two-episode subset, the final CLI exports took 1.33–1.36 s,
+including Python startup, file hashing, inspection and HTML/JSON serialization;
+inspection itself took 0.39–0.46 s. Browser rendering is excluded. These timings
+do not predict hashing or reading a full task on cluster storage.
+A separate export loaded the existing two-update debug teacher and used its
+learned bandwidths; that checkpoint remains a diagnostic, not a useful policy.
+
+Offline Chromium checks exercise frame filters/animation, time offsets, center
+and event selection, edge filters, current/history separation, exact hierarchy
+node/edge counts, group selection and light/dark/mobile views. Screenshots were
+inspected. The browser made no external requests and reported no JavaScript
+errors. The wheel includes both viewer assets. Local HTML/JSON/screenshots are
+ignored under `runs/visualizations/`; reproduction commands are in the
+[visualization guide](visualization.md).
+
+Action-only startup checks are recorded in
+[evidence/training_startup.json](evidence/training_startup.json). Nineteen new
+regression cases cover pre/post alignment, gaps, terminal/optional-gripper masks,
+nonfinite values, numeric episode order and caps, length bounds and malformed
+visual headers. Read guards prohibit full-episode construction, visual payload
+reads and a second action scan during normalization. A tiny CPU training check
+also verifies startup milestones, first-update metrics and exactly matching
+uninterrupted/stop-resumed final weights.
+
+On the existing two real VideoUnmask episodes at 1,024 points, three alternating
+paired warm local-storage repetitions measured median indexing plus normalization
+of 115.95 ms before and 3.79 ms after the fix (about 30.6×). All 79 candidate
+decisions, data identities, first three epoch permutations and normalization
+tensors matched exactly. This excludes imports, W&B/model/device initialization
+and training. The old two-episode cache already avoided its second read pass;
+these measurements do not predict the full 1,600-episode cluster timing. The
+doctor was rerun on the local RTX 5000 Ada and FP32/BF16/FP16 checks passed.
+
+Runtime logging checks use bounded synthetic CPU training and real offline W&B
+files. A three-update run logging every update and a stop/resumed run changing
+the interval retain bitwise-identical model, optimizer, scheduler, scaler,
+sampler and RNG state versus the default cadence. Heartbeats continue while the
+main thread is blocked, avoid CUDA/W&B calls and preserve the training exception
+if final reporting fails. Nonprimary/disabled heartbeats create no worker or
+output. Planner dry-runs forward flags without changing generated scientific
+configuration or stage identity; router tests preserve full-validation frequency.
+These diagnostics do not measure full-data training throughput or heartbeat
+overhead on the cluster filesystem. Commands and timing definitions are in
+[diagnosing slow training](hpc.md#diagnosing-slow-training).
+
+Separately, user-provided cluster output reports completed full-data preparation
+and a running one-GPU H200 NVL teacher job (58082), with CUDA, BF16 and effective
+batch 32. Its original startup took approximately 26 minutes before the training
+manifest appeared. This is user-reported evidence, not an agent-executed cluster
+benchmark; no post-fix HPC startup timing or training throughput is available yet.
+The subsequent report of an hour without old-job metrics does not identify
+whether a specific operation stalled or the original 50-update reporting
+interval had not yet completed. The new runtime flags require a new process;
+they do not change logging in that already running allocation.
+
 These checks do not establish manipulation performance. Expert replay verifies
 the data/control interface. A two-update learned model's deliberately short
 timeout is a protocol check. Synthetic label quality is not a research result.
 
 ## Not yet run / user-supplied prerequisites
 
-- Full 16-task data download/preparation (approximately 56.4 GB compressed listing;
-  expanded total must be measured). The existing two-episode 256-point subset
-  cannot be substituted for core 1,024-point all-task training.
+- Full 16-task data is user-reported prepared on the cluster, but is not present
+  in this workspace. The local two-episode subset cannot be substituted for core
+  1,024-point all-task training.
 - Useful teacher/compact/router/Perceiver training, official checkpoint selection,
   full validation, frozen evaluation on 50 test seeds per task, or final replication.
-- A5000, H200, B200, multi-GPU NCCL, cluster rendering and actual core-shape
-  throughput. CPU two-rank tests establish distributed control correctness only.
-- Actual Slurm submission/accounting, site credentials/resource names and costs.
+- Agent-executed A5000/H200/B200 checks, multi-GPU NCCL, cluster rendering and
+  actual core-shape throughput. CPU two-rank tests establish distributed control
+  correctness only; user-provided H200 startup evidence is described above.
+- Agent-executed Slurm submission/accounting, site credentials/resource names and costs.
   No approved overall GPU-hour or credit budget is inferred.
 - Complete asset availability for every task on offline cluster nodes; only the
   locally exercised VideoUnmask simulator path is verified.

@@ -16,6 +16,7 @@ from stmem.evaluation.timing import process_memory
 from stmem.models.router import LocalRouter
 from stmem.tracking import RunTracker
 from stmem.training.gain_labels import label_path
+from stmem.training.logging_options import positive_log_every, resolve_logging
 from stmem.training.runtime import seed_all, load_checkpoint, environment_manifest
 from stmem.training.checkpoints import (
     atomic_save,
@@ -48,7 +49,9 @@ def _validation_ranking_pairs(context_arrays, validation_ids, validation_gain, e
     return indices[distinct, 0], indices[distinct, 1]
 
 
-def train_router(cfg, *, resume=None, stop_file=None):
+def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
+    logging_options = resolve_logging(cfg, log_every=log_every)
+    validation_every = positive_log_every(cfg["training"]["log_every"])
     if int(os.environ.get("WORLD_SIZE", "1")) > 1:
         raise ValueError("Small router training uses one worker; select the one-GPU router resource profile")
     seed_all(cfg["seed"])
@@ -136,6 +139,7 @@ def train_router(cfg, *, resume=None, stop_file=None):
         "planned_steps": steps,
         "resume_step": start,
         "environment": environment,
+        "logging": {**logging_options, "validation_every": validation_every},
     }
     with RunTracker(
         cfg,
@@ -160,24 +164,14 @@ def train_router(cfg, *, resume=None, stop_file=None):
             optimizer.step()
             current = step + 1
             stop = bool(stop_file and Path(stop_file).exists())
-            if current % cfg["training"]["log_every"] == 0 or current == steps or stop:
-                router.eval()
-                with torch.no_grad():
-                    val_pred = torch.cat(
-                        [
-                            router(query[ids].to(device), candidate[ids].to(device)).cpu()
-                            for ids in np.array_split(val_ids, max(1, len(val_ids) // 1024 + 1))
-                        ]
-                    )
-                    val_loss = F.smooth_l1_loss(val_pred, gain[val_ids] / scale)
-                    sign_agreement = ((val_pred > 0) == (gain[val_ids] > 0)).float().mean()
+            # More frequent scalar diagnostics must not run the full held-out
+            # label evaluation more often or alter its established cadence.
+            validation_due = current % validation_every == 0 or current == steps or stop
+            if current == start + 1 or current % logging_options["log_every"] == 0 or validation_due:
                 row = {
                     "step": current,
                     "training_gain_loss": float(loss.detach()),
-                    "conditional_label_validation_loss": float(val_loss),
-                    "validation_sign_agreement": float(sign_agreement),
                     "target_scale_training_only": scale,
-                    "seconds": time.perf_counter() - started,
                     "train_labels": len(train_ids),
                     "validation_labels": len(val_ids),
                     "validation_rank_pairs": len(ranking_left),
@@ -193,15 +187,31 @@ def train_router(cfg, *, resume=None, stop_file=None):
                     else 0,
                     **process_memory(),
                 }
+                if validation_due:
+                    router.eval()
+                    with torch.no_grad():
+                        val_pred = torch.cat(
+                            [
+                                router(query[ids].to(device), candidate[ids].to(device)).cpu()
+                                for ids in np.array_split(val_ids, max(1, len(val_ids) // 1024 + 1))
+                            ]
+                        )
+                        val_loss = F.smooth_l1_loss(val_pred, gain[val_ids] / scale)
+                        sign_agreement = ((val_pred > 0) == (gain[val_ids] > 0)).float().mean()
+                    row.update(
+                        conditional_label_validation_loss=float(val_loss),
+                        validation_sign_agreement=float(sign_agreement),
+                    )
+                    if len(ranking_left):
+                        predicted_order = (val_pred[ranking_left] - val_pred[ranking_right]).sign()
+                        expected_order = (gain[val_ids][ranking_left] - gain[val_ids][ranking_right]).sign()
+                        row["validation_within_context_rank_agreement"] = float(
+                            (predicted_order == expected_order).float().mean()
+                        )
+                row["seconds"] = time.perf_counter() - started
                 row["training_examples_per_second"] = row["training_examples_this_allocation"] / max(
                     row["seconds"], 1e-9
                 )
-                if len(ranking_left):
-                    predicted_order = (val_pred[ranking_left] - val_pred[ranking_right]).sign()
-                    expected_order = (gain[val_ids][ranking_left] - gain[val_ids][ranking_right]).sign()
-                    row["validation_within_context_rank_agreement"] = float(
-                        (predicted_order == expected_order).float().mean()
-                    )
                 with (directory / "metrics.jsonl").open("a") as stream:
                     stream.write(json.dumps(row) + "\n")
                 print(json.dumps(row), flush=True)
