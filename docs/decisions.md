@@ -79,3 +79,23 @@
     Full-scale throughput, long-run learning and H200/B200 rendering remain to be
     measured. The main contribution is the experimental memory interface, with
     no claim of first hierarchical memory or an exact pooled-attention theorem.
+
+12. **Checkpoint-only action visualization (19 October follow-up).** Teacher,
+    compact and Perceiver training refresh at most two fixed training examples
+    in the existing W&B run. Select the first available decision at least two
+    action chunks into execution, or the first valid decision for short episodes;
+    selection never ranks policy outputs. Compact previews use the declared
+    UNIFORM reader, so no untrained router is presented as learned retrieval.
+    Full causal evidence is retained; only the displayed current cloud is capped.
+    Fixed noise, target-free inference inputs, restored RNG/modes and rank-zero
+    unwrapped inference isolate this diagnostic from optimization. Evidence is
+    FP32 as in deployment; decoder autocast matches the run's precision.
+    Pinned Panda forward kinematics projects commanded joints into world TCP
+    positions, with deployment clipping explicitly recorded alongside raw actions.
+    The observed TCP validates the coordinate frame before any scene is emitted.
+    Paths are command targets, not simulated trajectories or success measures;
+    gripper/joint details remain in tables. Synthetic unphysical states and
+    official evaluation without expert targets do not receive these comparisons.
+    Partial-stop saves skip visualization; per-event costs and the final loop
+    wall time including diagnostics are logged. See
+    [evidence/wandb_scenes.json](evidence/wandb_scenes.json) for measured checks.

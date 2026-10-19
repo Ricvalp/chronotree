@@ -187,6 +187,9 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
     started = time.perf_counter()
     records_seen = 0
     allocated = int(os.environ.get("STMEM_ALLOCATED_GPUS", os.environ.get("STMEM_GPUS", world)))
+    from stmem.visualization.diagnostics import PolicyScenes
+
+    scenes = PolicyScenes(cfg, data, policy, tracker, stage=stage, cache=cache, precision=precision)
 
     def save(step, candidate=False):
         own_rng = capture_rng()
@@ -283,12 +286,13 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
         if world > 1:
             torch.distributed.broadcast(flag, 0)
         stopped = bool(flag.item())
-        if (
+        checkpoint_due = (
             current_step % cfg["training"]["checkpoint_every"] == 0
             or current_step in cfg["training"]["checkpoint_steps"]
             or stopped
             or current_step == steps
-        ):
+        )
+        if checkpoint_due:
             save(current_step, current_step in cfg["training"]["checkpoint_steps"])
         if current_step % cfg["training"]["log_every"] == 0 or stopped or current_step == steps:
             loss_tensor = torch.tensor(local_loss, device=device)
@@ -324,6 +328,8 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
                     stream.write(json.dumps(record) + "\n")
                 print(json.dumps(record), flush=True)
                 tracker.log({f"train/{key}": value for key, value in record.items()}, step=current_step)
+        if checkpoint_due and not (stopped and current_step < steps):
+            scenes.log(current_step)
         if stopped and current_step < steps:
             if rank == 0:
                 atomic_json(
@@ -347,7 +353,19 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker):
             synthetic=data.synthetic,
         )
         (directory / "partial.json").unlink(missing_ok=True)
-        tracker.summary({"training/completed_steps": steps})
+        elapsed = time.perf_counter() - started
+        tracker.summary(
+            {
+                "training/completed_steps": steps,
+                "training/seconds_including_diagnostics": elapsed,
+                "training/allocated_gpu_hours_including_diagnostics": elapsed * allocated / 3600
+                if device.type == "cuda"
+                else 0.0,
+                "training/gpu_peak_allocated_bytes_rank": torch.cuda.max_memory_allocated(device)
+                if device.type == "cuda"
+                else 0,
+            }
+        )
         tracker.summary(
             {"checkpoint/sha256": json.loads((directory / "complete.json").read_text())["checkpoint_sha256"]}
         )

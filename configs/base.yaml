@@ -9,6 +9,10 @@ tracking:
   project: chronotree
   entity: null
   dir: null
+  scenes:
+    enabled: true
+    count: 2
+    max_points: 1024
 paths:
   data_root: data
   cache_root: cache

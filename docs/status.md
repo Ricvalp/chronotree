@@ -25,6 +25,9 @@ known local installation, action-alignment, calibration or simulator blocker.
 - W&B logging for all training stages, evaluation/selection shards, label jobs,
   aggregate reports and smoke diagnostics. Default offline recording, optional
   online transport, stable resume identities and one writer per DDP allocation.
+- Two fixed W&B point-cloud/action comparisons at policy-training checkpoints,
+  calibrated Panda TCP projections, exact action tables, bounded scene size and
+  separately measured diagnostic overhead.
 
 ## Actually tested locally
 
@@ -34,7 +37,7 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 
 | Check | Measured outcome |
 |---|---|
-| Core test suite | **86 passed**; 12.37s after W&B integration |
+| Core test suite | **135 passed**; 12.42s after W&B scene integration |
 | Package lock/install | `uv lock --check`, `uv pip check`, imports and lint pass |
 | Real data | One 1,251,608,544-byte VideoUnmask archive; SHA verified; two episodes prepared |
 | Expert replay | Both complete sampled training episodes reached official success; exact nonterminal post-command qpos match |
@@ -69,6 +72,25 @@ The caller-side logging diagnostic measured 0.139 ms median and 0.205 ms p95 for
 work, network and cluster filesystem costs; it is not an end-to-end training
 slowdown estimate. Online authentication, dashboard delivery and offline upload
 have not been exercised against a W&B account.
+
+The scene follow-up is recorded in
+[evidence/wandb_scenes.json](evidence/wandb_scenes.json). On the existing two
+VideoUnmask episodes, enabling checkpoint scenes left model, optimizer,
+scheduler, scaler, sampler and all saved RNG states bit-identical to the disabled
+run; partial-stop/resume also matched exactly. Real SDK scene and action-table
+files were decoded and checked. Both scenes took 0.174–0.339 s and about 201 KB
+per checkpoint on this 256-point debug model. These numbers include inference,
+CPU conversion and media serialization, but exclude network delivery and run
+startup/shutdown; full-size cluster overhead remains unmeasured. All 464 prepared
+robot observations agree with the pinned forward kinematics within 0.51 μm and
+1.24 μrad. Local GPU artifacts are under `runs/wandb_scenes_verified/`.
+
+A separate two-rank CPU check completed with one W&B writer and two scenes per
+checkpoint. Both ranks' RNG states matched exactly. This pair did **not** produce
+bit-identical weights: tiny differences already existed in the checkpoint saved
+before the first scene callback (maximum 2.91e-11; final maximum 2.98e-8). It
+verifies distributed completion and media ownership, not exact CPU numerical
+reproducibility. Artifacts are under `runs/wandb_scenes_ddp/`.
 
 These checks do not establish manipulation performance. Expert replay verifies
 the data/control interface. A two-update learned model's deliberately short

@@ -1,0 +1,211 @@
+{
+  "date": "2026-10-19",
+  "scope": "Bounded implementation diagnostics on two already-prepared training episodes; no scientific success or cluster-throughput claim",
+  "source_at_gpu_check": {
+    "git": "2594dda2c22d942ba5a0b83885c8817ff3f791b7",
+    "dirty": true,
+    "source_sha256": "3767f79b35091baa794f81f1cbca47dbbaf0a9730ef0cf6bcc889c8e84f68487"
+  },
+  "source_at_final_media_reference_check": {
+    "git": "2594dda2c22d942ba5a0b83885c8817ff3f791b7",
+    "dirty": true,
+    "source_sha256": "42c98fb3d6fd613e2248888f65803152f79388b220688905d027a5ae6bf19e27"
+  },
+  "tests": {
+    "command": "uv run pytest -q",
+    "passed": 135,
+    "seconds": 12.42,
+    "targeted_final_media_tests": 3,
+    "ruff": "passed",
+    "actual_device_doctor": "FP32/BF16/FP16 attention and matmul forward/backward passed"
+  },
+  "defaults": {
+    "count": 2,
+    "max_cloud_points": 1024,
+    "max_overlay_points_per_path": 128,
+    "schedule": "scheduled, candidate and final checkpoints; skip partial-stop saves",
+    "fixed_example_index": "first valid index >= 2 * horizon, or first valid index for short episodes",
+    "context_by_stage": {
+      "teacher": "FULL",
+      "compact": "UNIFORM at main budget",
+      "perceiver": "PERCEIVER"
+    },
+    "noise": "fixed per scene, independent of training RNG"
+  },
+  "geometry": {
+    "pinned_maniskill_revision": "07be6fbc66350ddca200abfb0a11b692f078f7fd",
+    "frame": "world",
+    "tcp": "panda_hand_tcp",
+    "base_translation_m": [
+      -0.615,
+      0,
+      0
+    ],
+    "tcp_hand_offset_m": {
+      "panda_wristcam": 0.1034,
+      "panda_stick": 0.15
+    },
+    "local_real_observations_checked": 464,
+    "max_position_error_m": 5.07e-07,
+    "max_rotation_error_rad": 1.24e-06,
+    "scene_acceptance_tolerances": {
+      "position_m": 0.0001,
+      "rotation_rad": 0.001
+    },
+    "commands": "predicted arm clipping and task-specific gripper mapping match deployment; raw predictions and masked GT are also logged"
+  },
+  "gpu_check": {
+    "artifact_root": "runs/wandb_scenes_verified",
+    "device": "NVIDIA RTX 5000 Ada Generation",
+    "config": "configs/debug/real_teacher.yaml",
+    "model_width": 64,
+    "points": 256,
+    "horizon": 8,
+    "episodes": 2,
+    "steps_per_run": 2,
+    "checkpoint_state_bit_identical": {
+      "enabled": {
+        "model": true,
+        "optimizer": true,
+        "scheduler": true,
+        "scaler": true,
+        "rng_by_rank": true,
+        "sampler": true
+      },
+      "resumed": {
+        "model": true,
+        "optimizer": true,
+        "scheduler": true,
+        "scaler": true,
+        "rng_by_rank": true,
+        "sampler": true
+      }
+    },
+    "partial_stop_no_media": true,
+    "events": {
+      "disabled": [],
+      "enabled": [
+        {
+          "diagnostics/scenes_seconds": 0.3386294059455395,
+          "diagnostics/scenes_media_seconds": 0.055133868008852005,
+          "diagnostics/scenes_bytes": 200514,
+          "diagnostics/scenes_logged": 2,
+          "diagnostics/scenes_skipped": {},
+          "progress/step": 1,
+          "tracking/attempt": 1
+        },
+        {
+          "diagnostics/scenes_seconds": 0.1737097818404436,
+          "diagnostics/scenes_media_seconds": 0.021015174686908722,
+          "diagnostics/scenes_bytes": 200531,
+          "diagnostics/scenes_logged": 2,
+          "diagnostics/scenes_skipped": {},
+          "progress/step": 2,
+          "tracking/attempt": 1
+        }
+      ],
+      "resumed": [
+        {
+          "diagnostics/scenes_seconds": 0.2824866194278002,
+          "diagnostics/scenes_media_seconds": 0.020761307328939438,
+          "diagnostics/scenes_bytes": 200531,
+          "diagnostics/scenes_logged": 2,
+          "diagnostics/scenes_skipped": {},
+          "progress/step": 2,
+          "tracking/attempt": 2
+        }
+      ]
+    }
+  },
+  "media_validation": {
+    "real_wandb_sdk_files_decoded": true,
+    "Object3D_and_action_tables": true,
+    "resume_history_and_old_attempt_paths": true,
+    "masked_targets_excluded": true,
+    "scalar_api_still_rejects_tensors_and_media": true,
+    "only_current_cloud_used": true,
+    "rank_zero_only": true
+  },
+  "unmeasured": [
+    "Full-size policy scene cost",
+    "H200/B200 and cluster filesystem cost",
+    "Authenticated online dashboard delivery and offline sync"
+  ],
+  "timing_scope": "Per-event inference, CPU conversion, scene construction and SDK media serialization/binding; excludes W&B startup/shutdown, network delivery and background service work. Debug job timings may include contention and do not estimate end-to-end cluster slowdown.",
+  "ddp_check": {
+    "artifact_root": "runs/wandb_scenes_ddp",
+    "configuration": {
+      "config": "configs/debug/real_teacher.yaml",
+      "world_size": 2,
+      "effective_batch": 2,
+      "steps": 2,
+      "points": 256,
+      "episodes": 2,
+      "task": "VideoUnmask",
+      "device": "cpu",
+      "precision": "fp32"
+    },
+    "checks": [
+      {
+        "step": 1,
+        "before_first_scene_callback": true,
+        "model_bit_exact": false,
+        "model_differing_tensors": 1,
+        "model_max_abs_difference": 2.9103830456733704e-11,
+        "optimizer_bit_exact": false,
+        "optimizer_max_abs_difference": 2.9103830456733704e-11,
+        "rng_bit_exact_by_rank": [
+          true,
+          true
+        ],
+        "scheduler_bit_exact": true,
+        "scaler_bit_exact": true,
+        "sampler_bit_exact": true,
+        "source_hashes": [
+          "3767f79b35091baa794f81f1cbca47dbbaf0a9730ef0cf6bcc889c8e84f68487",
+          "3767f79b35091baa794f81f1cbca47dbbaf0a9730ef0cf6bcc889c8e84f68487"
+        ]
+      },
+      {
+        "step": 2,
+        "before_first_scene_callback": false,
+        "model_bit_exact": false,
+        "model_differing_tensors": 2,
+        "model_max_abs_difference": 2.9802322387695312e-08,
+        "optimizer_bit_exact": false,
+        "optimizer_max_abs_difference": 5.820766091346741e-11,
+        "rng_bit_exact_by_rank": [
+          true,
+          true
+        ],
+        "scheduler_bit_exact": true,
+        "scaler_bit_exact": true,
+        "sampler_bit_exact": true,
+        "source_hashes": [
+          "3767f79b35091baa794f81f1cbca47dbbaf0a9730ef0cf6bcc889c8e84f68487",
+          "3767f79b35091baa794f81f1cbca47dbbaf0a9730ef0cf6bcc889c8e84f68487"
+        ]
+      }
+    ],
+    "ddp_completion_and_media_checks_passed": true,
+    "rng_bit_exact_both_ranks_both_checkpoints": true,
+    "model_and_optimizer_bit_exact": false,
+    "interpretation": "Small CPU numerical differences already exist in checkpoint 1, saved BEFORE the first scene callback. This pair verifies DDP completion, single-writer media and RNG preservation, but does not establish bit-exact model/optimizer equality. Baseline CPU nondeterminism is plausible, not separately proven.",
+    "one_writer_per_run": true,
+    "enabled_media_files": {
+      "pointclouds": 4,
+      "action_tables": 4
+    },
+    "source_change_note": "Root reports the only source edit during the pair was a one-line package docstring in src/stmem/visualization/__init__.py; no behavior change."
+  },
+  "final_source": {
+    "git": "2594dda2c22d942ba5a0b83885c8817ff3f791b7",
+    "dirty": true,
+    "source_sha256": "39d7cf617b8069291c8d24cea71b90ed523dcde18a8750e8c9d6c730458114b4"
+  },
+  "changes_after_gpu_check": [
+    "Scene metadata records its attempt-specific W&B files directory for resume inspection",
+    "Joint-limit validity uses the same FP32 representation as deployment; exact-boundary regression test added"
+  ],
+  "final_geometry_reproduces_saved_gpu_scene_payloads": 4
+}

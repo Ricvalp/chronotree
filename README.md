@@ -64,11 +64,26 @@ system polling. Initialization and final flushing occur outside training loops
 and policy latency measurements. Scalar logging has small, measured overhead,
 not a zero-overhead guarantee.
 
+Real-data teacher, compact and Perceiver training also log two fixed training
+examples at scheduled checkpoint saves, including candidate and final checkpoints.
+In W&B, open `diagnostics/scene_0` and `diagnostics/scene_1` for the current point
+cloud and predicted/recorded tool-center targets; the matching
+`diagnostics/actions_0` and `diagnostics/actions_1` tables retain raw predictions,
+deployed commands, ground truth and validity masks. These are training diagnostics,
+not closed-loop validation results. Synthetic examples are skipped because their
+random robot states do not satisfy the real robot's kinematics. The default cap
+is 1,024 observed points per scene; disable scenes with
+`tracking.scenes.enabled: false`. Scene inference and media serialization add work,
+recorded separately as `diagnostics/scenes_seconds` and `diagnostics/scenes_bytes`.
+The [cluster guide](docs/hpc.md#training-point-clouds-and-action-comparisons)
+explains the visualization, schedule and settings.
+
 `tracking.json` retains the W&B ID across resumes, while `tracking_history.jsonl`
 maintains monotonic W&B history indices independently of checkpoint progress.
 Offline attempts produce separate files with the same ID; sync them in attempt
-order, using `wandb sync --append` for subsequent attempts. Detailed setup and
-commands are in [docs/hpc.md](docs/hpc.md).
+order, using `wandb sync --append` for subsequent attempts. Keep each attempt's
+`files/media` directory with its `.wandb` file so point clouds and action tables
+can also be uploaded. Detailed setup and commands are in [docs/hpc.md](docs/hpc.md).
 
 ## Install
 

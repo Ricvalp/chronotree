@@ -111,10 +111,79 @@ uv run wandb sync --append /absolute/path/to/wandb/offline-run-TIMESTAMP-RUNID-a
 
 Use the actual directory paths from `tracking.json` and the selected W&B storage
 root. Retain all offline directories from resumed work until they have been synced.
+Keep the attempt's `files/media` directory alongside its `.wandb` file: scene and
+table references in the history require those files during sync. Copying only the
+`.wandb` file is insufficient for media.
 The installed `uv run wandb sync --help` and W&B's
 [sync command reference](https://docs.wandb.ai/models/ref/cli/wandb-sync)
 describe the upload command. No login, online upload or sync is performed
 automatically by the planner.
+
+### Training point clouds and action comparisons
+
+Teacher, compact and Perceiver policy training reuse two fixed early training
+decisions, from distinct episodes when available, to show how predictions change
+at scheduled checkpoints. The teacher uses FULL context; the compact diagnostic
+uses UNIFORM context at the configured main budget; Perceiver uses its resampled
+context. These examples do not select checkpoints or replace the planned
+closed-loop validation. Router fitting does not run these action-policy scenes.
+Official validation/test episodes have no recorded expert action chunks, so they
+do not receive a predicted-versus-ground-truth comparison.
+
+The defaults inherited from `configs/base.yaml` are:
+
+```yaml
+tracking:
+  scenes:
+    enabled: true
+    count: 2
+    max_points: 1024
+```
+
+`count` accepts one or two fixed examples; `max_points` accepts 1–4,096 observed
+points per cloud, with small target-path overlays added separately. Set
+`enabled: false` to disable scene collection while retaining scalar metrics. Scenes follow
+`training.checkpoint_every` (1,000 updates in the core config), declared candidate
+checkpoint steps and the final update. There is no separate scene frequency or
+extra first-update preview. A partial-stop checkpoint skips scene collection so
+the remaining allocation time is available for saving training state.
+
+W&B panels `diagnostics/scene_0` and `diagnostics/scene_1` contain interactive
+[Object3D point clouds](https://docs.wandb.ai/models/ref/python/data-types/object3d).
+They show only the current observed RGB-D cloud in world coordinates. Green
+marks predicted tool-center targets, orange marks recorded targets, and magenta
+marks the observed current tool center. The paths come from the pinned Panda
+forward kinematics applied to joint commands; dotted connections show command
+order, not simulated motion, contact, or task success. Joint angles are not
+treated as Cartesian coordinates. Predicted joint targets use the same clipping
+as deployment; clipping counts appear in the scene caption and metadata, and raw
+predictions remain in the action table. Gripper commands are shown in the accompanying
+`diagnostics/actions_0` and `diagnostics/actions_1` tables, alongside raw/deployed
+arm commands, recorded targets and validity masks. Missing or padded targets are
+excluded from the path. The overlay checks its coordinate alignment against the
+observed robot state and skips inconsistent examples with a reason. Synthetic
+examples are explicitly skipped because their random proprioception does not
+describe a physically consistent robot pose.
+
+Only rank zero prepares scenes and predicts actions, using the unwrapped policy
+with gradients disabled and restoring its training modes and RNG state. Other
+ranks can wait at the next normal DDP synchronization. Additional inference,
+CPU conversion and media serialization have a cost: inspect
+`diagnostics/scenes_seconds` and `diagnostics/scenes_bytes` for each scene event.
+The scalar logging measurements do not measure this additional work. Scene media
+uses the existing W&B run and storage location; its metadata appears in
+`tracking_history.jsonl`, and the SDK retains the files under that attempt's
+`files/media` directory in offline mode as well.
+
+The final `training/seconds_including_diagnostics` and
+`training/allocated_gpu_hours_including_diagnostics` summaries include the final
+scene event. Scene totals, like training elapsed time, cover the current process
+attempt. A local two-update, 256-point real-data diagnostic measured 0.174–0.339 s
+and approximately 201 KB per **pair** of scenes plus action tables. This is a
+small debug-model measurement, not a full-size/H200 or online-upload estimate.
+The core checkpoint interval is 1,000 updates; measure its actual cost on the
+cluster using the emitted counters. Offline media decoding was tested; live
+dashboard delivery was not tested against an authenticated W&B account.
 
 ## Profiles and distributed training
 

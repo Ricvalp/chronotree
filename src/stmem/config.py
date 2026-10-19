@@ -78,6 +78,15 @@ def dependency(cfg: dict, name: str) -> Path:
 
 
 def validate_config(cfg: dict) -> None:
+    scenes = cfg.get("tracking", {}).get("scenes", {})
+    if not isinstance(scenes, dict) or set(scenes) - {"enabled", "count", "max_points"}:
+        raise ValueError("tracking.scenes accepts only enabled, count, max_points")
+    if not isinstance(scenes.get("enabled", True), bool):
+        raise ValueError("tracking.scenes.enabled must be boolean")
+    for key, low, high in (("count", 1, 2), ("max_points", 1, 4096)):
+        value = scenes.get(key, 2 if key == "count" else 1024)
+        if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+            raise ValueError(f"tracking.scenes.{key} must be an integer in [{low}, {high}]")
     m, t = cfg["model"], cfg["training"]
     if m["width"] % m["heads"]:
         raise ValueError("Model width must be divisible by attention heads")

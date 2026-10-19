@@ -68,7 +68,8 @@ class RunTracker:
 
     Explicit online initialization failures are errors, never silently unlogged
     training. Offline mode (the default) creates real .wandb files for later sync.
-    No model watch hooks, media, model uploads or system-polling thread is enabled.
+    No model watch hooks, model uploads or system-polling thread is enabled.
+    Small diagnostic scenes use an explicit CPU-only media API.
     """
 
     def __init__(self, cfg, directory, *, job_type, name=None, metadata=None, rank=0, resume=False):
@@ -229,15 +230,101 @@ class RunTracker:
             return
         started = time.perf_counter()
         row = _plain(values)
+        self._publish(row, row, step)
+        self._log_seconds += time.perf_counter() - started
+
+    def _publish(self, values, journal, step):
+        row = dict(values)
         row["progress/step"] = int(step) if step is not None else self._history_step
         row["tracking/attempt"] = self.identity["attempt"]
         # Reserve before publishing; network/disk work continues in W&B's service.
-        self._journal.write(json.dumps({"history_step": self._history_step, "metrics": row}) + "\n")
+        plain = {
+            **journal,
+            "progress/step": row["progress/step"],
+            "tracking/attempt": row["tracking/attempt"],
+        }
+        self._journal.write(json.dumps({"history_step": self._history_step, "metrics": plain}) + "\n")
         self._journal.flush()  # OS buffered; no per-record fsync on shared storage.
         self.run.log(row, step=self._history_step, commit=True)
         self._history_step += 1
         self._log_calls += 1
-        self._log_seconds += time.perf_counter() - started
+
+    def log_scenes(self, scenes, *, step):
+        """Explicit, bounded Object3D/Table logging; returns synchronous media cost.
+
+        SDK serialization and media-file binding happen on the caller. Uploads
+        run in its service. Scalar logging deliberately continues to reject
+        tensors/media. The journal stores metadata/file references, not clouds.
+        """
+        if not self.enabled or self._closed or not scenes:
+            return {"seconds": 0.0, "bytes": 0}
+        if len(scenes) > 2:
+            raise ValueError("At most two diagnostic scenes per checkpoint")
+        started = time.perf_counter()
+        with _preserve_rng():
+            import wandb
+
+            row, metadata = {}, {}
+            for index, scene in scenes.items():
+                if index not in (0, 1):
+                    raise ValueError("Scene indices must be 0 or 1")
+                key = f"diagnostics/scene_{index}"
+                row[key] = wandb.Object3D(scene.payload, caption=scene.caption)
+                info = _plain(scene.metadata)
+                table = []
+                for h, (raw, command, target, valid) in enumerate(
+                    zip(
+                        info["predicted_actions_raw"],
+                        info["predicted_actions_commanded"],
+                        info["recorded_actions_raw"],
+                        info["target_valid"],
+                        strict=True,
+                    )
+                ):
+                    for d in range(8):
+                        table.append(
+                            [
+                                h + 1,
+                                f"joint_{d + 1}" if d < 7 else "gripper",
+                                raw[d],
+                                command[d],
+                                target[d] if valid[d] else None,
+                                bool(valid[d]),
+                            ]
+                        )
+                row[f"diagnostics/actions_{index}"] = wandb.Table(
+                    columns=[
+                        "horizon",
+                        "component",
+                        "predicted_raw",
+                        "predicted_command",
+                        "ground_truth",
+                        "target_valid",
+                    ],
+                    data=table,
+                )
+                metadata[key] = {"caption": scene.caption, **info}
+            path = (
+                self.directory
+                / "diagnostics"
+                / f"attempt{self.identity['attempt']}_history{self._history_step:08d}.json"
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_json({"step": int(step), "scenes": metadata}, path)
+            self._publish(row, {"diagnostics/metadata_path": str(path.resolve())}, step)
+            # Public media serialization now returns paths bound by run.log.
+            references = {key: value.to_json(self.run) for key, value in row.items()}
+            atomic_json(
+                {
+                    "step": int(step),
+                    "scenes": metadata,
+                    "media": references,
+                    "wandb_files_directory": str(Path(self.run.dir).resolve()),
+                },
+                path,
+            )
+            size = sum((Path(self.run.dir) / ref["path"]).stat().st_size for ref in references.values())
+        return {"seconds": time.perf_counter() - started, "bytes": size}
 
     def summary(self, values):
         if not self.enabled or self._closed:
