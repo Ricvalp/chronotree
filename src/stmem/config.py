@@ -96,10 +96,17 @@ def validate_config(cfg: dict) -> None:
         raise ValueError("Execute horizon must be in [1, action horizon]")
     if t["effective_batch"] < 1 or t["steps"] < 1:
         raise ValueError("Invalid training budget")
-    for key, default in (("microbatch", 16), ("encoder_block_batch_size", 32)):
+    for key, default in (
+        ("microbatch", 16),
+        ("encoder_block_batch_size", 32),
+        ("prefetch_factor", 1),
+    ):
         value = t.get(key, default)
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise ValueError(f"training.{key} must be a positive integer")
+    workers = t.get("workers", 0)
+    if not isinstance(workers, int) or isinstance(workers, bool) or workers < 0:
+        raise ValueError("training.workers must be a nonnegative integer")
     if t.get("length_bucket_size", 1) != 1:
         raise ValueError(
             "training.length_bucket_size must be 1; ordered length buckets are no longer supported"

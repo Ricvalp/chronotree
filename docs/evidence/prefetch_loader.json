@@ -1,0 +1,281 @@
+{
+  "date": "2026-10-20",
+  "scope": "Implementation diagnostics only; not a full-dataset throughput or policy-quality result.",
+  "cpu_tests": {
+    "command": "uv run pytest",
+    "passed": 425,
+    "seconds": 72.05,
+    "additional_frozen_stage_checks": {
+      "command": "uv run pytest tests/test_training_prefetch.py",
+      "passed": 5,
+      "seconds": 22.83,
+      "new_test_cases": 2,
+      "scope": "Three strengthened existing integration tests plus two additional compact/Perceiver frozen-cache parity cases. Together with the full-suite run, 427 distinct test cases passed."
+    }
+  },
+  "device_doctor": {
+    "command": "uv run python -m stmem.doctor",
+    "gpu": "NVIDIA RTX 5000 Ada Generation",
+    "torch": "2.9.1+cu128",
+    "fp32": "passed",
+    "bf16": "passed",
+    "fp16": "passed"
+  },
+  "real_data_diagnostic": {
+    "command": "OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 WANDB_MODE=offline uv run python -m stmem.train --config runs/prefetch_loader_diagnostic/config.yaml --progress-every-seconds 10",
+    "config": {
+      "checkpoints": {
+        "compact": "{run_root}/seed{seed}/compact/selected.pt",
+        "teacher": "{run_root}/seed{seed}/teacher/selected.pt"
+      },
+      "data": {
+        "alignment": "verified_revision_registry_required",
+        "alignment_path": "data/alignment.json",
+        "benchmark_revision": "6503b26e00ff338611fceb039417fbc64826ccc8",
+        "clock": "recorded_frame",
+        "dataset_revision": "manifest_verified_at_download",
+        "decision_stride": 4,
+        "episodes_per_task": 2,
+        "fraction": 1.0,
+        "nominal_control_hz": 20,
+        "prepared_subdir": "prepared",
+        "process_every_observation": true,
+        "sensors": [
+          "front_rgb",
+          "wrist_rgb",
+          "front_depth",
+          "wrist_depth",
+          "camera_calibration",
+          "proprioception",
+          "goal_text",
+          "past_command"
+        ],
+        "simulator_revision": "07be6fbc66350ddca200abfb0a11b692f078f7fd",
+        "split": "train",
+        "synthetic": false,
+        "tasks": [
+          "VideoUnmask"
+        ]
+      },
+      "debug": true,
+      "evaluation": {
+        "episode_count": 50,
+        "max_steps": 1300,
+        "methods": [
+          "FULL",
+          "TREE",
+          "FLAT",
+          "UNIFORM",
+          "PERCEIVER",
+          "CURRENT"
+        ],
+        "seed": 1701,
+        "selection_episode_count": 2,
+        "split": "val",
+        "test_frozen_manifest": null,
+        "timeout_seconds": 1800,
+        "video_cap": 2
+      },
+      "geometry": {
+        "crop": [
+          [
+            -0.9,
+            -0.75,
+            -0.05
+          ],
+          [
+            0.75,
+            0.75,
+            1.25
+          ]
+        ],
+        "depth_unit": "millimetres_signed_int16",
+        "extrinsic_convention": "world_to_camera_cv",
+        "max_depth": 4.0,
+        "voxel_size": 0.005
+      },
+      "labels": {
+        "budgets": [
+          64,
+          128,
+          256
+        ],
+        "candidates": 4,
+        "contexts": 16000,
+        "exploration_fraction": 0.5,
+        "gain_epsilon": 1e-06,
+        "refresh_contexts": 8000,
+        "seed": 2026,
+        "split_fraction": 0.8
+      },
+      "model": {
+        "action_space": "joint_angle",
+        "archive_device": "cpu",
+        "block_size": 8,
+        "budget": 128,
+        "budgets": [
+          64,
+          128,
+          256
+        ],
+        "checkpoint_blocks": false,
+        "current_tokens": 64,
+        "decoder": "flow",
+        "encoder": "joint",
+        "encoder_options": {},
+        "execute": 4,
+        "flow_steps": 8,
+        "heads": 8,
+        "horizon": 16,
+        "layers": 4,
+        "mass_bias": true,
+        "max_conditioning_frames": 1300,
+        "max_execution_frames": 2600,
+        "max_text_bytes": 256,
+        "points": 256,
+        "router_width": 128,
+        "solver": "euler",
+        "text_layers": 2,
+        "visual_tokens": 32,
+        "width": 256
+      },
+      "paths": {
+        "cache_root": "cache",
+        "data_root": "data",
+        "run_root": "/home/rvalperga/chronotree/runs/prefetch_loader_diagnostic"
+      },
+      "profile": "a5000_debug",
+      "schema_version": 1,
+      "seed": 0,
+      "stage": "teacher",
+      "tracking": {
+        "dir": null,
+        "enabled": true,
+        "entity": null,
+        "mode": "offline",
+        "project": "chronotree",
+        "scenes": {
+          "enabled": false
+        },
+        "system_stats": true
+      },
+      "training": {
+        "checkpoint_every": 3,
+        "checkpoint_steps": [
+          3
+        ],
+        "context_mix": {
+          "current": 0.05,
+          "flat": 0.45,
+          "tree": 0.45,
+          "uniform": 0.05
+        },
+        "effective_batch": 64,
+        "encoder_block_batch_size": 32,
+        "grad_clip": 1.0,
+        "intermediate_probability": 0.5,
+        "length_bucket_size": 1,
+        "log_every": 1,
+        "lr": 0.0001,
+        "microbatch": 16,
+        "precision": "bf16",
+        "prefetch_factor": 1,
+        "resume_boundary": "optimizer_step",
+        "steps": 3,
+        "task_balanced": true,
+        "warmup_steps": 1,
+        "weight_decay": 0.01,
+        "workers": 2
+      }
+    },
+    "source": {
+      "dirty": true,
+      "git": "b1a651d8aa349e01e881203d5e6e15668cd1a1f7",
+      "source_sha256": "18644d50f0bc430ec0d256b691c5f1bf2cd12611e94b70e754ab38e2a2a6522b"
+    },
+    "provenance": {
+      "data": "f5180b7d8cf29cc8be2d0da4a4c0e9a822209faba4583894cd12123f3b2160ba",
+      "dependencies": {},
+      "effective_batch": 64,
+      "model": "5fe326a04fa27bac1922242305cb394c68e5320bb367f661425af558a9635a26",
+      "rank_assignment": "rotating_rank_v1",
+      "sampler": "task_balanced_shuffle_v2",
+      "seed": 0,
+      "training": "bfb2edd68cfdc4c3c9713732b9ea30f3d522a5cd618abb731b35d6144f17516c",
+      "training_engine": "padded_policy_batch_v1",
+      "world_size": 1
+    },
+    "environment": {
+      "details": {
+        "capability": [
+          8,
+          9
+        ],
+        "driver": "580.159.04",
+        "gpu": "NVIDIA RTX 5000 Ada Generation",
+        "packages": {
+          "PyYAML": "6.0.2",
+          "h5py": "3.14.0",
+          "mani-skill": "3.0.0b21",
+          "numpy": "1.26.4",
+          "robomme": "0.1.0",
+          "sapien": "3.0.3",
+          "torch": "2.9.1+cu128",
+          "torchvision": "0.24.1+cu128"
+        },
+        "platform": "Linux-6.17.0-1025-oem-x86_64-with-glibc2.39",
+        "python": "3.11.15 (main, Jun 11 2026, 04:03:40) [Clang 22.1.3 ]",
+        "torch_wheel_cuda": "12.8"
+      },
+      "sha256": "62ec2f884dca1653c846693025a3754f40b714b959b2632ecf7939d6fd7b19e1"
+    },
+    "data": "Two existing prepared VideoUnmask episodes with verified alignment; 256 points per observation.",
+    "updates": [
+      {
+        "step": 1,
+        "training_action_loss": 2.28092098236084,
+        "step_seconds": 1.5502490568906069,
+        "data_wait_seconds_rank": 0.7198084834963083,
+        "data_worker_load_seconds_rank": 0.18765725195407867,
+        "data_worker_pack_seconds_rank": 0.18435236252844334,
+        "gpu_peak_allocated_bytes_rank": 4998955008,
+        "gpu_peak_reserved_bytes_rank": 5161091072
+      },
+      {
+        "step": 2,
+        "training_action_loss": 1.6483978033065796,
+        "step_seconds": 0.4798204805701971,
+        "data_wait_seconds_rank": 0.01581406779587269,
+        "data_worker_load_seconds_rank": 0.0021822284907102585,
+        "data_worker_pack_seconds_rank": 0.13643701002001762,
+        "gpu_peak_allocated_bytes_rank": 5444302848,
+        "gpu_peak_reserved_bytes_rank": 5628755968
+      },
+      {
+        "step": 3,
+        "training_action_loss": 1.6382145881652832,
+        "step_seconds": 0.47350319288671017,
+        "data_wait_seconds_rank": 0.0683387853205204,
+        "data_worker_load_seconds_rank": 0.003049556165933609,
+        "data_worker_pack_seconds_rank": 0.12059714831411839,
+        "gpu_peak_allocated_bytes_rank": 5444302848,
+        "gpu_peak_reserved_bytes_rank": 5628755968
+      }
+    ],
+    "checkpoint": "runs/prefetch_loader_diagnostic/seed0/teacher/last.pt",
+    "complete": true,
+    "caveat": "One GPU, short local episodes fitting each worker's tiny episode cache. Worker startup is visible in update one. Does not predict 4-H200 throughput for 1600 episodes at 1024 points."
+  },
+  "implementation": {
+    "process_start": "spawn",
+    "workers_per_rank": 2,
+    "prefetch_factor": 1,
+    "activation_checkpointing_default": false,
+    "sample_order": "unchanged",
+    "packed_tensor_storages_per_microbatch": 17
+  },
+  "not_run": [
+    "Full-data H200/B200 throughput comparison",
+    "Slurm submission"
+  ]
+}

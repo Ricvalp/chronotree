@@ -6,10 +6,55 @@ import h5py
 import pytest
 import torch
 import yaml
-from stmem.config import load_config
+from stmem.config import load_config, validate_config
 from stmem.data.paths import alignment_path
 from stmem.data.prepare import prepare_task
 from stmem.training.runtime import validate_policy_config
+
+
+def test_policy_loader_defaults_and_debug_override():
+    for path in ("configs/teacher.yaml", "configs/compact.yaml", "configs/perceiver.yaml"):
+        cfg = load_config(path)
+        validate_config(cfg)
+        assert cfg["training"]["workers"] == 2
+        assert cfg["training"]["prefetch_factor"] == 1
+        assert cfg["training"]["effective_batch"] == 64
+        assert cfg["training"]["microbatch"] == 16
+        assert cfg["model"]["checkpoint_blocks"] is False
+    debug = load_config("configs/debug/teacher.yaml")
+    validate_config(debug)
+    assert debug["training"]["workers"] == 0
+    assert debug["model"]["checkpoint_blocks"] is False
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("workers", -1),
+        ("workers", 1.5),
+        ("workers", True),
+        ("workers", "2"),
+        ("workers", None),
+        ("prefetch_factor", 0),
+        ("prefetch_factor", -1),
+        ("prefetch_factor", 1.5),
+        ("prefetch_factor", True),
+        ("prefetch_factor", "1"),
+        ("prefetch_factor", None),
+    ],
+)
+def test_invalid_loader_settings_fail_before_worker_creation(key, value):
+    cfg = load_config("configs/debug/teacher.yaml")
+    cfg["training"][key] = value
+    with pytest.raises(ValueError, match=f"training.{key}"):
+        validate_config(cfg)
+
+
+def test_loader_settings_can_be_omitted_for_explicit_configs():
+    cfg = load_config("configs/debug/teacher.yaml")
+    del cfg["training"]["workers"]
+    del cfg["training"]["prefetch_factor"]
+    validate_config(cfg)
 
 
 def test_real_debug_rollout_preserves_checkpoint_contract():

@@ -50,6 +50,138 @@ class PackedBlocks:
     blocks_per_example: list[int]
 
 
+@dataclass(frozen=True)
+class PackedFrameInfo:
+    """Non-tensor identity needed to rebuild a canonical CPU frame."""
+
+    point_count: int
+    time: float
+    source: str
+    event_id: str
+    source_index: int
+    action_available: bool
+
+    @classmethod
+    def from_frame(cls, frame):
+        return cls(
+            len(frame.points),
+            frame.time,
+            frame.source,
+            frame.event_id,
+            frame.source_index,
+            frame.action_available,
+        )
+
+
+@dataclass(frozen=True)
+class PackedDecisionInfo:
+    """Bookkeeping only; these IDs and counts are never model features."""
+
+    goal: str
+    task: str
+    episode_id: str
+    index: int
+    conditioning: tuple[PackedFrameInfo, ...]
+    execution_prefix: tuple[PackedFrameInfo, ...]
+    current: PackedFrameInfo
+
+    @property
+    def conditioning_frames(self):
+        return len(self.conditioning)
+
+    @property
+    def execution_history_frames(self):
+        return len(self.execution_prefix)
+
+
+@dataclass
+class PackedPolicyBatch:
+    """Raw CPU inputs carried between workers and the training process.
+
+    Historical frames occupy a fixed number of contiguous tensor storages,
+    independent of episode length. In particular, do not attach the original
+    Decisions here: their thousands of individual tensors would all be sent
+    through multiprocessing. No learned features are retained in this payload.
+    Targets are separate supervision and are never consumed by batch_context.
+    """
+
+    history: PackedBlocks
+    current_points: torch.Tensor
+    current_valid: torch.Tensor
+    current_state: torch.Tensor
+    clocks: torch.Tensor
+    target_chunk: torch.Tensor
+    target_valid: torch.Tensor
+    metadata: list[PackedDecisionInfo]
+    block_size: int
+
+    @property
+    def history_lengths(self):
+        return [m.conditioning_frames + m.execution_history_frames for m in self.metadata]
+
+    def decisions(self):
+        """Rebuild canonical views for consumers of frozen episode caches.
+
+        The teacher uses metadata directly and never needs this Python frame
+        reconstruction. Returned tensors share the packed CPU storage; exact
+        original point counts, identities and Python clocks are restored.
+        """
+        from stmem.data.canonical import Decision, Frame
+
+        def frame(info, points, valid, state, action):
+            return Frame(
+                points=points[: info.point_count],
+                valid=valid[: info.point_count],
+                proprio=state,
+                previous_action=action,
+                action_available=info.action_available,
+                time=info.time,
+                source=info.source,
+                event_id=info.event_id,
+                source_index=info.source_index,
+            )
+
+        result, block = [], 0
+        for owner, info in enumerate(self.metadata):
+            banks = []
+            for entries in (info.conditioning, info.execution_prefix):
+                frames = []
+                for start in range(0, len(entries), self.block_size):
+                    for offset, identity in enumerate(entries[start : start + self.block_size]):
+                        frames.append(
+                            frame(
+                                identity,
+                                self.history.points[block, offset],
+                                self.history.valid[block, offset],
+                                self.history.state[block, offset],
+                                self.history.action[block, offset],
+                            )
+                        )
+                    block += 1
+                banks.append(frames)
+            current = frame(
+                info.current,
+                self.current_points[owner, 0],
+                self.current_valid[owner, 0],
+                self.current_state[owner, :15],
+                self.current_state[owner, 15:23],
+            )
+            result.append(
+                Decision(
+                    current,
+                    banks[0],
+                    banks[1],
+                    self.target_chunk[owner],
+                    self.target_valid[owner],
+                    info.goal,
+                    info.task,
+                    info.episode_id,
+                    info.index,
+                )
+            )
+        return result
+
+
 def _validate_banks(decisions):
     for decision in decisions:
         seen = set()
@@ -83,6 +215,8 @@ def _validate_banks(decisions):
 
 def pack_blocks(decisions, block_size):
     """Collate raw CPU frames once; no padding across an entire episode's points."""
+    if block_size < 1:
+        raise ValueError("History block size must be positive")
     _validate_banks(decisions)
     blocks, owners, slots, sources, completed, lengths = [], [], [], [], [], []
     for owner, decision in enumerate(decisions):
@@ -135,6 +269,48 @@ def pack_blocks(decisions, block_size):
     )
 
 
+def pack_policy_batch(decisions, block_size):
+    """Collate all policy inputs on CPU, suitable for a background worker."""
+    decisions = list(decisions)
+    if not decisions:
+        raise ValueError("A policy batch must contain at least one decision")
+    history = pack_blocks(decisions, block_size)
+    n = max(len(d.current.points) for d in decisions)
+    points = torch.zeros(len(decisions), 1, n, 6)
+    valid = torch.zeros(len(decisions), 1, n, dtype=torch.bool)
+    states = torch.zeros(len(decisions), 24)
+    for i, decision in enumerate(decisions):
+        current = decision.current
+        count = len(current.points)
+        points[i, 0, :count].copy_(current.points)
+        valid[i, 0, :count].copy_(current.valid)
+        states[i, :15].copy_(current.proprio)
+        states[i, 15:23].copy_(current.previous_action)
+        states[i, 23] = float(current.action_available)
+    return PackedPolicyBatch(
+        history=history,
+        current_points=points,
+        current_valid=valid,
+        current_state=states,
+        clocks=_clocks(decisions, "cpu"),
+        target_chunk=torch.stack([d.target_chunk for d in decisions]).cpu(),
+        target_valid=torch.stack([d.target_valid for d in decisions]).cpu(),
+        metadata=[
+            PackedDecisionInfo(
+                d.goal,
+                d.task,
+                d.episode_id,
+                d.index,
+                tuple(PackedFrameInfo.from_frame(frame) for frame in d.conditioning),
+                tuple(PackedFrameInfo.from_frame(frame) for frame in d.execution_prefix),
+                PackedFrameInfo.from_frame(d.current),
+            )
+            for d in decisions
+        ],
+        block_size=block_size,
+    )
+
+
 def _leaf_metadata(anchor, lower, upper, time_min, time_max, now, source, visual, completed):
     """Tensor equivalent of metadata() for unit-mass depth/scale-zero leaves."""
     shape = time_min.shape
@@ -174,9 +350,9 @@ def _clocks(decisions, device):
     )
 
 
-def encode_history_bank(policy, decisions, clocks):
+def encode_history_bank(policy, decisions, clocks, *, packed=None):
     encoder, device = policy.encoder, policy.device
-    packed = pack_blocks(decisions, encoder.block_size)
+    packed = packed if packed is not None else pack_blocks(decisions, encoder.block_size)
     b, k = len(decisions), len(packed.owner)
     width = encoder.width
     if not k:
@@ -251,14 +427,17 @@ def encode_history_bank(policy, decisions, clocks):
     )
 
 
-def encode_current_bank(policy, decisions, clocks):
-    n = max(len(d.current.points) for d in decisions)
-    points = torch.zeros(len(decisions), 1, n, 6)
-    valid = torch.zeros(len(decisions), 1, n, dtype=torch.bool)
-    for i, decision in enumerate(decisions):
-        count = len(decision.current.points)
-        points[i, 0, :count].copy_(decision.current.points)
-        valid[i, 0, :count].copy_(decision.current.valid)
+def encode_current_bank(policy, decisions, clocks, *, packed_batch=None):
+    if packed_batch is None:
+        n = max(len(d.current.points) for d in decisions)
+        points = torch.zeros(len(decisions), 1, n, 6)
+        valid = torch.zeros(len(decisions), 1, n, dtype=torch.bool)
+        for i, decision in enumerate(decisions):
+            count = len(decision.current.points)
+            points[i, 0, :count].copy_(decision.current.points)
+            valid[i, 0, :count].copy_(decision.current.valid)
+    else:
+        points, valid = packed_batch.current_points, packed_batch.current_valid
     visual = policy.encoder.visual.forward_batched(
         points.to(policy.device),
         valid.to(policy.device),
@@ -332,16 +511,36 @@ def records_bank(policy, record_lists, clocks):
     )
 
 
-def batch_context(policy, decisions, *, evidences=None, record_lists=None, perceiver=False, progress=None):
+def batch_context(
+    policy,
+    decisions,
+    *,
+    evidences=None,
+    record_lists=None,
+    perceiver=False,
+    progress=None,
+    packed_batch=None,
+):
     """Encode/pack all examples, then adapt padded tokens with batched GEMMs."""
     device = policy.device
-    clocks = _clocks(decisions, device)
+    if packed_batch is not None:
+        if len(packed_batch.metadata) != len(decisions):
+            raise ValueError("Packed inputs must contain one entry per decision")
+        if packed_batch.block_size != policy.encoder.block_size:
+            raise ValueError("Packed history uses a different encoder block size")
+        clocks = packed_batch.clocks.to(device)
+    else:
+        clocks = _clocks(decisions, device)
     if evidences is None:
         if progress is not None:
             progress.update("encoding_history")
-        history = encode_history_bank(policy, decisions, clocks)
-        current = encode_current_bank(policy, decisions, clocks)
-        text = policy.text_encoder([d.goal for d in decisions])
+        history = encode_history_bank(
+            policy, decisions, clocks, packed=None if packed_batch is None else packed_batch.history
+        )
+        current = encode_current_bank(policy, decisions, clocks, packed_batch=packed_batch)
+        text = policy.text_encoder(
+            [d.goal for d in (decisions if packed_batch is None else packed_batch.metadata)]
+        )
     else:
         if len(evidences) != len(decisions):
             raise ValueError("One cached evidence bank is required per decision")
@@ -352,7 +551,9 @@ def batch_context(policy, decisions, *, evidences=None, record_lists=None, perce
     if progress is not None:
         progress.update("forward")
     states = (
-        torch.stack(
+        packed_batch.current_state.to(device)
+        if packed_batch is not None
+        else torch.stack(
             [
                 torch.cat(
                     [
@@ -405,7 +606,7 @@ def batch_context(policy, decisions, *, evidences=None, record_lists=None, perce
                 [len(e.archive.leaves) for e in evidences],
                 device=device,
             ),
-        "history_context_tokens": history_valid.sum(dim=1),
+            "history_context_tokens": history_valid.sum(dim=1),
             "current_visual_tokens": current.valid.sum(dim=1),
         },
     )

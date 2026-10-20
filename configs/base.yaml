@@ -64,7 +64,7 @@ model:
   max_execution_frames: 2600
   max_conditioning_frames: 1300
   action_space: joint_angle
-  checkpoint_blocks: true
+  checkpoint_blocks: false
   archive_device: cpu
   encoder_options: {}
 training:
@@ -85,7 +85,8 @@ training:
   task_balanced: true
   length_bucket_size: 1
   resume_boundary: optimizer_step
-  workers: 0
+  workers: 2
+  prefetch_factor: 1
 labels:
   contexts: 16000
   refresh_contexts: 8000

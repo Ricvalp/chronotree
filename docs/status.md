@@ -42,6 +42,13 @@ fresh run. The original diagnosis is recorded in
   are global batch 64, per-GPU microbatch 16 and 32 encoder blocks per chunk.
   Teacher training constructs tensor leaf banks directly; exact trees remain
   available for compact selection, caching and evaluation.
+- Persistent CPU processes load and pack upcoming policy microbatches, with
+  two workers per rank and one prefetched microbatch per worker by default.
+  Worker processes reuse the decision index and independently read HDF5;
+  debug configurations retain the synchronous `training.workers: 0` path.
+  Activation checkpointing is disabled in the core defaults; ordinary saved
+  training checkpoints remain enabled. This preserves batch 64/microbatch 16,
+  sampler ordering and complete causal histories.
 - Chronological streaming evaluation, conditioning-bank reset, chunked continuous
   joint actions, finite-action checks, empty terminal responses, official statuses,
   per-episode atomic results, videos, timing/storage/transfer counters and reports.
@@ -73,7 +80,7 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 
 | Check | Measured outcome |
 |---|---|
-| Core test suite | **396 passed** in 51.42s; one additional dynamic-DDP gradient regression passed in 2.21s |
+| Core test suite | **425 passed** in 72.05 s; subsequent five-case prefetch integration run passed in 22.83 s, including two new cases (**427 distinct tests** across commands) |
 | Package lock/install | `uv lock --check`, `uv pip check`, imports and lint pass |
 | Real data | One 1,251,608,544-byte VideoUnmask archive; SHA verified; two episodes prepared |
 | Expert replay | Both complete sampled training episodes reached official success; exact nonterminal post-command qpos match |
@@ -99,6 +106,9 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 | Batched training invariants | Serial/batched outputs and gradients, masks, causal boundaries, cached readers, remainder weighting, exact resume and two-rank CPU DDP pass |
 | Batched cached pipeline | CPU synthetic teacher → HDF5 cache → compact/Perceiver → TREE/FLAT labels and routers → all six readers passed in 8.79 s; frozen encoders remain identical |
 | W&B system telemetry | Actual offline SDK recorded GPU utilization/memory/power/temperature/clocks and CPU/RAM metrics with the new default |
+| Background loader invariants | Bounded work queue, persistent worker PIDs, joined workers after exceptions, retry identity and pre/post-action HDF5 parity pass |
+| Background training parity | Zero/two workers preserve model, optimizer, RNG and sampler state exactly; stop/resume, two-rank CPU DDP and frozen compact/Perceiver paths pass |
+| Background loader CUDA diagnostic | Three real-subset BF16 teacher updates at 256 points, global batch 64/microbatch 16, two workers and no activation checkpointing: 1.550, 0.480, 0.474 s/update; peak allocated memory 5.444 GB |
 
 Portable measured summaries are saved in
 [evidence/validation.json](evidence/validation.json),
@@ -122,9 +132,42 @@ The real-data check used only two short, locally cached episodes. Neither check
 predicts the full 1,600-episode H200 shared-storage training rate. Local artifacts
 remain ignored under `runs/batched_teacher_diagnostic/`,
 `runs/batched_real_diagnostic/` and `runs/batching_system_stats_diagnostic/`.
-These measurements used microbatch 8. The subsequent user-requested defaults
-of microbatch 16/global batch 64 have configuration validation only; their
-throughput and memory use have not yet been measured.
+These local measurements used microbatch 8. A later read-only W&B snapshot
+of the user's four-H200 run `3c2db37b57ccb22a`, fetched at 11:19:53 UTC on
+20 October, contains updates 1–387 with microbatch 16/global batch 64.
+Mean update time was 7.685 s; rank-zero synchronous loading alone took
+5.746 s, or 74.77% of total update time. Rank zero logged peak allocated
+PyTorch memory of 2.058 GB. This motivates overlapping CPU work with GPU
+training; the timing remainder includes packing, transfers and distributed
+waiting and is not a pure GPU-compute measurement. The snapshot remains
+ignored under `runs/gpu_utilization_audit/`. These are measurements from the
+user's cluster job, not a locally executed full-data benchmark.
+
+Background-loader checks are recorded in
+[evidence/prefetch_loader.json](evidence/prefetch_loader.json). CPU tests verify
+that zero versus two workers preserves training state exactly, prefetched
+future batches do not alter stop/resume, and two DDP ranks can each run two
+workers. Synthetic compact and Perceiver training retains the same model,
+optimizer, RNG and sampler states with zero/two workers; frozen encoders stay
+identical to the selected teacher. Loader tests cover the bounded queue,
+persistent processes, failure cleanup, overflow retry identity and HDF5
+pre/post-action alignment parity.
+
+On the RTX 5000 Ada, three real teacher updates used the existing two verified
+VideoUnmask episodes, 256 points per observation, width 256, global batch 64,
+microbatch 16, BF16, two workers, prefetch factor one and activation checkpointing
+disabled. Updates took 1.550, 0.480 and 0.474 s; waits for packed inputs were
+0.720, 0.016 and 0.068 s. Peak allocated PyTorch memory was 5.444 GB. The device
+doctor was rerun and FP32/BF16/FP16 checks passed. Artifacts remain ignored under
+`runs/prefetch_loader_diagnostic/`.
+
+This diagnostic has only two short local episodes, which fit each worker's
+episode cache. It is not a full-data speed comparison or a forecast for
+1,600 episodes at 1,024 points on four H200s. Worker startup is visible in the
+first update. Shared-storage contention may still limit the full run, and
+compact/Perceiver frozen-cache reads remain in the training process; background
+workers only perform raw observation loading and CPU packing. No Slurm job or
+full-data H200/B200 benchmark was launched for this implementation.
 
 The W&B follow-up is recorded separately in
 [evidence/wandb_validation.json](evidence/wandb_validation.json), with fresh local

@@ -240,12 +240,29 @@ dimensions are averaged before examples are averaged, preserving the loss weight
 of short terminal chunks. Teacher history is never truncated to make a profile fit.
 
 Historical visual blocks are processed in tensor batches of at most 32, controlled
-by `training.encoder_block_batch_size`, with block checkpointing retained. This
-setting limits an encoder call, not the number of blocks retained from an
-example. Task-balanced shuffled sampling no longer sorts decisions into the
+by `training.encoder_block_batch_size`. This setting limits an encoder call, not
+the number of blocks retained from an example. Activation checkpointing is off
+by default (`model.checkpoint_blocks: false`); enabling it trades additional
+backward computation for lower activation memory. Task-balanced shuffled sampling
+no longer sorts decisions into the
 previous periodic short-to-long history cycle (`training.length_bucket_size: 1`).
 The plain regression debug head and optional framewise encoder remain available.
-Use a fresh run directory for this batching change; prepared data remains usable.
+
+Policy training loads and packs upcoming microbatches in persistent CPU worker
+processes. The default `training.workers: 2` is **per GPU/rank**;
+`training.prefetch_factor: 1` permits two queued or in-flight microbatches per
+rank. Four GPUs therefore use eight loading workers plus four training processes
+within the current 16-CPU allocation. The queue is bounded, and training retains
+the same sample order, causal histories and global batch of 64. Set `workers: 0`
+for synchronous loading with the same packing; debug configs do this explicitly.
+Worker startup makes the first fetch slower, so assess throughput over completed
+updates after startup. No full-data HPC speedup is assumed.
+For compact/Perceiver stages, frozen feature-cache reads and context selection
+remain in the training process. Loader parity, resume/DDP checks and the bounded
+local CUDA diagnostic are recorded in
+[the verification status](docs/status.md).
+
+Use a fresh run directory for these changed settings; prepared data remains usable.
 See the [batching configuration and fresh four-GPU launch](docs/hpc.md#batched-policy-training).
 
 Examples after official checkpoint selection:

@@ -144,6 +144,7 @@ class MemoryPolicy(nn.Module):
         perceiver=False,
         return_stats=False,
         progress=None,
+        packed_batch=None,
     ):
         if isinstance(decision, (list, tuple)):
             from stmem.models.batched_policy import batch_context
@@ -159,9 +160,12 @@ class MemoryPolicy(nn.Module):
                 record_lists=records,
                 perceiver=perceiver,
                 progress=progress,
+                packed_batch=packed_batch,
             )
             prediction = self.decoder(noisy_action, time, context, bias)
             return (prediction, stats) if return_stats else prediction
+        if packed_batch is not None:
+            raise ValueError("Packed policy inputs require a list of decisions")
         evidence = evidence if evidence is not None else self.encode(decision)
         records = evidence.archive.leaves if records is None else records
         context, bias = self.context(evidence, records, perceiver=perceiver)

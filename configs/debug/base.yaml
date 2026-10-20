@@ -37,6 +37,7 @@ training:
   checkpoint_every: 6
   checkpoint_steps: [6, 12]
   log_every: 1
+  workers: 0
 labels:
   contexts: 12
   refresh_contexts: 6

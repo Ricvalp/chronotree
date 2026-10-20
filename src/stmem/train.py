@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 import argparse
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import json
 import math
 import os
@@ -15,6 +15,7 @@ from stmem.config import load_config, validate_config, run_dir, dependency, dige
 from stmem.models.policy import MemoryPolicy, choose_records
 from stmem.models.action_flow import flow_sample, masked_mse
 from stmem.training.data import TrainingData, rank_positions
+from stmem.training.loader import PolicyBatchLoader
 from stmem.training.logging_options import positive_log_every, positive_progress_seconds, resolve_logging
 from stmem.training.progress import TrainingProgress, print_json
 from stmem.training.runtime import (
@@ -70,21 +71,23 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None, log_every=None, pro
     ) as tracker:
         with TrainingProgress(directory, logging["progress_every_seconds"], rank=rank) as progress:
             progress.update("device_setup", stage=stage, run_attempt=tracker.identity.get("attempt"))
-            result = _train_policy(
-                cfg,
-                stage,
-                resume=resume,
-                stop_file=stop_file,
-                tracker=tracker,
-                logging=logging,
-                progress=progress,
-            )
+            with ExitStack() as resources:
+                result = _train_policy(
+                    cfg,
+                    stage,
+                    resume=resume,
+                    stop_file=stop_file,
+                    tracker=tracker,
+                    logging=logging,
+                    progress=progress,
+                    resources=resources,
+                )
         if result == 75:
             tracker.finish(status="checkpointed_partial", exit_code=75)
         return result
 
 
-def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, progress):
+def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, progress, resources):
     from stmem.doctor import choose_precision
     from stmem.data.cache import FrozenCache
 
@@ -244,10 +247,37 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
     from stmem.visualization.diagnostics import PolicyScenes
 
     scenes = PolicyScenes(cfg, data, policy, tracker, stage=stage, cache=cache, precision=precision)
+    startup_progress(
+        "loader_starting",
+        workers_per_rank=cfg["training"].get("workers", 0),
+        prefetch_factor=cfg["training"].get("prefetch_factor", 1),
+    )
+    loader_started = time.perf_counter()
+    loader = resources.enter_context(
+        PolicyBatchLoader(
+            data,
+            start=start,
+            steps=steps,
+            batch=batch,
+            rank=rank,
+            world=world,
+            microbatch=microbatch,
+            retain_for_retry=precision == "fp16",
+        )
+    )
     startup_metrics = {
         "data_seconds": data_seconds,
+        "loader_start_seconds": time.perf_counter() - loader_started,
         "total_seconds": time.perf_counter() - startup_started,
     }
+    tracker.summary(
+        {
+            "training/loader_workers_per_rank": loader.workers,
+            "training/loader_prefetch_factor": loader.prefetch_factor,
+            "training/loader_prefetch_capacity_rank": loader.prefetch_capacity,
+            "training/activation_checkpointing": policy.encoder.checkpoint_blocks,
+        }
+    )
     if normalizer_seconds is not None:
         startup_metrics["normalizer_seconds"] = normalizer_seconds
     startup_progress("training_ready", optimizer_step=start, **startup_metrics)
@@ -306,8 +336,11 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
         context_tokens = torch.zeros((), device=device, dtype=torch.long)
         history_lengths = []
         data_loading_seconds = 0.0
+        worker_load_seconds = 0.0
+        worker_pack_seconds = 0.0
         progress.begin_update(step, local_n)
         positions = rank_positions(step, batch, rank, world)
+        prepared_batches = loader.read_update(step)
         for local_index in range(0, local_n, microbatch):
             batch_positions = positions[local_index : local_index + microbatch]
             progress.update(
@@ -322,11 +355,15 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
                 execution_history_frames=None,
             )
             loading_started = time.perf_counter()
-            decisions = data.sample_positions(batch_positions)
+            loaded = next(prepared_batches)
             data_loading_seconds += time.perf_counter() - loading_started
-            action = torch.stack([d.target_chunk for d in decisions]).to(device)
-            valid = torch.stack([d.target_valid for d in decisions]).to(device)
-            lengths = [len(d.conditioning) + len(d.execution_prefix) for d in decisions]
+            worker_load_seconds += loaded.load_seconds
+            worker_pack_seconds += loaded.pack_seconds
+            packed = loaded.packed
+            decisions = list(packed.metadata) if cache is None else packed.decisions()
+            action = packed.target_chunk.to(device)
+            valid = packed.target_valid.to(device)
+            lengths = [d.conditioning_frames + d.execution_history_frames for d in packed.metadata]
             history_lengths.extend(lengths)
             progress.update(
                 "cache_loading" if cache is not None else "encoding_history",
@@ -336,8 +373,10 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
                 task=decisions[0].task if len(decisions) == 1 else None,
                 episode_id=decisions[0].episode_id if len(decisions) == 1 else None,
                 decision_index=decisions[0].index if len(decisions) == 1 else None,
-                conditioning_frames=len(decisions[0].conditioning) if len(decisions) == 1 else None,
-                execution_history_frames=len(decisions[0].execution_prefix) if len(decisions) == 1 else None,
+                conditioning_frames=packed.metadata[0].conditioning_frames if len(decisions) == 1 else None,
+                execution_history_frames=packed.metadata[0].execution_history_frames
+                if len(decisions) == 1
+                else None,
             )
             evidences = None if cache is None else [cache.evidence(d) for d in decisions]
             context_records = None
@@ -363,6 +402,7 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
                         perceiver=stage == "perceiver",
                         return_stats=True,
                         progress=progress,
+                        packed_batch=packed,
                     )
                     loss = masked_mse(prediction, target, valid)
                 if not torch.isfinite(loss):
@@ -432,6 +472,11 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
                 "seconds": elapsed,
                 "step_seconds": step_seconds,
                 "data_loading_seconds_rank": data_loading_seconds,
+                "data_wait_seconds_rank": data_loading_seconds,
+                "data_worker_load_seconds_rank": worker_load_seconds,
+                "data_worker_pack_seconds_rank": worker_pack_seconds,
+                "data_prefetch_workers_rank": loader.workers,
+                "data_prefetch_capacity_rank": loader.prefetch_capacity,
                 "examples": (current_step - start) * batch,
                 "effective_batch": batch,
                 "microbatch_size_rank": microbatch,

@@ -286,3 +286,41 @@
     Existing batch-8 benchmark evidence remains labeled with its measured
     configuration. The new defaults have configuration/inheritance validation;
     no new training or Slurm job was launched for this edit.
+
+20. **Background loading and activation memory (20 October follow-up).** At the
+    user's request, policy training now loads and packs upcoming microbatches
+    in persistent CPU worker processes. Core defaults are two workers per
+    rank and `training.prefetch_factor: 1`, bounding outstanding work at two
+    microbatches per rank. Four GPUs use eight loading workers plus four
+    training processes within the current 16-CPU allocation. Workers use
+    `spawn`, independent HDF5 access and one Torch thread each; the parent
+    supplies its existing decision index rather than repeating startup scans.
+    They prepare CPU inputs only. Trainable encoding, stochastic policy
+    draws and context selection remain in the training process, as do frozen
+    feature-cache reads for compact/Perceiver training.
+
+    Core `model.checkpoint_blocks` is now false, explicitly trading additional
+    activation memory for avoiding recomputation during backward. Optimizer
+    checkpoint saving is unaffected. The global batch remains 64, microbatch
+    remains 16, and the sampler, rank assignment, exact history coverage and
+    matched TREE/FLAT supervision remain unchanged. This change does not
+    implement bulk HDF5 reads, prefix-only loading or rank rebalancing.
+    `training.workers: 0` retains synchronous loading with the same packing;
+    debug configurations use it to avoid process overhead in tiny checks.
+
+    Process startup affects the first batch. A bounded queue is not a claim
+    of bounded bytes independent of history length, nor does it preload the
+    full dataset. Use a fresh run directory for the changed core settings;
+    prepared observations and verified alignment records are reused.
+    The full CPU suite passed 425 tests; a subsequent five-case integration
+    run added two compact/Perceiver parity cases, giving 427 distinct passing
+    tests across commands. Checks cover identical zero/two-worker training
+    state, stop/resume, two-rank CPU DDP, bounded work, persistent processes,
+    cleanup, retry inputs and both action-alignment conventions.
+    A three-update RTX 5000 Ada diagnostic used two verified real episodes,
+    256 points, global batch 64/microbatch 16 and the new defaults. It
+    completed with finite losses and a checkpoint; the short episodes fit
+    the worker caches. Measurements and scope are in
+    [evidence/prefetch_loader.json](evidence/prefetch_loader.json).
+    No full-data H200/B200 throughput improvement or model-quality result
+    is claimed.

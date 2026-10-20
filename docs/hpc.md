@@ -331,9 +331,17 @@ Both the planner and `python -m stmem.train` accept runtime logging overrides:
 For policies, `train/step_seconds` measures the latest update: sample loading,
 history encoding, forward/backward passes, optimizer work and existing control
 synchronization. It excludes checkpoint writes, metric reporting and point-cloud
-diagnostics. `train/data_loading_seconds_rank` measures the reporting rank's
-sample-loading calls within that update; frozen-cache reads are not included
-in this narrower counter. The cumulative `train/examples_per_second` includes
+diagnostics. `train/data_wait_seconds_rank` measures how long the reporting rank
+waits for packed CPU microbatches; `train/data_loading_seconds_rank` is retained
+as an alias. With `training.workers: 0`, this includes synchronous reading and
+packing. With workers enabled, it measures exposed wait after background work
+overlaps previous GPU work. Frozen-cache reads remain outside this counter.
+`train/data_worker_load_seconds_rank` and `train/data_worker_pack_seconds_rank`
+sum reading and packing durations for consumed batches. Those durations can
+overlap each other and GPU work; do not add them to update time.
+`train/data_prefetch_workers_rank` and `train/data_prefetch_capacity_rank`
+record the actual process count and outstanding microbatch bound.
+The cumulative `train/examples_per_second` includes
 overhead from previous checkpoints and diagnostics. Under DDP, per-update timing
 and heartbeat fields describe rank zero, not a reduction of all ranks' timings.
 
@@ -479,7 +487,8 @@ Choose `--profile h200_4gpu` to render DDP training. One Slurm task runs **one**
 torchrun agent, with `--nnodes=1 --nproc-per-node=4`. Evaluation shards each request
 one GPU and use independent processes. Four replicas do not pool memory; use the
 configured microbatch/accumulation and block checkpointing to address a teacher
-replica OOM. The effective batch is fixed by the scientific config and must remain
+replica OOM. Block checkpointing is available but disabled by default. The
+effective batch is fixed by the scientific config and must remain
 divisible by the world size. Do not alter it silently for throughput.
 
 ### Batched policy training
@@ -497,11 +506,15 @@ available even when examples have different history lengths.
 Core settings in `configs/base.yaml` are:
 
 ```yaml
+model:
+  checkpoint_blocks: false
 training:
   effective_batch: 64
   microbatch: 16
   encoder_block_batch_size: 32
   length_bucket_size: 1
+  workers: 2
+  prefetch_factor: 1
 tracking:
   system_stats: true
 ```
@@ -510,8 +523,42 @@ tracking:
 forward/backward pass. The trainer caps it at that rank's share of the global
 batch. `encoder_block_batch_size` bounds the number of historical visual blocks
 in one encoder call, across examples; remaining blocks are processed in further
-calls, with gradient checkpointing enabled by the core model config. It does not
-limit history length or change the optimizer batch size.
+calls. It does not limit history length or change the optimizer batch size.
+Activation checkpointing is disabled by default to avoid recomputing historical
+visual features during backward. Set `model.checkpoint_blocks: true` if measured
+activation memory requires that trade-off; optimizer checkpoint saving is separate
+and remains enabled.
+
+`training.workers` now controls persistent background processes for policy
+training. Each rank starts two CPU workers using the `spawn` start method. They
+read observations and pack CPU tensors for upcoming microbatches while that
+rank trains on the current one. HDF5 reads take place independently in each
+worker; no open HDF5 handle or CUDA context is passed to a worker. The existing
+decision index is reused, so workers do not repeat the full startup data scan.
+Model execution, random flow draws, context selection and all trainable encoding
+stay in the training process. Compact/Perceiver frozen feature-cache reads
+also remain there; the workers prepare raw observations and CPU input tensors.
+
+`prefetch_factor` is the number of outstanding microbatches allowed per worker.
+The default of one means at most two queued or in-flight microbatches per rank,
+in addition to the batch currently consumed. The queue does not preload the
+dataset. Its memory use still depends on history length and multiplies across
+ranks. Keep this bound small initially. Four ranks use eight loading workers
+plus four training processes: `STMEM_CPUS=16` is the total allocation, not a
+per-GPU allowance. Workers use one Torch CPU thread each.
+The FP16 fallback also retains the current optimizer update's CPU batches until
+the step succeeds so an overflow retry uses exactly the same inputs; BF16/FP32
+do not retain that additional retry set.
+
+Set `training.workers: 0` for synchronous loading and packing; the debug base
+config explicitly uses this setting. `prefetch_factor` must be a positive
+integer even when unused by the synchronous path. Process startup and filling
+the first batch can take longer than later fetches. Compare several completed
+updates after startup, and check CPU/RAM use alongside GPU utilization.
+`startup/loader_start_seconds` measures initiation of the worker iterator;
+the first update's wait also includes worker imports and preparing its inputs.
+This change overlaps the existing HDF5 reader with training; it does not add
+bulk or prefix-only reads, rebalance rank assignments, or alter the sampler.
 
 | GPUs | Examples per GPU per update | Examples per batched pass | Passes accumulated per GPU |
 |---:|---:|---:|---:|
@@ -540,14 +587,14 @@ cluster before generating the new plan. From the repository root, create a
 separate, complete site file:
 
 ```bash
-cp hpc/site.env hpc/site_batched_4gpu.env
+cp hpc/site_4gpu.env hpc/site_prefetch_4gpu.env
 ```
 
 Edit only these assignments in the copy, preserving its other settings:
 
 ```bash
 STMEM_PROFILE=h200_4gpu
-STMEM_RUN_ROOT=/hpc/home/phi/rvalperga/chronotree/runs/batched_h200_4gpu
+STMEM_RUN_ROOT=/hpc/home/phi/rvalperga/chronotree/runs/prefetch_h200_4gpu
 ```
 
 Use your actual absolute shared run path if it differs from this example. Keep
@@ -555,17 +602,19 @@ the existing dataset/cache paths, Python path, resource and W&B settings. Then
 render into a separate directory under `hpc/generated/`:
 
 ```bash
-.venv/bin/python hpc/plan.py --site hpc/site_batched_4gpu.env \
-  --output-dir hpc/generated/core_seed0_validation_h200_4gpu_batched \
+.venv/bin/python hpc/plan.py --site hpc/site_prefetch_4gpu.env \
+  --output-dir hpc/generated/core_seed0_validation_h200_4gpu_prefetch \
   --plan core_seed0 --profile h200_4gpu --only seed0_teacher \
   --log-every 1 --progress-every-seconds 30 --dry-run
 ```
 
 Inspect that directory's `plan.json`, `configs/seed0_teacher.yaml` and
 `jobs/seed0_teacher.sbatch`. Confirm four GPUs, `--nproc-per-node=4`, effective
-batch 64, microbatch 16, block batch 32, the fresh run root and system stats enabled.
+batch 64, microbatch 16, block batch 32, two workers per rank, prefetch factor one,
+activation checkpointing disabled, the fresh run root and system stats enabled.
 Replace `--dry-run` with `--submit` when ready to launch; omit `--resume` for this
-fresh experiment. The new run root gives it separate checkpoints and a new W&B
+fresh experiment. Do not resume the current run with these changed settings.
+The new run root gives it separate checkpoints and a new W&B
 run ID. The planner reads the site file itself; these commands do not require
 `STMEM_PYTHON` to have been exported into the interactive shell.
 
