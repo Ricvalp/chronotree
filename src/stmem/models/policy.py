@@ -133,7 +133,35 @@ class MemoryPolicy(nn.Module):
             bias = torch.zeros(len(history), device=self.device)
         return torch.cat([current, history]), torch.cat([torch.zeros(len(current), device=self.device), bias])
 
-    def forward(self, decision, noisy_action, time, *, records=None, evidence=None, perceiver=False):
+    def forward(
+        self,
+        decision,
+        noisy_action,
+        time,
+        *,
+        records=None,
+        evidence=None,
+        perceiver=False,
+        return_stats=False,
+        progress=None,
+    ):
+        if isinstance(decision, (list, tuple)):
+            from stmem.models.batched_policy import batch_context
+
+            if not decision:
+                raise ValueError("A policy batch must contain at least one decision")
+            if records is not None and evidence is None:
+                raise ValueError("Batched selected records require the matching evidence banks")
+            context, bias, stats = batch_context(
+                self,
+                decision,
+                evidences=evidence,
+                record_lists=records,
+                perceiver=perceiver,
+                progress=progress,
+            )
+            prediction = self.decoder(noisy_action, time, context, bias)
+            return (prediction, stats) if return_stats else prediction
         evidence = evidence if evidence is not None else self.encode(decision)
         records = evidence.archive.leaves if records is None else records
         context, bias = self.context(evidence, records, perceiver=perceiver)

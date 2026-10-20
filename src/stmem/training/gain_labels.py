@@ -39,8 +39,6 @@ def paired_gains(teacher, compact, evidence, before, after, action, valid, *, no
     predictions = compact.decoder(
         x[None].expand(len(contexts), -1, -1), u.expand(len(contexts)), padded, biases
     )
-    if len(contexts) == 1:
-        predictions = predictions[None]
     gains = []
     for prediction, records in zip(predictions, after):
         cost = len(records) - len(before)

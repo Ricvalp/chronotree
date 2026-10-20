@@ -14,7 +14,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from stmem.config import load_config, validate_config, run_dir, dependency, digest, source_revision
 from stmem.models.policy import MemoryPolicy, choose_records
 from stmem.models.action_flow import flow_sample, masked_mse
-from stmem.training.data import TrainingData
+from stmem.training.data import TrainingData, rank_positions
 from stmem.training.logging_options import positive_log_every, positive_progress_seconds, resolve_logging
 from stmem.training.progress import TrainingProgress, print_json
 from stmem.training.runtime import (
@@ -94,10 +94,10 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
     if device.type == "cpu":
         torch.set_num_threads(min(4, os.cpu_count() or 1))
     batch = cfg["training"]["effective_batch"]
-    if cfg["training"]["microbatch"] != 1:
-        raise ValueError("Variable-length reference trainer uses microbatch=1 with gradient accumulation")
     if batch % world:
         raise ValueError("Effective batch must be divisible by world size")
+    local_n = batch // world
+    microbatch = min(cfg["training"]["microbatch"], local_n)
 
     def startup_progress(phase, **values):
         if rank != 0:
@@ -177,6 +177,9 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
         "world_size": world,
         "effective_batch": batch,
         "training": digest(cfg["training"]),
+        "training_engine": "padded_policy_batch_v1",
+        "sampler": data.sampler_version,
+        "rank_assignment": "rotating_rank_v1",
     }
     if resume:
         startup_progress("resume_loading")
@@ -226,6 +229,9 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
             "training/intended_steps": steps,
             "training/world_size": world,
             "training/precision": precision,
+            "training/microbatch_size_rank": microbatch,
+            "training/microbatches_per_update_rank": math.ceil(local_n / microbatch),
+            "training/encoder_block_batch_size": cfg["training"]["encoder_block_batch_size"],
             "model/parameters": sum(p.numel() for p in policy.parameters()),
             "model/trainable_parameters": sum(p.numel() for p in policy.parameters() if p.requires_grad),
             "provenance": provenance,
@@ -233,7 +239,7 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
             "logging": logging,
         }
     )
-    records_seen = 0
+    records_seen = torch.zeros((), device=device, dtype=torch.long)
     allocated = int(os.environ.get("STMEM_ALLOCATED_GPUS", os.environ.get("STMEM_GPUS", world)))
     from stmem.visualization.diagnostics import PolicyScenes
 
@@ -267,7 +273,12 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
                 "scaler": scaler.state_dict(),
                 "rng_by_rank": states,
                 "step": step,
-                "sampler": {"next_global_position": step * batch, "boundary": "optimizer_step"},
+                "sampler": {
+                    "next_global_position": step * batch,
+                    "boundary": "optimizer_step",
+                    "version": data.sampler_version,
+                    "rank_assignment": "rotating_rank_v1",
+                },
                 "stage": stage,
                 "config": cfg,
                 "provenance": provenance,
@@ -290,16 +301,20 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
     while step < steps:
         update_started = time.perf_counter()
         optimizer.zero_grad(set_to_none=True)
-        local_loss = 0.0
-        local_n = batch // world
+        local_loss = torch.zeros((), device=device)
+        update_leaves = torch.zeros((), device=device, dtype=torch.long)
+        context_tokens = torch.zeros((), device=device, dtype=torch.long)
+        history_lengths = []
         data_loading_seconds = 0.0
         progress.begin_update(step, local_n)
-        for local_index, offset in enumerate(range(rank, batch, world)):
-            position = step * batch + offset
+        positions = rank_positions(step, batch, rank, world)
+        for local_index in range(0, local_n, microbatch):
+            batch_positions = positions[local_index : local_index + microbatch]
             progress.update(
-                "loading_sample",
+                "loading_batch",
                 example_in_update_rank=local_index + 1,
-                global_sample_position=position,
+                global_sample_position=batch_positions[0],
+                microbatch_size_rank=len(batch_positions),
                 task=None,
                 episode_id=None,
                 decision_index=None,
@@ -307,48 +322,60 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
                 execution_history_frames=None,
             )
             loading_started = time.perf_counter()
-            decision = data.sample_position(position)
+            decisions = data.sample_positions(batch_positions)
             data_loading_seconds += time.perf_counter() - loading_started
-            action = decision.target_chunk.to(device)
-            valid = decision.target_valid.to(device)
+            action = torch.stack([d.target_chunk for d in decisions]).to(device)
+            valid = torch.stack([d.target_valid for d in decisions]).to(device)
+            lengths = [len(d.conditioning) + len(d.execution_prefix) for d in decisions]
+            history_lengths.extend(lengths)
             progress.update(
                 "cache_loading" if cache is not None else "encoding_history",
-                task=decision.task,
-                episode_id=decision.episode_id,
-                decision_index=decision.index,
-                conditioning_frames=len(decision.conditioning),
-                execution_history_frames=len(decision.execution_prefix),
+                batch_tasks=[d.task for d in decisions],
+                history_frames_min_rank=min(lengths),
+                history_frames_max_rank=max(lengths),
+                task=decisions[0].task if len(decisions) == 1 else None,
+                episode_id=decisions[0].episode_id if len(decisions) == 1 else None,
+                decision_index=decisions[0].index if len(decisions) == 1 else None,
+                conditioning_frames=len(decisions[0].conditioning) if len(decisions) == 1 else None,
+                execution_history_frames=len(decisions[0].execution_prefix) if len(decisions) == 1 else None,
             )
-            evidence = None if cache is None else cache.evidence(decision)
-            sync = model.no_sync() if world > 1 and local_index < local_n - 1 else nullcontext()
-            with sync, torch.autocast(device.type, dtype=dtype, enabled=precision != "fp32"):
-                if evidence is None:
-                    evidence = policy.encode(decision)
-                progress.update("forward")
-                context_records = (
-                    context_sample(policy, evidence, cfg, position)
-                    if stage == "compact"
-                    else evidence.archive.leaves
-                )
-                noisy, flow_time, target, _ = flow_sample(action, valid, policy.normalizer)
-                if cfg["model"].get("decoder") == "regression":
-                    target = policy.normalizer.normalize(action).masked_fill(~valid, 0)
-                prediction = model(
-                    decision,
-                    noisy,
-                    flow_time,
-                    records=context_records,
-                    evidence=evidence,
-                    perceiver=stage == "perceiver",
-                )
-                loss = masked_mse(prediction, target, valid)
-            if not torch.isfinite(loss):
-                raise FloatingPointError(f"Nonfinite loss at optimizer step {step}")
-            progress.update("backward")
-            scaler.scale(loss / local_n).backward()
-            local_loss += float(loss.detach()) / local_n
-            records_seen += len(evidence.archive.leaves)
-            progress.update("example_complete", examples_completed_rank=local_index + 1)
+            evidences = None if cache is None else [cache.evidence(d) for d in decisions]
+            context_records = None
+            if stage == "compact":
+                context_records = [
+                    context_sample(policy, e, cfg, position)
+                    for e, position in zip(evidences, batch_positions)
+                ]
+            sync = model.no_sync() if world > 1 and local_index + len(decisions) < local_n else nullcontext()
+            # DDP's no_sync must cover both the forward and backward. Teacher
+            # encoders run inside model.forward so DDP tracks their gradients.
+            with sync:
+                with torch.autocast(device.type, dtype=dtype, enabled=precision != "fp32"):
+                    noisy, flow_time, target, _ = flow_sample(action, valid, policy.normalizer)
+                    if cfg["model"].get("decoder") == "regression":
+                        target = policy.normalizer.normalize(action).masked_fill(~valid, 0)
+                    prediction, stats = model(
+                        decisions,
+                        noisy,
+                        flow_time,
+                        records=context_records,
+                        evidence=evidences,
+                        perceiver=stage == "perceiver",
+                        return_stats=True,
+                        progress=progress,
+                    )
+                    loss = masked_mse(prediction, target, valid)
+                if not torch.isfinite(loss):
+                    raise FloatingPointError(f"Nonfinite loss at optimizer step {step}")
+                progress.update("backward")
+                # Equal example weight, including a smaller final microbatch.
+                weight = len(decisions) / local_n
+                scaler.scale(loss * weight).backward()
+            local_loss += loss.detach() * weight
+            update_leaves += stats["history_leaves"].sum()
+            context_tokens += stats["history_context_tokens"].sum()
+            progress.update("microbatch_complete", examples_completed_rank=local_index + len(decisions))
+        records_seen += update_leaves
         progress.update("optimizer_step")
         scaler.unscale_(optimizer)
         grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -393,7 +420,7 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
             or current_step == steps
         ):
             progress.update("logging")
-            loss_tensor = torch.tensor(local_loss, device=device)
+            loss_tensor = local_loss.detach().clone()
             if world > 1:
                 torch.distributed.all_reduce(loss_tensor)
                 loss_tensor /= world
@@ -407,10 +434,16 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
                 "data_loading_seconds_rank": data_loading_seconds,
                 "examples": (current_step - start) * batch,
                 "effective_batch": batch,
+                "microbatch_size_rank": microbatch,
+                "microbatches_per_update_rank": math.ceil(local_n / microbatch),
+                "history_frames_mean_rank": sum(history_lengths) / local_n,
+                "history_frames_max_rank": max(history_lengths),
+                "history_leaves_per_update_rank": int(update_leaves),
+                "history_context_tokens_mean_rank": float(context_tokens) / local_n,
                 "examples_per_second": (current_step - start) * batch / elapsed,
                 "allocated_gpu_hours": elapsed * allocated / 3600 if device.type == "cuda" else 0.0,
                 "gpu_profile": cfg["profile"],
-                "fine_leaves_processed_rank": records_seen,
+                "fine_leaves_processed_rank": int(records_seen),
                 "learning_rate": optimizer.param_groups[0]["lr"],
                 "gradient_norm_before_clip": float(grad_norm),
                 "amp_scale": scaler.get_scale(),

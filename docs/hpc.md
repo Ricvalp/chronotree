@@ -196,8 +196,15 @@ Tracking is enabled in `configs/base.yaml`, including the inherited debug config
 The default `offline` mode records W&B run data locally without credentials or
 network access. Training logs scalar metrics at the existing configured reporting
 cadence; evaluation logs episode outcomes and summaries. Only rank zero opens the
-training run under DDP. Gradient watching, automatic system polling and console
-capture are disabled to keep collection overhead small. The existing local
+training run under DDP. W&B system metrics are enabled by default through
+`tracking.system_stats: true`, which sets `x_disable_stats=False` and also enables
+system metadata. The **System** tab shows GPU utilization, allocated memory,
+power, temperature and clocks, plus CPU, RAM, disk and network metrics. The
+installed SDK samples these in its background service every 15 seconds. Under
+DDP, that single service monitors GPUs visible to rank zero, normally all GPUs
+in the single-node allocation; it does not create four duplicate W&B runs.
+`tracking.system_stats: false` is an explicit opt-out. Gradient watching and
+console capture remain disabled. The existing local
 checkpoints, metrics and per-episode results remain the durable experiment records.
 Model weights, videos and source files are not uploaded automatically. The SDK's
 [settings reference](https://docs.wandb.ai/models/ref/python/experiments/settings)
@@ -304,28 +311,19 @@ update of each launch, then at the configured cadence (every 50 updates by
 default), final completion and a requested partial stop. This introduces no
 per-example W&B calls or extra point-cloud previews.
 
-To use the fix, copy the updated source to the cluster checkout before the next
-launch. Existing prepared data, configuration, normalization and checkpoints
-remain compatible. A running process does not pick up the optimization; its
-already-paid initialization time cannot be recovered. After an existing job has
-checkpointed and exited, inspect a resume plan with:
-
-```bash
-"$STMEM_PYTHON" hpc/plan.py --plan core_seed0 --profile h200_1gpu \
-  --only seed0_teacher --resume --dry-run
-```
-
-Use the same site file/run root as the original job. Replace `--dry-run` with
-`--submit` when launching that resumed job. Do not submit a second writer into
-the same teacher run directory while its original allocation is active.
+Prepared data does not need to be regenerated for either the startup improvement
+or batched training. A running process cannot pick up source changes. The batching
+upgrade changes training configuration and sampler ordering, so start it in a
+fresh run directory using the [launch instructions below](#batched-policy-training).
+Do not use the older scalar trainer's checkpoints for that new experiment.
 
 ### Diagnosing slow training
 
 Both the planner and `python -m stmem.train` accept runtime logging overrides:
 
 ```bash
-"$STMEM_PYTHON" hpc/plan.py --plan core_seed0 --profile h200_1gpu \
-  --only seed0_teacher --resume \
+.venv/bin/python hpc/plan.py --plan core_seed0 --profile h200_1gpu \
+  --only seed0_teacher \
   --log-every 1 --progress-every-seconds 30 --dry-run
 ```
 
@@ -334,7 +332,7 @@ For policies, `train/step_seconds` measures the latest update: sample loading,
 history encoding, forward/backward passes, optimizer work and existing control
 synchronization. It excludes checkpoint writes, metric reporting and point-cloud
 diagnostics. `train/data_loading_seconds_rank` measures the reporting rank's
-`sample_position` calls within that update; frozen-cache reads are not included
+sample-loading calls within that update; frozen-cache reads are not included
 in this narrower counter. The cumulative `train/examples_per_second` includes
 overhead from previous checkpoints and diagnostics. Under DDP, per-update timing
 and heartbeat fields describe rank zero, not a reduction of all ranks' timings.
@@ -342,12 +340,19 @@ and heartbeat fields describe rank zero, not a reduction of all ranks' timings.
 `--progress-every-seconds 30` enables a small background thread that writes a
 flushed JSON heartbeat to stdout and `<stage>/progress.jsonl` even while the main
 thread is inside a long operation. It reports `phase` (for example,
-`loading_sample`, `encoding_history`, `forward`, `backward` or `checkpoint`),
+`loading_batch`, `encoding_history`, `forward`, `backward` or `checkpoint`),
 `optimizer_steps_completed`, the update in progress, completed examples on this
-rank, and elapsed phase/update time. Available task, episode and history lengths
-identify the current example. With one GPU and effective batch 32, a full update
-processes 32 examples sequentially; seeing `examples_completed_rank: 5` means
-five of those examples have finished their backward pass.
+rank, and elapsed phase/update time. With the core microbatch of eight, completed
+example counts advance after each batched backward pass: 8, 16, 24 and 32 on one
+GPU, or 8 on each rank for a four-GPU update. A step is one optimizer update over
+32 examples globally, not one example or one historical block. During batch
+encoding, multiple examples and their historical blocks are being processed.
+The `batch_tasks` field identifies tasks in the current microbatch. Completed
+update metrics include `train/microbatch_size_rank`,
+`train/microbatches_per_update_rank`, `train/history_frames_mean_rank`,
+`train/history_frames_max_rank`, `train/history_leaves_per_update_rank` and
+`train/history_context_tokens_mean_rank`. Compare these alongside step time:
+full-history computation still varies with the sampled decisions' history lengths.
 
 Heartbeat timings describe where the host is working or waiting; they are not
 synchronized CUDA kernel timings. Heartbeats make no tensor reads, CUDA calls,
@@ -368,19 +373,20 @@ are unchanged. Router training supports `--log-every` but preserves its original
 full-validation cadence. The planner passes heartbeats only to teacher, compact
 and Perceiver jobs.
 
-Existing processes cannot pick up these flags. To preserve progress from a
-running generated job, create its configured `STMEM_STOP_FILE`. For example,
-job 58082 in the original one-GPU teacher plan uses:
+Existing processes cannot pick up these flags. For a later restart of the same
+batched configuration, use `--resume` and retain its run root. To preserve progress
+from a running generated job, create the exact `STMEM_STOP_FILE` printed in its
+generated `.sbatch` script; its allocation-specific filename has this form:
 
 ```bash
-touch hpc/generated/core_seed0_validation_h200_1gpu/stops/seed0_teacher_58082.stop
+touch hpc/generated/PLAN_DIRECTORY/stops/seed0_teacher_JOB_ID.stop
 ```
 
 The request takes effect at the next completed optimizer update, when the job
 writes `last.pt` and exits with the intentional partial-run code 75. It can take
 time if the current update is slow. Wait for the job to exit and verify that
 `$STMEM_RUN_ROOT/seed0/teacher/last.pt` exists. Then copy the updated source to the
-cluster, generate the resume plan above, and replace `--dry-run` with `--submit`
+cluster, generate a plan with `--resume`, and replace `--dry-run` with `--submit`
 to launch. Keep the original run root; never run two writers in that directory.
 The planner retains already active allocations when invoked with `--resume`;
 it cannot change their logging options in place. No data re-preparation is needed.
@@ -476,31 +482,98 @@ configured microbatch/accumulation and block checkpointing to address a teacher
 replica OOM. The effective batch is fixed by the scientific config and must remain
 divisible by the world size. Do not alter it silently for throughput.
 
-For a fresh four-GPU comparison alongside the one-GPU run, copy the site settings:
+### Batched policy training
 
-```bash
-cp hpc/site.env hpc/site_4gpu.env
+Teacher, compact and Perceiver training use genuine batches of decision examples.
+Each example contains its current observation, available conditioning source,
+strictly past execution history and target action chunk. It is not a complete
+episode presented as one target. Current geometry, text, history blocks and the
+action decoder have batched paths; variable context lengths are padded with
+explicit validity masks. Padding cannot create occupied visual leaves or let one
+example attend to another. Partial blocks retain only their observed prefix;
+blocks never cross an example or source boundary. The full teacher history stays
+available even when examples have different history lengths.
+
+Core settings in `configs/base.yaml` are:
+
+```yaml
+training:
+  effective_batch: 32
+  microbatch: 8
+  encoder_block_batch_size: 32
+  length_bucket_size: 1
+tracking:
+  system_stats: true
 ```
 
-In the copy, set `STMEM_PROFILE=h200_4gpu` and change `STMEM_RUN_ROOT` to an
-absolute shared path for the comparison, for example
-`/hpc/home/phi/rvalperga/chronotree/runs/h200_4gpu`. Keep the existing data paths
-and site-specific resource and W&B settings. Then render:
+`microbatch` is the maximum number of decision examples processed per GPU in one
+forward/backward pass. The trainer caps it at that rank's share of the global
+batch. `encoder_block_batch_size` bounds the number of historical visual blocks
+in one encoder call, across examples; remaining blocks are processed in further
+calls, with gradient checkpointing enabled by the core model config. It does not
+limit history length or change the optimizer batch size.
+
+| GPUs | Examples per GPU per update | Examples per batched pass | Passes accumulated per GPU |
+|---:|---:|---:|---:|
+| 1 | 32 | 8 | 4 |
+| 4 | 8 | 8 | 1 |
+| 8 | 4 | 4 | 1 |
+
+The optimizer still sees 32 examples per update and the teacher still runs
+50,000 updates. Each example averages its own valid action dimensions before
+examples are averaged, so variable terminal padding does not change its weight.
+DDP synchronizes accumulated gradients at the update boundary. Debug configs
+retain smaller microbatches for bounded workstation checks.
+
+Task-balanced shuffled sampling replaces the old per-task length sorting. That
+sorting made all tasks advance from short to long history together, causing the
+observed 16-update cycle at batch 32. `length_bucket_size` must remain 1; the
+older ordered buckets are rejected. Batching does not recreate that ordering. History
+length still varies naturally, so correlate timings with the emitted history
+metrics. No H200/B200 speedup is guaranteed before measuring the new run.
+
+Start this implementation in a **new run directory** and keep any previous
+generated plan with active jobs intact. Existing data and alignment records are
+reused; old training checkpoints are not needed. Copy the updated source to the
+cluster before generating the new plan. From the repository root, create a
+separate, complete site file:
 
 ```bash
-"$STMEM_PYTHON" hpc/plan.py --site hpc/site_4gpu.env \
+cp hpc/site.env hpc/site_batched_4gpu.env
+```
+
+Edit only these assignments in the copy, preserving its other settings:
+
+```bash
+STMEM_PROFILE=h200_4gpu
+STMEM_RUN_ROOT=/hpc/home/phi/rvalperga/chronotree/runs/batched_h200_4gpu
+```
+
+Use your actual absolute shared run path if it differs from this example. Keep
+the existing dataset/cache paths, Python path, resource and W&B settings. Then
+render into a separate directory under `hpc/generated/`:
+
+```bash
+.venv/bin/python hpc/plan.py --site hpc/site_batched_4gpu.env \
+  --output-dir hpc/generated/core_seed0_validation_h200_4gpu_batched \
   --plan core_seed0 --profile h200_4gpu --only seed0_teacher \
   --log-every 1 --progress-every-seconds 30 --dry-run
 ```
 
-Inspect `hpc/generated/core_seed0_validation_h200_4gpu/plan.json` and its
-`jobs/seed0_teacher.sbatch`, then replace `--dry-run` with `--submit` to launch.
-An existing directory from an earlier dry-run can be reused. If it already
-contains active jobs, keep that live plan intact until the jobs finish or use
-an explicit separate `--output-dir` for another allocation. The comparison starts
-fresh: exact checkpoint resume requires the original GPU count. With effective
-batch 32, four ranks each accumulate eight microbatches of one example per
-update. The global batch and 50,000-update teacher schedule are unchanged.
+Inspect that directory's `plan.json`, `configs/seed0_teacher.yaml` and
+`jobs/seed0_teacher.sbatch`. Confirm four GPUs, `--nproc-per-node=4`, effective
+batch 32, microbatch 8, block batch 32, the fresh run root and system stats enabled.
+Replace `--dry-run` with `--submit` when ready to launch; omit `--resume` for this
+fresh experiment. The new run root gives it separate checkpoints and a new W&B
+run ID. The planner reads the site file itself; these commands do not require
+`STMEM_PYTHON` to have been exported into the interactive shell.
+
+Compare `train/step_seconds`, `train/examples_per_second`, history lengths and
+peak allocated memory after several completed updates, and inspect GPU
+utilization in W&B's **System** tab. Four-GPU execution consists of one batched
+forward/backward pass per rank with eight examples, followed by a synchronized
+optimizer update. For a one-GPU comparison, use a separate run root and plan,
+select `h200_1gpu`, and retain the same global batch and microbatch settings.
 
 No downloads run inside these jobs. Stage the locked environment, pinned benchmark
 and simulator, task archives, prepared training data, assets and caches beforehand.

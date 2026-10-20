@@ -200,3 +200,74 @@
     stop/resume. They also cover heartbeats while the main thread is blocked,
     exception cleanup, nonprimary ranks and dry-run planner propagation. These
     checks establish diagnostic correctness, not full-data H200 throughput.
+
+17. **Sampling-cycle diagnosis (20 October follow-up).** Read-only W&B history
+    from real teacher run `1919882fa3ac237d` confirms synchronized 16-update
+    cycles in loss and duration. The existing implementation shuffles each
+    task's candidates, sorts consecutive groups of 32 by execution decision
+    index, and round-robins through 16 tasks. An effective batch of 32 consumes
+    two decisions per task, synchronizing all tasks' short-to-long ramps over
+    16 optimizer updates. This is an unintended curriculum produced by the
+    initial length-bucketing choice, not a useful padding optimization for
+    microbatch-one training.
+
+    Timing correlates with per-update history-leaf counts at 0.9981. The loss
+    normalization is by valid action dimensions, not history length; batch
+    episode-stage/target/context composition provides a supported common cause
+    for the observed loss cycle, without claiming its components have been
+    causally isolated. Smooth LR warmup has no 16-update reset; checkpoint and
+    scalar-reporting work are outside `step_seconds`.
+
+    A synthetic metadata-only control with `length_bucket_size: 1` removes
+    the periodic ordering while preserving candidate coverage and task balance.
+    No sampler/configuration modification or training intervention was applied
+    during this investigation. Such a change must be explicit because it
+    changes optimizer batch composition and exact-resume provenance. Reordering
+    alone does not reduce total full-history compute. Four GPUs at the same
+    global batch size preserve the cycle. Measured scope and reproduction
+    information are recorded in
+    [evidence/training_sampling_cycle.json](evidence/training_sampling_cycle.json).
+
+18. **True policy batches and system telemetry (20 October follow-up).** The
+    teacher, compact policy and Perceiver trainer now execute multiple decisions
+    in one forward/backward pass. Default global batch remains 32; microbatch 8
+    means four accumulation rounds on one GPU or one round on each of four GPUs.
+    The configured microbatch is capped at the per-rank update size. A smaller
+    final microbatch receives its proportional weight; each decision first
+    averages its valid action dimensions, preserving the original objective.
+
+    Raw histories are packed into independent source-local blocks, with up to
+    32 blocks encoded together. Geometry stays FP32 under autocast, checkpointed
+    encoding remains available, and decoder/text padding receives explicit
+    masks. No history truncation or point/leaf subsampling is introduced.
+    The full teacher reads tensor leaf banks directly, avoiding construction of
+    unused Python hierarchy parents and per-leaf CPU synchronization. Source
+    clocks, completed/pending metadata and current/history separation match the
+    reference archive. Cached compact reads still use the exact TREE/FLAT
+    selection implementations. Canonical distance ties now use point order as
+    an exact secondary key in both serial and batched visual paths, so padded
+    shape changes cannot alter neighbor membership.
+
+    The per-task sampler now shuffles without sorting length buckets. Global
+    task balance and epoch candidate coverage are preserved; rotating rank
+    offsets prevent a permanent task subset on each GPU. Training engine,
+    sampler and rank assignment versions are recorded in checkpoint provenance.
+    Old runs are intentionally not resumable through this upgrade. New batched
+    checkpoints retain deterministic optimizer-boundary resume. DDP encoding
+    runs inside the wrapped forward and `no_sync` covers both forward/backward.
+
+    W&B uses `x_disable_stats=False` and hardware metadata by default, controlled
+    by `tracking.system_stats`. Its background service collects telemetry on
+    rank zero; no model-watch hooks or parameter/gradient histogram uploads are
+    introduced. Actual offline SDK files contain GPU utilization, memory, power,
+    temperature and CPU/RAM statistics. New scalar metrics expose actual
+    microbatch size, accumulation rounds, history lengths and context sizes.
+
+    Synthetic tests compare serial/batched predictions and gradients, invalid
+    padding, empty banks, causal perturbations, exact leaf metadata, selected
+    TREE/FLAT/Perceiver contexts, remainder weighting and two-rank CPU DDP.
+    Full-shape local CUDA measurements and their limited scope are recorded in
+    [evidence/batched_training.json](evidence/batched_training.json). They are
+    implementation/throughput diagnostics, not evidence of learned policy
+    quality, H200/B200 throughput or correction of the separately documented
+    historical point-cloud coverage problem.

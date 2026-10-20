@@ -68,8 +68,9 @@ class RunTracker:
 
     Explicit online initialization failures are errors, never silently unlogged
     training. Offline mode (the default) creates real .wandb files for later sync.
-    No model watch hooks, model uploads or system-polling thread is enabled.
-    Small diagnostic scenes use an explicit CPU-only media API.
+    W&B's background service collects system metrics by default. No model watch
+    hooks or model uploads are enabled. Small diagnostic scenes use an explicit
+    CPU-only media API.
     """
 
     def __init__(self, cfg, directory, *, job_type, name=None, metadata=None, rank=0, resume=False):
@@ -80,6 +81,9 @@ class RunTracker:
         self.metadata = metadata or {}
         self.resume = bool(resume)
         options = cfg.get("tracking", {})
+        self.system_stats = options.get("system_stats", True)
+        if not isinstance(self.system_stats, bool):
+            raise ValueError("tracking.system_stats must be a boolean")
         self.mode = os.environ.get("WANDB_MODE") or options.get("mode", "offline")
         if self.mode not in ("online", "offline", "disabled"):
             raise ValueError("WANDB_MODE must be online, offline or disabled")
@@ -182,8 +186,8 @@ class RunTracker:
                         disable_git=True,
                         disable_code=True,
                         save_code=False,
-                        x_disable_stats=True,
-                        x_disable_meta=True,
+                        x_disable_stats=not self.system_stats,
+                        x_disable_meta=not self.system_stats,
                         x_save_requirements=False,
                         init_timeout=60,
                         login_timeout=30,

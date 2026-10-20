@@ -1,6 +1,6 @@
 # Implementation and verification status
 
-As of **19 October 2026**, the project installs and its complete bounded local
+As of **20 October 2026**, the project installs and its complete bounded local
 pipeline runs. The research comparison has **not yet run**. There is no remaining
 known local installation, action-alignment, calibration or simulator blocker.
 
@@ -15,6 +15,15 @@ tests does not establish useful scene coverage. No encoder/configuration change
 has been made in response to this finding. Measurements and their single-episode
 scope are in [evidence/encoder_coverage_inspection.json](evidence/encoder_coverage_inspection.json).
 
+**Sampling-cycle correction:** a read-only W&B snapshot of real run
+`1919882fa3ac237d` identified synchronized 16-update duration/loss cycles caused
+by sorting each task's shuffled buckets by decision index. The batched trainer
+now keeps each task's epoch shuffled, preserving candidate coverage and global
+task balance. GPU task ownership rotates between updates. The sampler and
+training engine are versioned in resume provenance; this upgrade requires a
+fresh run. The original diagnosis is recorded in
+[evidence/training_sampling_cycle.json](evidence/training_sampling_cycle.json).
+
 ## Implemented
 
 - Locked PyTorch/core and optional pinned simulator environments; actual-device
@@ -28,6 +37,11 @@ scope are in [evidence/encoder_coverage_inspection.json](evidence/encoder_covera
 - Full-history flow teacher, frozen task-level caches, shared variable-budget
   compact policy, paired signed-gain supervision, episode-disjoint router-label
   diagnostics, one refresh, Perceiver adaptation and current-only diagnostic.
+- True padded policy batches, vectorized local history-block encoders, masked
+  text/current/history attention and equal per-example action losses. Defaults
+  are global batch 32, per-GPU microbatch 8 and 32 encoder blocks per chunk.
+  Teacher training constructs tensor leaf banks directly; exact trees remain
+  available for compact selection, caching and evaluation.
 - Chronological streaming evaluation, conditioning-bank reset, chunked continuous
   joint actions, finite-action checks, empty terminal responses, official statuses,
   per-episode atomic results, videos, timing/storage/transfer counters and reports.
@@ -36,6 +50,8 @@ scope are in [evidence/encoder_coverage_inspection.json](evidence/encoder_covera
 - W&B logging for all training stages, evaluation/selection shards, label jobs,
   aggregate reports and smoke diagnostics. Default offline recording, optional
   online transport, stable resume identities and one writer per DDP allocation.
+  Background GPU/CPU/memory statistics and hardware metadata are now enabled by
+  default (`x_disable_stats=False`).
 - One action-only startup pass for deterministic decision indexing and exact
   normalization statistics, without visual payload reads; startup progress and
   first-completed-update metrics for teacher/compact/Perceiver training.
@@ -57,7 +73,7 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 
 | Check | Measured outcome |
 |---|---|
-| Core test suite | **322 passed**; 41.45s after startup and runtime logging integration |
+| Core test suite | **396 passed** in 51.42s; one additional dynamic-DDP gradient regression passed in 2.21s |
 | Package lock/install | `uv lock --check`, `uv pip check`, imports and lint pass |
 | Real data | One 1,251,608,544-byte VideoUnmask archive; SHA verified; two episodes prepared |
 | Expert replay | Both complete sampled training episodes reached official success; exact nonterminal post-command qpos match |
@@ -77,6 +93,12 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 | CPU preparation | Serial/parallel arrays exactly equal; safe interruption/reuse and CPU limits pass; two real episodes prepared at 1,024 points |
 | Training startup | Exact candidate/normalizer parity with zero visual payload reads; local two-episode median 115.95 ms → 3.79 ms |
 | Frequent training diagnostics | Logging overrides preserve exact model/optimizer/RNG/sampler state and resume; blocked-phase heartbeats, cleanup and planner forwarding pass |
+| Full-data H200 run inspection | Read-only W&B snapshot, 262 updates: 90.66 s/update mean, 16-update sampling cycle, duration/history-leaf correlation 0.9981 |
+| Batched teacher CUDA diagnostic | Eight synthetic decisions, 3,552 history frames, core model/1,024 points: BF16 median forward/backward 7.755 s serial → 0.433 s batched; disk I/O and optimizer/logging excluded |
+| Batched teacher real subset | Two updates, two aligned VideoUnmask episodes, core model, global batch 32/microbatch 8: 1.231 s then 0.615 s/update; finite losses, checkpoint and two scene files |
+| Batched training invariants | Serial/batched outputs and gradients, masks, causal boundaries, cached readers, remainder weighting, exact resume and two-rank CPU DDP pass |
+| Batched cached pipeline | CPU synthetic teacher → HDF5 cache → compact/Perceiver → TREE/FLAT labels and routers → all six readers passed in 8.79 s; frozen encoders remain identical |
+| W&B system telemetry | Actual offline SDK recorded GPU utilization/memory/power/temperature/clocks and CPU/RAM metrics with the new default |
 
 Portable measured summaries are saved in
 [evidence/validation.json](evidence/validation.json),
@@ -86,6 +108,20 @@ The full local artifacts remain ignored under `runs/final_smoke/`,
 `runs/real_debug/`, `runs/ddp_stop_audit/`, `runs/fp16_overflow_audit/`, and
 `data/diagnostics/`. Earlier debug artifacts may have different source hashes;
 cache validation deliberately rejects them after source edits.
+
+Batched training evidence is recorded in
+[evidence/batched_training.json](evidence/batched_training.json). The reusable
+`scripts/benchmark_teacher_batch.py` compares identical weights, decisions and
+flow draws without optimizer updates. For eight synthetic examples, BF16 peak
+allocated memory was 0.195 GB serial and 1.178 GB batched. A full-shape FP32
+confirmation had identical loss, maximum prediction difference 5.96e-7 and
+maximum parameter-gradient difference 8.94e-8; BF16 gradient relative L2
+difference was 0.23%. These numerical differences reflect precision and
+reduction shape, rather than a promise of bitwise equivalence across batch sizes.
+The real-data check used only two short, locally cached episodes. Neither check
+predicts the full 1,600-episode H200 shared-storage training rate. Local artifacts
+remain ignored under `runs/batched_teacher_diagnostic/`,
+`runs/batched_real_diagnostic/` and `runs/batching_system_stats_diagnostic/`.
 
 The W&B follow-up is recorded separately in
 [evidence/wandb_validation.json](evidence/wandb_validation.json), with fresh local
@@ -184,12 +220,41 @@ overhead on the cluster filesystem. Commands and timing definitions are in
 Separately, user-provided cluster output reports completed full-data preparation
 and a running one-GPU H200 NVL teacher job (58082), with CUDA, BF16 and effective
 batch 32. Its original startup took approximately 26 minutes before the training
-manifest appeared. This is user-reported evidence, not an agent-executed cluster
-benchmark; no post-fix HPC startup timing or training throughput is available yet.
+manifest appeared. This was user-reported evidence, not an agent-executed cluster
+benchmark; the later post-fix run is described below.
 The subsequent report of an hour without old-job metrics does not identify
 whether a specific operation stalled or the original 50-update reporting
 interval had not yet completed. The new runtime flags require a new process;
 they do not change logging in that already running allocation.
+
+On 20 October, a read-only API inspection of the replacement H200 run
+`ricvalp/chronotree/1919882fa3ac237d` (Slurm 58085, source `fd954c7`, one GPU,
+effective batch 32) retrieved 263 unsampled history rows: startup plus updates
+1–262. Reported startup is 16.76 s, including a 13.80 s data scan. Mean update
+time is 90.66 s and mean sample-loading time is 11.29 s (12.45% of update time).
+These are measurements recorded by the user's cluster run, not a locally
+executed full-data benchmark. The first two roughly 60 s updates were not
+representative of the full history-length cycle.
+
+The source sampler predicts a 16-update period. Detrended lag-16 correlations
+are 0.9873 for time and 0.8289 for loss. Update duration correlates at 0.9981
+with differences of the cumulative history-leaf counter. Across complete
+cycles, mean time rises from 55.61 s at phase 1 to 145.66 s at phase 16. Mean
+loss over complete cycles still decreases from 2.274 in the first cycle to
+0.877 in the sixteenth. Loss is normalized by valid action dimensions, so more
+historical leaves do not directly multiply the loss; sorted episode-stage and
+target/context composition are a supported explanation, not a measured
+decomposition of the loss mechanism.
+
+A production-sampler diagnostic using explicitly synthetic candidate metadata
+reproduces the short-to-long ordering without training or observation reads.
+Setting `length_bucket_size: 1` removes the synthetic periodic ramp while
+preserving exact candidate multisets and task balance. This intervention has
+not been applied to real training or tested for learned-policy quality. Changing
+it changes batch composition and checkpoint training provenance. The raw snapshot,
+plot and reproduction scripts remain ignored under `runs/loss_periodicity/`;
+portable measured results are in
+[evidence/training_sampling_cycle.json](evidence/training_sampling_cycle.json).
 
 These checks do not establish manipulation performance. Expert replay verifies
 the data/control interface. A two-update learned model's deliberately short
@@ -204,7 +269,8 @@ timeout is a protocol check. Synthetic label quality is not a research result.
   full validation, frozen evaluation on 50 test seeds per task, or final replication.
 - Agent-executed A5000/H200/B200 checks, multi-GPU NCCL, cluster rendering and
   actual core-shape throughput. CPU two-rank tests establish distributed control
-  correctness only; user-provided H200 startup evidence is described above.
+  correctness only; user-provided output and a read-only full-data H200 run
+  inspection are described above.
 - Agent-executed Slurm submission/accounting, site credentials/resource names and costs.
   No approved overall GPU-hour or credit budget is inferred.
 - Complete asset availability for every task on offline cluster nodes; only the

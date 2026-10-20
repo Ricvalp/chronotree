@@ -5,6 +5,7 @@ stage: teacher
 profile: h200_1gpu
 tracking:
   enabled: true
+  system_stats: true
   mode: offline
   project: chronotree
   entity: null
@@ -69,7 +70,8 @@ model:
 training:
   steps: 50000
   effective_batch: 32
-  microbatch: 1
+  microbatch: 8
+  encoder_block_batch_size: 32
   lr: 0.0001
   weight_decay: 0.01
   warmup_steps: 1000
@@ -81,7 +83,7 @@ training:
   context_mix: {tree: 0.45, flat: 0.45, uniform: 0.05, current: 0.05}
   intermediate_probability: 0.5
   task_balanced: true
-  length_bucket_size: 32
+  length_bucket_size: 1
   resume_boundary: optimizer_step
   workers: 0
 labels:

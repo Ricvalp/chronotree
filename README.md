@@ -69,11 +69,15 @@ is running. Heartbeats also append to the stage's `progress.jsonl`; they report
 the current phase and completed examples without querying CUDA or calling W&B.
 These runtime settings can change on resume without changing the scientific
 configuration. See [diagnosing slow training](docs/hpc.md#diagnosing-slow-training).
-W&B's service handles writes/uploads asynchronously. There are no model watch
-hooks, gradient histograms, automatic checkpoint/video uploads or background
-system polling. Initialization and final flushing occur outside training loops
-and policy latency measurements. Scalar logging has small, measured overhead,
-not a zero-overhead guarantee.
+W&B's background service handles writes/uploads and collects system metrics by
+default (`tracking.system_stats: true`). Open the run's **System** tab for visible
+GPU utilization, memory, power and temperature, plus CPU/RAM metrics. Only rank
+zero starts the service under DDP; the service can monitor all GPUs visible in
+that allocation. The installed SDK samples system metrics every 15 seconds.
+There are no model watch hooks, gradient histograms or automatic checkpoint/video
+uploads. Initialization and final flushing occur outside training loops and
+policy latency measurements. Collection has some overhead; it does not add a
+CUDA synchronization to each training step.
 
 Real-data teacher, compact and Perceiver training also log two fixed training
 examples at scheduled checkpoint saves, including candidate and final checkpoints.
@@ -227,11 +231,22 @@ time never depends on final episode duration. Frozen cached and streaming conten
 is encoded in FP32 for parity; training and online decoding use device-tested
 autocast. Sensitive geometry, reductions and aggregates remain FP32.
 
-Each training sample uses microbatch one and gradient accumulation to preserve
-the global effective batch across one/four/eight workers. Larger microbatches are
-rejected rather than silently changing exposure. Teacher history is never
-truncated to make a profile fit. A plain regression debug head and an optional
-framewise encoder are available without expanding the default experiment.
+Policy training batches decision examples with their complete causal histories.
+The core defaults are global effective batch 32 and up to eight examples per GPU
+per forward/backward pass. One GPU accumulates four batches of eight; four GPUs
+process eight examples each in one concurrent round. Variable history/context
+lengths use padding with explicit validity masks. Each example's valid action
+dimensions are averaged before examples are averaged, preserving the loss weight
+of short terminal chunks. Teacher history is never truncated to make a profile fit.
+
+Historical visual blocks are processed in tensor batches of at most 32, controlled
+by `training.encoder_block_batch_size`, with block checkpointing retained. This
+setting limits an encoder call, not the number of blocks retained from an
+example. Task-balanced shuffled sampling no longer sorts decisions into the
+previous periodic short-to-long history cycle (`training.length_bucket_size: 1`).
+The plain regression debug head and optional framewise encoder remain available.
+Use a fresh run directory for this batching change; prepared data remains usable.
+See the [batching configuration and fresh four-GPU launch](docs/hpc.md#batched-policy-training).
 
 Examples after official checkpoint selection:
 
