@@ -13,6 +13,8 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from stmem.config import load_config
+
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -67,10 +69,10 @@ def test_dry_run_isolated_paths_config_and_single_agent(profile_launcher, monkey
         )
         plan = invoke("--profile", profile)
     cfg = yaml.safe_load(Path(plan["config"]).read_text())
+    source = load_config(repo / "configs/teacher.yaml")
     assert plan["warmup_steps"] == 10 and plan["measured_steps"] == 5 and plan["trace_steps"] == 1
     assert plan["gpus"] == gpus and plan["slurm_tasks"] == 1 and plan["job_count"] == 1
-    assert cfg["training"]["effective_batch"] == 64 and cfg["training"]["microbatch"] == 16
-    assert cfg["training"]["steps"] == 50000 and cfg["training"]["precision"] == "auto"
+    assert cfg["training"] == source["training"]
     assert cfg["profile"] == profile and cfg["paths"]["run_root"] == str(run_root)
     assert "extends" not in cfg and cfg["data"]["synthetic"] is False
     assert Path(plan["output"]) == run_root / "profiles/memory-first"

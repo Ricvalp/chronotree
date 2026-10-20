@@ -222,7 +222,7 @@ context shapes and exact parameter counts. See the
 | Stage | Behavior |
 |---|---|
 | Teacher | Train visual/event/text encoders and action-query full-leaf flow policy. |
-| Selection | Evaluate planned 25k/50k candidates on the same two official val seeds/task; freeze the winner. |
+| Selection | Evaluate planned 50k/100k teacher candidates on the same two official val seeds/task; freeze the winner. |
 | Cache | Immutable HDF5 task shards, completed blocks and only queried causal prefix variants. |
 | Compact | Freeze encoders; one decoder on 45% TREE, 45% FLAT, 5% UNIFORM, 5% CURRENT contexts across budgets. |
 | Selection | Compare 15k/30k candidates under both fixed tree and flat validation contexts. |
@@ -238,15 +238,18 @@ is encoded in FP32 for parity; training and online decoding use device-tested
 autocast. Sensitive geometry, reductions and aggregates remain FP32.
 
 Policy training batches decision examples with their complete causal histories.
-The core defaults are global effective batch 64 and up to 16 examples per GPU
-per forward/backward pass. One GPU accumulates four batches of 16; four GPUs
-process 16 examples each in one concurrent round. Variable history/context
+The teacher configuration trains for 100,000 updates with global effective batch
+128 and a microbatch cap of 64 examples per GPU per forward/backward pass.
+One GPU accumulates two batches of 64; four GPUs process 32 examples each in one
+concurrent round. Compact and Perceiver defaults remain global batch 64 with a
+microbatch cap of 16. Variable history/context
 lengths use padding with explicit validity masks. Each example's valid action
 dimensions are averaged before examples are averaged, preserving the loss weight
 of short terminal chunks. Teacher history is never truncated to make a profile fit.
 
-Historical visual blocks are processed in tensor batches of at most 32, controlled
-by `training.encoder_block_batch_size`. This setting limits an encoder call, not
+Historical visual blocks are processed in tensor batches of at most 128 for the
+teacher, controlled by `training.encoder_block_batch_size`; the shared base
+default remains 32. This setting limits an encoder call, not
 the number of blocks retained from an example. Activation checkpointing is off
 by default (`model.checkpoint_blocks: false`); enabling it trades additional
 backward computation for lower activation memory. Task-balanced shuffled sampling
@@ -260,7 +263,7 @@ processes. The default `training.workers: 8` is **per GPU/rank**;
 rank. Four GPUs therefore use 32 loading workers plus four training processes
 within the 64-CPU allocation requested by `hpc/site_4gpu.env`. The queue is
 bounded, and training retains
-the same sample order, causal histories and global batch of 64. Set `workers: 0`
+the same sample order, causal histories and configured global batch. Set `workers: 0`
 for synchronous loading with the same packing; debug configs do this explicitly.
 Worker startup makes the first fetch slower, so assess throughput over completed
 updates after startup. No full-data HPC speedup is assumed.

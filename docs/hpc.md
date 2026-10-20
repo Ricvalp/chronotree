@@ -41,16 +41,16 @@ Submitted job IDs are persisted after every successful `sbatch --parsable` call.
 
 Keep manually maintained cluster settings directly under `hpc/`. The default is
 `hpc/site.env`; optional local variants such as `hpc/site_4gpu.env` are selected
-with `--site`. Both the default file and `hpc/site_*.env` variants are ignored by
-Git. `hpc/site.env.example` remains the tracked template.
+with `--site`. The default file and new `hpc/site_*.env` variants are ignored by
+Git; the explicitly tracked `hpc/site_4gpu.env` contains this cluster's four-GPU
+settings. `hpc/site.env.example` remains the portable template.
 
 ```text
 hpc/
   site.env.example              tracked settings template
   site.env                      local default settings
-  site_4gpu.env                  optional local four-GPU settings
+  site_4gpu.env                  tracked four-GPU cluster settings
   plan.py                       planner
-  train_teacher.py              standalone teacher experiment launcher
   jobs/                         maintained job templates
   generated/
     core_seed0_validation_h200_1gpu/
@@ -61,12 +61,8 @@ hpc/
       stops/                    allocation-specific stop requests
     core_seed0_validation_h200_4gpu/
       ...                       same structure for the four-GPU plan
-    training/<experiment-name>/
-      config.yaml               resolved standalone teacher configuration
-      plan.json                 resources, batch accounting and expected outputs
-      jobs/seed0_teacher.sbatch  generated training allocation
-      submitted.json            submission receipt
-      stops/                    allocation-specific stop requests
+    core_seed0_validation_h200_4gpu_100k/
+      ...                       separate plan state for the new 100k teacher run
   logs/                         Slurm stdout/stderr, named with job IDs
 ```
 
@@ -88,16 +84,11 @@ root. Use a different `STMEM_RUN_ROOT` for an independent comparison to isolate
 its checkpoints, W&B identity and stage markers. Prepared data stays under the
 configured data root.
 
-## Standalone teacher experiments
+## Launching the 100k teacher run
 
-Use `hpc/train_teacher.py` for an explicitly configured full teacher run outside
-the canonical multi-stage plan. The source configuration remains under
-`configs/experiments/`; generated configuration snapshots and scripts remain under
-`hpc/generated/training/<name>/`. Both `--name` and a fresh `--run-root` are required.
-The launcher copies site resource and data settings, overrides the run root for
-this job, and leaves the site file untouched.
-
-The experiment `configs/experiments/teacher_b128_m64_blocks128_100k.yaml` uses:
+Use the established `hpc/plan.py` workflow. Training settings live in
+`configs/teacher.yaml`, candidate checkpoints in the experiment manifests, and
+cluster resources and output paths in `hpc/site_4gpu.env`. The teacher uses:
 
 | Setting | Value |
 |---|---|
@@ -112,53 +103,64 @@ The experiment `configs/experiments/teacher_b128_m64_blocks128_100k.yaml` uses:
 The actual microbatch is `min(microbatch, effective_batch / GPU_count)`.
 Four GPUs therefore process `4 × 32 = 128` decisions per optimizer update.
 This is 12.8 million sampled decisions over the full run, four times the exposure
-of the core 50,000-update/global-64 configuration. The inherited learning rate is
+of the previous 50,000-update/global-64 configuration. The inherited learning rate is
 unchanged; the decay schedule uses the new 100,000-update budget. All 16 tasks,
 full causal histories, verified alignment checks, prepared data and eight loading
 workers per rank are retained. Larger batches and block groups increase peak
 memory; the previous smaller-batch profile does not establish this run's peak.
 
-After syncing these source files to the HPC, run from its repository root:
+The tracked site file sets
+`STMEM_RUN_ROOT=/hpc/home/phi/rvalperga/chronotree/runs/teacher_b128_m64_blocks128_100k`.
+Use that fresh path for this run; if a local site edit was preserved during
+syncing, update that assignment before rendering. Data and cache paths stay the
+same. The explicit `--output-dir` below keeps this run's generated plan and
+submission records separate from previous four-GPU jobs.
+
+After syncing these source files to the HPC, run:
 
 ```bash
 cd /hpc/home/phi/rvalperga/chronotree
-.venv/bin/python hpc/train_teacher.py \
-  --site hpc/site_4gpu.env --profile h200_4gpu \
-  --config configs/experiments/teacher_b128_m64_blocks128_100k.yaml \
-  --name teacher_b128_m64_blocks128_100k \
-  --run-root "$PWD/runs/teacher_b128_m64_blocks128_100k" \
+.venv/bin/python hpc/plan.py \
+  --site hpc/site_4gpu.env --plan core_seed0 --profile h200_4gpu \
+  --only seed0_teacher \
+  --output-dir hpc/generated/core_seed0_validation_h200_4gpu_100k \
+  --log-every 1 --progress-every-seconds 30 \
   --dry-run
 ```
 
-Inspect `hpc/generated/training/teacher_b128_m64_blocks128_100k/plan.json`,
-`config.yaml` and `jobs/seed0_teacher.sbatch`. Then repeat the same arguments with
-`--submit` in place of `--dry-run`:
+Inspect that directory's `plan.json`, `configs/seed0_teacher.yaml` and
+`jobs/seed0_teacher.sbatch`. The generated teacher config extends
+`configs/teacher.yaml`. Verify one selected job, four GPUs, 64 CPUs, the new run
+root, and expected checkpoints `step_00050000.pt` and `step_00100000.pt`.
+Then repeat the same arguments with `--submit`:
 
 ```bash
-.venv/bin/python hpc/train_teacher.py \
-  --site hpc/site_4gpu.env --profile h200_4gpu \
-  --config configs/experiments/teacher_b128_m64_blocks128_100k.yaml \
-  --name teacher_b128_m64_blocks128_100k \
-  --run-root "$PWD/runs/teacher_b128_m64_blocks128_100k" \
+.venv/bin/python hpc/plan.py \
+  --site hpc/site_4gpu.env --plan core_seed0 --profile h200_4gpu \
+  --only seed0_teacher \
+  --output-dir hpc/generated/core_seed0_validation_h200_4gpu_100k \
+  --log-every 1 --progress-every-seconds 30 \
   --submit
 ```
 
 This submits one ordinary training allocation, with per-update metrics and
-30-second progress messages by default. `--log-every` and
-`--progress-every-seconds` override those intervals. W&B mode/project/entity come
+30-second progress messages through the explicit logging flags. W&B settings come
 from the site settings; system metrics and the configured checkpoint point-cloud
 scenes remain enabled. Its checkpoints and W&B files go under
 `runs/teacher_b128_m64_blocks128_100k/seed0/teacher/`. `last.pt` is refreshed every
-1,000 updates and on a coordinated stop. Completion requires both planned
-checkpoint files, `last.pt` and `complete.json`.
+1,000 updates and on a coordinated stop; training writes `complete.json` only
+after completing the requested budget. The planner retains the normal dependency,
+signature, submission-record and resume workflow. `--only seed0_teacher` selects
+just the teacher allocation; validation selection and downstream stages remain
+available through the same plan.
 
-The launcher rejects an existing run root or a previously submitted name.
-The generated job also atomically claims its fresh root at startup, so competing
-jobs cannot write into it. Existing teacher runs are independent and continue
-unless explicitly cancelled. This launcher starts from scratch and does not
-automatically resume, resubmit, evaluate, select a checkpoint, or launch downstream
-stages. Validation selection remains necessary before creating encoder caches;
-the final training checkpoint is not automatically the selected teacher.
+Use the same site file and `--output-dir` when later resuming or selecting other
+stages from this run. Omit `--resume` for the first submission. Do not submit the
+same fresh run twice or reuse a previous run's output directory. Existing active
+jobs keep their separate artifacts. Queued jobs still read their configuration
+files when they start, so source configuration edits also affect queued jobs
+that extend those files. No interactive-shell export of `STMEM_PYTHON` is needed:
+the planner reads the site file directly.
 
 ## Parallel data preparation
 
@@ -429,10 +431,10 @@ flushed JSON heartbeat to stdout and `<stage>/progress.jsonl` even while the mai
 thread is inside a long operation. It reports `phase` (for example,
 `loading_batch`, `encoding_history`, `forward`, `backward` or `checkpoint`),
 `optimizer_steps_completed`, the update in progress, completed examples on this
-rank, and elapsed phase/update time. With the core microbatch of 16, completed
-example counts advance after each batched backward pass: 16, 32, 48 and 64 on one
-GPU, or 16 on each rank for a four-GPU update. A step is one optimizer update over
-64 examples globally, not one example or one historical block. During batch
+rank, and elapsed phase/update time. With the teacher's microbatch cap of 64,
+completed example counts advance after each batched backward pass: 64 and 128 on
+one GPU, or 32 on each rank for a four-GPU update. A teacher step is one optimizer
+update over 128 examples globally. During batch
 encoding, multiple examples and their historical blocks are being processed.
 The `batch_tasks` field identifies tasks in the current microbatch. Completed
 update metrics include `train/microbatch_size_rank`,
@@ -582,21 +584,27 @@ example attend to another. Partial blocks retain only their observed prefix;
 blocks never cross an example or source boundary. The full teacher history stays
 available even when examples have different history lengths.
 
-Core settings in `configs/base.yaml` are:
+Teacher settings in `configs/teacher.yaml`, together with its inherited defaults,
+are:
 
 ```yaml
 model:
   checkpoint_blocks: false
 training:
-  effective_batch: 64
-  microbatch: 16
-  encoder_block_batch_size: 32
+  steps: 100000
+  effective_batch: 128
+  microbatch: 64
+  encoder_block_batch_size: 128
+  checkpoint_steps: [50000, 100000]
   length_bucket_size: 1
   workers: 8
   prefetch_factor: 1
 tracking:
   system_stats: true
 ```
+
+Compact and Perceiver stages retain the base settings of effective batch 64,
+microbatch cap 16 and encoder block batch size 32.
 
 `microbatch` is the maximum number of decision examples processed per GPU in one
 forward/backward pass. The trainer caps it at that rank's share of the global
@@ -644,15 +652,14 @@ the first update's wait also includes worker imports and preparing its inputs.
 This change overlaps the existing HDF5 reader with training; it does not add
 bulk or prefix-only reads, rebalance rank assignments, or alter the sampler.
 
-| GPUs | Examples per GPU per update | Examples per batched pass | Passes accumulated per GPU |
+| Teacher GPUs | Examples per GPU per update | Examples per batched pass | Passes accumulated per GPU |
 |---:|---:|---:|---:|
-| 1 | 64 | 16 | 4 |
-| 4 | 16 | 16 | 1 |
-| 8 | 8 | 8 | 1 |
+| 1 | 128 | 64 | 2 |
+| 4 | 32 | 32 | 1 |
+| 8 | 16 | 16 | 1 |
 
-The optimizer sees 64 examples per update and the teacher still runs 50,000
-updates: 3.2 million example draws, compared with 1.6 million at the previous
-batch of 32. Each example averages its own valid action dimensions before
+The teacher optimizer sees 128 examples per update for 100,000 updates:
+12.8 million example draws. Each example averages its own valid action dimensions before
 examples are averaged, so variable terminal padding does not change its weight.
 DDP synchronizes accumulated gradients at the update boundary. Debug configs
 retain smaller microbatches for bounded workstation checks.
@@ -664,50 +671,14 @@ older ordered buckets are rejected. Batching does not recreate that ordering. Hi
 length still varies naturally, so correlate timings with the emitted history
 metrics. No H200/B200 speedup is guaranteed before measuring the new run.
 
-Start this implementation in a **new run directory** and keep any previous
-generated plan with active jobs intact. Existing data and alignment records are
-reused; old training checkpoints are not needed. Copy the updated source to the
-cluster before generating the new plan. From the repository root, create a
-separate, complete site file:
-
-```bash
-cp hpc/site_4gpu.env hpc/site_prefetch_4gpu.env
-```
-
-Edit only these assignments in the copy, preserving its other settings:
-
-```bash
-STMEM_PROFILE=h200_4gpu
-STMEM_CPUS=64
-STMEM_RUN_ROOT=/hpc/home/phi/rvalperga/chronotree/runs/prefetch_h200_4gpu
-```
-
-Use your actual absolute shared run path if it differs from this example. Keep
-the existing dataset/cache paths, Python path, resource and W&B settings. Then
-render into a separate directory under `hpc/generated/`:
-
-```bash
-.venv/bin/python hpc/plan.py --site hpc/site_prefetch_4gpu.env \
-  --output-dir hpc/generated/core_seed0_validation_h200_4gpu_prefetch \
-  --plan core_seed0 --profile h200_4gpu --only seed0_teacher \
-  --log-every 1 --progress-every-seconds 30 --dry-run
-```
-
-Inspect that directory's `plan.json`, `configs/seed0_teacher.yaml` and
-`jobs/seed0_teacher.sbatch`. Confirm four GPUs, `--nproc-per-node=4`, effective
-batch 64, microbatch 16, block batch 32, eight workers per rank, prefetch factor one,
-`#SBATCH --cpus-per-task=64`,
-activation checkpointing disabled, the fresh run root and system stats enabled.
-Replace `--dry-run` with `--submit` when ready to launch; omit `--resume` for this
-fresh experiment. Do not resume the current run with these changed settings.
-The new run root gives it separate checkpoints and a new W&B
-run ID. The planner reads the site file itself; these commands do not require
-`STMEM_PYTHON` to have been exported into the interactive shell.
+Follow [Launching the 100k teacher run](#launching-the-100k-teacher-run) above.
+It uses the existing four-GPU site file with a fresh run root and a separate
+generated plan. Prepared data and alignment records are reused.
 
 Compare `train/step_seconds`, `train/examples_per_second`, history lengths and
 peak allocated memory after several completed updates, and inspect GPU
 utilization in W&B's **System** tab. Four-GPU execution consists of one batched
-forward/backward pass per rank with 16 examples, followed by a synchronized
+forward/backward pass per rank with 32 examples, followed by a synchronized
 optimizer update. For a one-GPU comparison, use a separate run root and plan,
 select `h200_1gpu`, and retain the same global batch and microbatch settings.
 

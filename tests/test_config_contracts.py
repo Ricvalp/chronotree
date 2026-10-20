@@ -18,8 +18,9 @@ def test_policy_loader_defaults_and_debug_override():
         validate_config(cfg)
         assert cfg["training"]["workers"] == 8
         assert cfg["training"]["prefetch_factor"] == 1
-        assert cfg["training"]["effective_batch"] == 64
-        assert cfg["training"]["microbatch"] == 16
+        expected_batch, expected_microbatch = (128, 64) if cfg["stage"] == "teacher" else (64, 16)
+        assert cfg["training"]["effective_batch"] == expected_batch
+        assert cfg["training"]["microbatch"] == expected_microbatch
         assert cfg["model"]["checkpoint_blocks"] is False
     debug = load_config("configs/debug/teacher.yaml")
     validate_config(debug)

@@ -115,7 +115,7 @@ After teacher training saves a checkpoint, append the following to the export
 command:
 
 ```bash
-  --checkpoint "$STMEM_RUN_ROOT/seed0/teacher/step_00025000.pt"
+  --checkpoint "$STMEM_RUN_ROOT/seed0/teacher/step_00050000.pt"
 ```
 
 Use a config compatible with that checkpoint. The inspector strictly loads the

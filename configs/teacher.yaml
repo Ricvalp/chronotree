@@ -1,2 +1,9 @@
 extends: base.yaml
 stage: teacher
+training:
+  steps: 100000
+  effective_batch: 128
+  # Cap per GPU: four GPUs use 32 examples each for global batch 128.
+  microbatch: 64
+  encoder_block_batch_size: 128
+  checkpoint_steps: [50000, 100000]

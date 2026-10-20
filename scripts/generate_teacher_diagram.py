@@ -817,6 +817,11 @@ def context(file, cfg, policy, facts):
     m, t = cfg["model"], cfg["training"]
     w, f, v, c = (m[k] for k in ("width", "block_size", "visual_tokens", "current_tokens"))
     per_frame = v // f + 1
+    local_four = t["effective_batch"] // 4
+    micro_four = min(t["microbatch"], local_four)
+    micro_one = min(t["microbatch"], t["effective_batch"])
+    passes_four = (local_four + micro_four - 1) // micro_four
+    passes_one = (t["effective_batch"] + micro_one - 1) // micro_one
     p = Page(
         file,
         "context",
@@ -934,7 +939,8 @@ def context(file, cfg, policy, facts):
         [
             f"Global effective batch: {t['effective_batch']} decisions/update",
             f"Microbatch cap: {t['microbatch']} decisions/device/pass",
-            f"4-GPU example: {t['effective_batch'] // 4} decisions/rank/update",
+            f"4 GPUs: {micro_four} decisions/device/pass × {passes_four} pass/update",
+            f"1 GPU: {micro_one} decisions/pass × {passes_one} passes/update",
             f"Historical encoder block batch: {t['encoder_block_batch_size']}",
             f"CPU loader workers: {t['workers']}/rank; prefetch factor: {t['prefetch_factor']}",
             f"Activation checkpointing: {str(m['checkpoint_blocks']).lower()}",

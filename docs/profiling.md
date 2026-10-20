@@ -10,7 +10,7 @@ The default job runs **10 warmup optimizer updates**, **5 measured updates**, th
 **1 separately instrumented update**. Warmup may be set to 5–10 updates. It includes
 forward, backward and optimizer updates so AdamW state is allocated before
 measurement. The original training schedule remains in the resolved configuration;
-the profiling budget does not replace the teacher's 50,000-update schedule.
+the profiling budget does not replace the teacher's 100,000-update schedule.
 
 ## Run on the HPC
 
@@ -44,10 +44,14 @@ Then explicitly submit the one job:
 
 For one GPU, use `--site hpc/site.env --profile h200_1gpu` and a new name, such as
 `teacher_1gpu_memory`. The defaults come from `configs/teacher.yaml`: effective
-batch 64 and microbatch 16, so four GPUs use one pass per rank and one GPU uses four
-accumulation passes. Use `--config PATH` to match a different training configuration,
+batch 128, microbatch cap 64 and encoder block batches of 128. Four GPUs use one
+pass of 32 decisions per rank; one GPU uses two accumulation passes of 64.
+Use `--config PATH` to match a different training configuration,
 or explicitly override `--microbatch` and `--effective-batch` for a later comparison.
 Profiles control allocations, not GPU memory pooling: each rank holds its own model.
+The recorded H200 profile in [status.md](status.md) predates this configuration:
+it used effective batch 64, microbatch 16 and encoder block batches of 32.
+Its measured timings and memory peaks do not describe the new settings.
 
 Each submitted name is reserved. Choose a new `--name` to repeat a run; omitting it
 generates a unique UTC timestamp and suffix. There is no automatic submission,

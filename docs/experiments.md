@@ -6,7 +6,12 @@ test are official seeded environment configurations; expert HDF5 for those split
 is neither assumed nor synthesized. The debug configs are implementation checks
 and cannot supply benchmark scores.
 
-Teacher candidate updates are 25k and 50k. The fixed checkpoint-selection subset is
+The teacher trains for 100,000 updates with effective batch 128, microbatch cap
+64 and encoder block batches of 128. With four GPUs this means 32 decisions per
+GPU per update and no gradient accumulation. These settings live in
+`configs/teacher.yaml`; compact and Perceiver batching defaults remain separate.
+Teacher candidate updates are 50k and 100k in both experiment manifests.
+The fixed checkpoint-selection subset is
 official validation episode indices 0 and 1 in every task. Select by task-macro
 closed-loop success, resolving ties with the earlier checkpoint. Then freeze that
 teacher and its encoders, record the hash, and build immutable causal caches.
@@ -56,7 +61,9 @@ GPU hours; no total or speedup exists before measurement.
 `experiment_central_3seed.yaml` prepares seeds 0, 1 and 2 for the central shared
 pipeline and FULL/TREE/FLAT/UNIFORM comparison only. It is a final replication plan,
 not a preliminary multiseed gate. Do not duplicate already completed seed-0 teacher,
-cache or compact work; use the planner's resume controls.
+cache or compact work with matching configuration and provenance; use the
+planner's resume controls. Runs made with the earlier 50k-update teacher
+configuration are not interchangeable with the current 100k-update run.
 
 Analyses are explicit follow-up invocations, not default grids: budget 64/128/256
 for TREE/FLAT/UNIFORM; separate execution-history and conditioning-history erasure;

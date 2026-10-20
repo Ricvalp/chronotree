@@ -38,8 +38,10 @@ fresh run. The original diagnosis is recorded in
   compact policy, paired signed-gain supervision, episode-disjoint router-label
   diagnostics, one refresh, Perceiver adaptation and current-only diagnostic.
 - True padded policy batches, vectorized local history-block encoders, masked
-  text/current/history attention and equal per-example action losses. Defaults
-  are global batch 64, per-GPU microbatch 16 and 32 encoder blocks per chunk.
+  text/current/history attention and equal per-example action losses. The current
+  teacher configuration uses global batch 128, microbatch cap 64 and 128 encoder
+  blocks per chunk; four GPUs process 32 decisions each per update. Compact and
+  Perceiver defaults remain batch 64, microbatch 16 and 32 encoder blocks.
   Teacher training constructs tensor leaf banks directly; exact trees remain
   available for compact selection, caching and evaluation.
 - Persistent CPU processes load and pack upcoming policy microbatches, with
@@ -48,13 +50,18 @@ fresh run. The original diagnosis is recorded in
   Worker processes reuse the decision index and independently read HDF5;
   debug configurations retain the synchronous `training.workers: 0` path.
   Activation checkpointing is disabled in the core defaults; ordinary saved
-  training checkpoints remain enabled. This preserves batch 64/microbatch 16,
-  sampler ordering and complete causal histories.
+  training checkpoints remain enabled. Prefetching preserves the configured
+  batch, sampler ordering and complete causal histories.
 - Chronological streaming evaluation, conditioning-bank reset, chunked continuous
   joint actions, finite-action checks, empty terminal responses, official statuses,
   per-episode atomic results, videos, timing/storage/transfer counters and reports.
 - Bounded memory/budget/routing diagnostics, checkpoint selection, exact resume,
   DDP launch, Slurm dependency/resume planner and frozen official-test protocol.
+- The current teacher schedule is 100,000 updates with selection candidates at
+  50k and 100k, configured consistently in both the core and replication plans.
+  It uses the established `hpc/plan.py` workflow and a fresh run root in
+  `hpc/site_4gpu.env`. This configuration has not yet been measured; the earlier
+  batch-64/microbatch-16 profiling results below retain their original scope.
 - Standalone teacher memory profiling with 10 warmup updates, separate baseline
   and detailed trace passes, per-rank memory/phase reports and isolated W&B
   output. A dedicated dry-run HPC launcher and optional long-history training

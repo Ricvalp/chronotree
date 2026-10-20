@@ -49,6 +49,11 @@ excludes potentially large history activations, temporary workspaces and CUDA.
 Training settings describe core repository defaults, not a live HPC run or an
 arbitrarily overridden generated job configuration.
 
+The core teacher runs for 100,000 optimizer updates with effective batch 128.
+Its microbatch setting of 64 is a per-device maximum: four GPUs use 32 decisions
+each in one pass per update, while one GPU accumulates two passes of 64.
+Historical encoder blocks are processed in batches of up to 128.
+
 ## Keeping it current
 
 Layer labels and layout are maintained in
@@ -82,3 +87,8 @@ the larger lightbox, and opening all four pages in the draw.io editor. CPU
 generation, the artifact freshness/structure check,
 and Ruff checks passed. This validates the diagram and viewer, not training
 throughput or learned model quality.
+
+After updating the core teacher to 100k steps, effective batch 128, microbatch
+cap 64 and encoder block batch 128, all three artifacts were regenerated.
+The revised **Context & size** page was opened in Chromium and its batching
+labels inspected; the text fits its shapes and the browser reported no errors.

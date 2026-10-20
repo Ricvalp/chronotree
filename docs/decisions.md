@@ -378,35 +378,40 @@
     Full-data H200/B200 capacity and NCCL behavior remain unmeasured locally.
 
 23. **Explicit 100k-update teacher experiment (20 October follow-up).** At the
-    user's request, `configs/experiments/teacher_b128_m64_blocks128_100k.yaml`
+    user's request, `configs/teacher.yaml`
     sets 100,000 optimizer updates, global batch 128, microbatch cap 64 and
     encoder block batch size 128. Four H200 ranks receive 32 decisions each,
     so the actual microbatch is 32 with one forward/backward pass per update.
     This deliberately changes total sampled exposure to 12.8 million decisions,
-    four times the core 50,000-update/global-64 budget. The learning rate stays
+    four times the previous 50,000-update/global-64 budget. The learning rate stays
     at the inherited value and decay follows the new total update count.
     Immutable validation candidates are fixed at 50,000 and 100,000 updates;
     neither is automatically selected.
 
-    `hpc/train_teacher.py` launches this one full training stage with an explicit
-    configuration, name and fresh output root. It reuses the existing Slurm
-    renderer, distributed training entrypoint, stop handling and completion
-    checks. Site files, canonical plan defaults, architecture and scientific
-    data contracts are unchanged. Generated files live under
-    `hpc/generated/training/<name>`; training outputs have a separate run root
-    and W&B identity. No profiling or automatic downstream work is included.
-    Only `--submit` submits. Existing run roots and previously submitted names
-    are rejected, and the allocation atomically claims its root before writing.
-    This entrypoint supports fresh runs only.
+    Use the existing `hpc/plan.py --plan core_seed0 --only seed0_teacher`
+    workflow. Both core and central-replication manifests now select the same
+    50k/100k teacher candidates, so later validation, selection and cache stages
+    reference the checkpoints actually produced. The teacher override leaves
+    base, compact and Perceiver defaults unchanged. The existing
+    `hpc/site_4gpu.env` points to a fresh
+    `runs/teacher_b128_m64_blocks128_100k` root. The existing `--output-dir`
+    option selects `hpc/generated/core_seed0_validation_h200_4gpu_100k`,
+    separating submission records from the earlier four-GPU plan. Resume and
+    downstream stages use those same site and plan paths.
 
-    Twenty-one launcher tests passed, including generated-shell execution with
-    simulated Slurm commands, a real local USR1 warning, preservation of partial
-    exit status, output isolation and 100k completion requirements. Twenty-eight
-    configuration contract tests also passed. A dry-run of the exact experiment
-    with local paths verified four GPUs, 64 CPUs, actual microbatch 32, online
-    W&B settings, system metrics and checkpoint scenes; shell syntax and Ruff
-    checks passed. The architecture diagram check passed without regeneration
-    because its core defaults and model remain unchanged. No training or real
-    submission ran locally: this workspace has no Slurm client or established
-    HPC connection. These checks do not establish this larger batch's GPU
-    memory peak or throughput.
+    One planner remains responsible for training submission. No new command-line
+    options or submission implementation were needed. The redundant teacher
+    launcher, its separate experiment YAML and dedicated tests were removed.
+    Standard source configs define the run; generated files remain outputs.
+    The diagram was regenerated because it displays teacher batching settings.
+    The policy architecture and scientific data contracts are unchanged.
+
+    Seventy-five relevant tests passed across configuration contracts, planner
+    logging, W&B exports, infrastructure and the existing profiler's config
+    preservation. Checks include both experiment manifests' candidate agreement,
+    the selected teacher command and output paths, one simulated submission and
+    active-job resume without duplicate submission. Shell syntax, Ruff and
+    diagram freshness checks passed; the updated diagram was inspected in
+    Chromium. No training or real submission ran locally; the user will submit
+    on the HPC. These checks do not establish the larger batch's memory peak or
+    throughput.

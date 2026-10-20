@@ -6,7 +6,7 @@ methods: [FULL, TREE, FLAT, UNIFORM]
 profile: h200_1gpu
 budget: 128
 training_budgets: [64, 128, 256]
-teacher_candidates: [25000, 50000]
+teacher_candidates: [50000, 100000]
 compact_candidates: [15000, 30000]
 checkpoint_selection:
   split: val
