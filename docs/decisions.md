@@ -271,3 +271,18 @@
     implementation/throughput diagnostics, not evidence of learned policy
     quality, H200/B200 throughput or correction of the separately documented
     historical point-cloud coverage problem.
+
+19. **Larger policy batch requested by the user (20 October follow-up).** Core
+    policy defaults are now effective batch 64 and per-GPU microbatch 16. Four
+    GPUs each process 16 decisions in one forward/backward pass per update;
+    one GPU accumulates four passes of 16. The 50,000-update teacher schedule
+    therefore draws 3.2 million examples rather than 1.6 million. This is an
+    explicit exposure change, not an equal-exposure speed comparison.
+
+    Learning rate, optimizer-step schedule, encoder block batch size 32 and
+    system-statistics collection retain their existing settings. Compact and
+    Perceiver policies inherit the core batch defaults; debug configurations
+    and the router's explicit effective batch keep their own overrides.
+    Existing batch-8 benchmark evidence remains labeled with its measured
+    configuration. The new defaults have configuration/inheritance validation;
+    no new training or Slurm job was launched for this edit.

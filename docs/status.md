@@ -39,7 +39,7 @@ fresh run. The original diagnosis is recorded in
   diagnostics, one refresh, Perceiver adaptation and current-only diagnostic.
 - True padded policy batches, vectorized local history-block encoders, masked
   text/current/history attention and equal per-example action losses. Defaults
-  are global batch 32, per-GPU microbatch 8 and 32 encoder blocks per chunk.
+  are global batch 64, per-GPU microbatch 16 and 32 encoder blocks per chunk.
   Teacher training constructs tensor leaf banks directly; exact trees remain
   available for compact selection, caching and evaluation.
 - Chronological streaming evaluation, conditioning-bank reset, chunked continuous
@@ -122,6 +122,9 @@ The real-data check used only two short, locally cached episodes. Neither check
 predicts the full 1,600-episode H200 shared-storage training rate. Local artifacts
 remain ignored under `runs/batched_teacher_diagnostic/`,
 `runs/batched_real_diagnostic/` and `runs/batching_system_stats_diagnostic/`.
+These measurements used microbatch 8. The subsequent user-requested defaults
+of microbatch 16/global batch 64 have configuration validation only; their
+throughput and memory use have not yet been measured.
 
 The W&B follow-up is recorded separately in
 [evidence/wandb_validation.json](evidence/wandb_validation.json), with fresh local

@@ -342,10 +342,10 @@ flushed JSON heartbeat to stdout and `<stage>/progress.jsonl` even while the mai
 thread is inside a long operation. It reports `phase` (for example,
 `loading_batch`, `encoding_history`, `forward`, `backward` or `checkpoint`),
 `optimizer_steps_completed`, the update in progress, completed examples on this
-rank, and elapsed phase/update time. With the core microbatch of eight, completed
-example counts advance after each batched backward pass: 8, 16, 24 and 32 on one
-GPU, or 8 on each rank for a four-GPU update. A step is one optimizer update over
-32 examples globally, not one example or one historical block. During batch
+rank, and elapsed phase/update time. With the core microbatch of 16, completed
+example counts advance after each batched backward pass: 16, 32, 48 and 64 on one
+GPU, or 16 on each rank for a four-GPU update. A step is one optimizer update over
+64 examples globally, not one example or one historical block. During batch
 encoding, multiple examples and their historical blocks are being processed.
 The `batch_tasks` field identifies tasks in the current microbatch. Completed
 update metrics include `train/microbatch_size_rank`,
@@ -498,8 +498,8 @@ Core settings in `configs/base.yaml` are:
 
 ```yaml
 training:
-  effective_batch: 32
-  microbatch: 8
+  effective_batch: 64
+  microbatch: 16
   encoder_block_batch_size: 32
   length_bucket_size: 1
 tracking:
@@ -515,12 +515,13 @@ limit history length or change the optimizer batch size.
 
 | GPUs | Examples per GPU per update | Examples per batched pass | Passes accumulated per GPU |
 |---:|---:|---:|---:|
-| 1 | 32 | 8 | 4 |
-| 4 | 8 | 8 | 1 |
-| 8 | 4 | 4 | 1 |
+| 1 | 64 | 16 | 4 |
+| 4 | 16 | 16 | 1 |
+| 8 | 8 | 8 | 1 |
 
-The optimizer still sees 32 examples per update and the teacher still runs
-50,000 updates. Each example averages its own valid action dimensions before
+The optimizer sees 64 examples per update and the teacher still runs 50,000
+updates: 3.2 million example draws, compared with 1.6 million at the previous
+batch of 32. Each example averages its own valid action dimensions before
 examples are averaged, so variable terminal padding does not change its weight.
 DDP synchronizes accumulated gradients at the update boundary. Debug configs
 retain smaller microbatches for bounded workstation checks.
@@ -562,7 +563,7 @@ render into a separate directory under `hpc/generated/`:
 
 Inspect that directory's `plan.json`, `configs/seed0_teacher.yaml` and
 `jobs/seed0_teacher.sbatch`. Confirm four GPUs, `--nproc-per-node=4`, effective
-batch 32, microbatch 8, block batch 32, the fresh run root and system stats enabled.
+batch 64, microbatch 16, block batch 32, the fresh run root and system stats enabled.
 Replace `--dry-run` with `--submit` when ready to launch; omit `--resume` for this
 fresh experiment. The new run root gives it separate checkpoints and a new W&B
 run ID. The planner reads the site file itself; these commands do not require
@@ -571,7 +572,7 @@ run ID. The planner reads the site file itself; these commands do not require
 Compare `train/step_seconds`, `train/examples_per_second`, history lengths and
 peak allocated memory after several completed updates, and inspect GPU
 utilization in W&B's **System** tab. Four-GPU execution consists of one batched
-forward/backward pass per rank with eight examples, followed by a synchronized
+forward/backward pass per rank with 16 examples, followed by a synchronized
 optimizer update. For a one-GPU comparison, use a separate run root and plan,
 select `h200_1gpu`, and retain the same global batch and microbatch settings.
 

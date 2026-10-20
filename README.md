@@ -232,9 +232,9 @@ is encoded in FP32 for parity; training and online decoding use device-tested
 autocast. Sensitive geometry, reductions and aggregates remain FP32.
 
 Policy training batches decision examples with their complete causal histories.
-The core defaults are global effective batch 32 and up to eight examples per GPU
-per forward/backward pass. One GPU accumulates four batches of eight; four GPUs
-process eight examples each in one concurrent round. Variable history/context
+The core defaults are global effective batch 64 and up to 16 examples per GPU
+per forward/backward pass. One GPU accumulates four batches of 16; four GPUs
+process 16 examples each in one concurrent round. Variable history/context
 lengths use padding with explicit validity masks. Each example's valid action
 dimensions are averaged before examples are averaged, preserving the loss weight
 of short terminal chunks. Teacher history is never truncated to make a profile fit.
