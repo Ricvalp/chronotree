@@ -249,10 +249,11 @@ previous periodic short-to-long history cycle (`training.length_bucket_size: 1`)
 The plain regression debug head and optional framewise encoder remain available.
 
 Policy training loads and packs upcoming microbatches in persistent CPU worker
-processes. The default `training.workers: 2` is **per GPU/rank**;
-`training.prefetch_factor: 1` permits two queued or in-flight microbatches per
-rank. Four GPUs therefore use eight loading workers plus four training processes
-within the current 16-CPU allocation. The queue is bounded, and training retains
+processes. The default `training.workers: 8` is **per GPU/rank**;
+`training.prefetch_factor: 1` permits eight queued or in-flight microbatches per
+rank. Four GPUs therefore use 32 loading workers plus four training processes
+within the 64-CPU allocation requested by `hpc/site_4gpu.env`. The queue is
+bounded, and training retains
 the same sample order, causal histories and global batch of 64. Set `workers: 0`
 for synchronous loading with the same packing; debug configs do this explicitly.
 Worker startup makes the first fetch slower, so assess throughput over completed

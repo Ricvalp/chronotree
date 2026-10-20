@@ -16,7 +16,7 @@ def test_policy_loader_defaults_and_debug_override():
     for path in ("configs/teacher.yaml", "configs/compact.yaml", "configs/perceiver.yaml"):
         cfg = load_config(path)
         validate_config(cfg)
-        assert cfg["training"]["workers"] == 2
+        assert cfg["training"]["workers"] == 8
         assert cfg["training"]["prefetch_factor"] == 1
         assert cfg["training"]["effective_batch"] == 64
         assert cfg["training"]["microbatch"] == 16

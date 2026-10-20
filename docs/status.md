@@ -43,7 +43,8 @@ fresh run. The original diagnosis is recorded in
   Teacher training constructs tensor leaf banks directly; exact trees remain
   available for compact selection, caching and evaluation.
 - Persistent CPU processes load and pack upcoming policy microbatches, with
-  two workers per rank and one prefetched microbatch per worker by default.
+  eight workers per rank and one prefetched microbatch per worker by default.
+  The tracked four-GPU site file requests 64 CPUs for the whole allocation.
   Worker processes reuse the decision index and independently read HDF5;
   debug configurations retain the synchronous `training.workers: 0` path.
   Activation checkpointing is disabled in the core defaults; ordinary saved
@@ -168,6 +169,9 @@ first update. Shared-storage contention may still limit the full run, and
 compact/Perceiver frozen-cache reads remain in the training process; background
 workers only perform raw observation loading and CPU packing. No Slurm job or
 full-data H200/B200 benchmark was launched for this implementation.
+The subsequent resource change requests 64 CPUs with four GPUs and raises
+the core default to eight workers per rank. The measurements above used two
+workers; the eight-worker full-data throughput remains unmeasured.
 
 The W&B follow-up is recorded separately in
 [evidence/wandb_validation.json](evidence/wandb_validation.json), with fresh local

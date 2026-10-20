@@ -85,7 +85,7 @@ training:
   task_balanced: true
   length_bucket_size: 1
   resume_boundary: optimizer_step
-  workers: 2
+  workers: 8
   prefetch_factor: 1
 labels:
   contexts: 16000

@@ -324,3 +324,18 @@
     [evidence/prefetch_loader.json](evidence/prefetch_loader.json).
     No full-data H200/B200 throughput improvement or model-quality result
     is claimed.
+
+21. **Larger CPU allocation for loading (20 October follow-up).** Following the
+    user's request to allocate 64 CPU cores, `hpc/site_4gpu.env` now requests
+    `STMEM_CPUS=64`, and core policy configurations use eight loading workers
+    per rank with prefetch factor one. Four training ranks therefore have 32
+    loading processes and at most 32 queued/in-flight microbatches in total.
+    CPU allocation is shared by the single Slurm task's four training processes
+    and their workers. Debug configurations retain zero workers.
+    This increases available input preparation concurrency; storage bandwidth
+    and scheduler resource availability still determine its practical benefit.
+    Previous two-worker measurements remain labeled with their actual settings.
+    All 28 configuration tests passed. A local planner dry-run produced one
+    four-GPU job with literal `--cpus-per-task=64`, eight workers per rank,
+    prefetch factor one and valid shell syntax.
+    No training or Slurm submission is part of this configuration change.

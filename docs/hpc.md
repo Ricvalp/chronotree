@@ -513,7 +513,7 @@ training:
   microbatch: 16
   encoder_block_batch_size: 32
   length_bucket_size: 1
-  workers: 2
+  workers: 8
   prefetch_factor: 1
 tracking:
   system_stats: true
@@ -530,7 +530,7 @@ activation memory requires that trade-off; optimizer checkpoint saving is separa
 and remains enabled.
 
 `training.workers` now controls persistent background processes for policy
-training. Each rank starts two CPU workers using the `spawn` start method. They
+training. Each rank starts eight CPU workers using the `spawn` start method. They
 read observations and pack CPU tensors for upcoming microbatches while that
 rank trains on the current one. HDF5 reads take place independently in each
 worker; no open HDF5 handle or CUDA context is passed to a worker. The existing
@@ -540,12 +540,17 @@ stay in the training process. Compact/Perceiver frozen feature-cache reads
 also remain there; the workers prepare raw observations and CPU input tensors.
 
 `prefetch_factor` is the number of outstanding microbatches allowed per worker.
-The default of one means at most two queued or in-flight microbatches per rank,
+The default of one means at most eight queued or in-flight microbatches per rank,
 in addition to the batch currently consumed. The queue does not preload the
 dataset. Its memory use still depends on history length and multiplies across
-ranks. Keep this bound small initially. Four ranks use eight loading workers
-plus four training processes: `STMEM_CPUS=16` is the total allocation, not a
-per-GPU allowance. Workers use one Torch CPU thread each.
+ranks. Four ranks use 32 loading workers plus four training processes.
+`hpc/site_4gpu.env` requests `STMEM_CPUS=64` for this entire allocation;
+it is not a per-GPU allowance. Workers use one Torch CPU thread each.
+If using an older site-file copy, change its `STMEM_CPUS` too before rendering.
+Eight workers is a throughput experiment; shared-storage bandwidth can still
+limit the benefit of additional processes.
+Scale CPU resources with the GPU count: eight GPUs would start 64 loading
+workers plus eight training processes, so use more CPUs or reduce `workers`.
 The FP16 fallback also retains the current optimizer update's CPU batches until
 the step succeeds so an overflow retry uses exactly the same inputs; BF16/FP32
 do not retain that additional retry set.
@@ -594,6 +599,7 @@ Edit only these assignments in the copy, preserving its other settings:
 
 ```bash
 STMEM_PROFILE=h200_4gpu
+STMEM_CPUS=64
 STMEM_RUN_ROOT=/hpc/home/phi/rvalperga/chronotree/runs/prefetch_h200_4gpu
 ```
 
@@ -610,7 +616,8 @@ render into a separate directory under `hpc/generated/`:
 
 Inspect that directory's `plan.json`, `configs/seed0_teacher.yaml` and
 `jobs/seed0_teacher.sbatch`. Confirm four GPUs, `--nproc-per-node=4`, effective
-batch 64, microbatch 16, block batch 32, two workers per rank, prefetch factor one,
+batch 64, microbatch 16, block batch 32, eight workers per rank, prefetch factor one,
+`#SBATCH --cpus-per-task=64`,
 activation checkpointing disabled, the fresh run root and system stats enabled.
 Replace `--dry-run` with `--submit` when ready to launch; omit `--resume` for this
 fresh experiment. Do not resume the current run with these changed settings.
