@@ -1,0 +1,367 @@
+{
+  "inspection_date": "2026-10-20",
+  "kind": "read_only_real_training_history_analysis_plus_explicit_synthetic_sampler_control",
+  "run": "ricvalp/chronotree/1919882fa3ac237d",
+  "user_run_url": "https://forge.coreweave.com/wandb/ricvalp/chronotree/runs/1919882fa3ac237d?nw=nwuserricvalp",
+  "access": "Official W&B API with existing local account credentials; no remote mutation or job submission",
+  "run_state_at_snapshot": "running",
+  "slurm_job_id": "58085",
+  "run_source": {
+    "git": "fd954c7f97f54bca96b997bbd4a3b9d2ee3fddfe",
+    "dirty": false,
+    "source_sha256": "31691e7cf2bb2ddf138ae918cde97947188074bca4a679f7b33b1d5cdacbef17"
+  },
+  "code_check": "Run commit and working source match for training/data.py, train.py and models/action_flow.py",
+  "history_sha256": "43a89fcc6e929f253315b56c42bc154230c87b47b5f3cc09a69778a390b3617b",
+  "configuration": {
+    "tasks": 16,
+    "global_effective_batch": 32,
+    "microbatch": 1,
+    "length_bucket_size": 32,
+    "profile": "h200_1gpu",
+    "runtime_logging": {
+      "log_every": 1,
+      "progress_every_seconds": 30
+    }
+  },
+  "observed": {
+    "run": "ricvalp/chronotree/1919882fa3ac237d",
+    "history_rows": 263,
+    "training_rows": 262,
+    "step_range": [
+      1,
+      262
+    ],
+    "pearson_step_time_vs_leaf_delta": 0.9980862056367712,
+    "pearson_detrended_loss_vs_step_time": 0.5448884570030597,
+    "pearson_detrended_loss_vs_leaf_delta": 0.54747231152815,
+    "lag16_autocorrelation_detrended_loss": 0.8289309828764376,
+    "lag16_autocorrelation_detrended_step_time": 0.9873255290286687,
+    "step_seconds_mean": 90.6576632742519,
+    "step_seconds_min": 52.27753042499535,
+    "step_seconds_max": 149.46209201199963,
+    "data_loading_seconds_mean": 11.288588986827083,
+    "data_loading_fraction_total": 0.12451886116541024,
+    "phase_means": [
+      {
+        "phase_1based": 1,
+        "count": 17,
+        "step_seconds_mean": 55.6753358634119,
+        "loss_detrended_mean": 0.042019282282264286,
+        "leaves_per_step_mean": 30674.41176470588
+      },
+      {
+        "phase_1based": 2,
+        "count": 17,
+        "step_seconds_mean": 59.496210602235806,
+        "loss_detrended_mean": -0.1087519024503356,
+        "leaves_per_step_mean": 33343.82352941176
+      },
+      {
+        "phase_1based": 3,
+        "count": 17,
+        "step_seconds_mean": 64.85340966335185,
+        "loss_detrended_mean": -0.13384940393228384,
+        "leaves_per_step_mean": 37241.76470588235
+      },
+      {
+        "phase_1based": 4,
+        "count": 17,
+        "step_seconds_mean": 67.83952800176463,
+        "loss_detrended_mean": -0.15134622629714148,
+        "leaves_per_step_mean": 39387.35294117647
+      },
+      {
+        "phase_1based": 5,
+        "count": 17,
+        "step_seconds_mean": 70.80591375788187,
+        "loss_detrended_mean": -0.10768351154297526,
+        "leaves_per_step_mean": 41599.117647058825
+      },
+      {
+        "phase_1based": 6,
+        "count": 17,
+        "step_seconds_mean": 75.7902471013532,
+        "loss_detrended_mean": -0.06430772653644662,
+        "leaves_per_step_mean": 44894.117647058825
+      },
+      {
+        "phase_1based": 7,
+        "count": 16,
+        "step_seconds_mean": 80.50553736118718,
+        "loss_detrended_mean": -0.14101421020792626,
+        "leaves_per_step_mean": 48026.875
+      },
+      {
+        "phase_1based": 8,
+        "count": 16,
+        "step_seconds_mean": 84.56376953731228,
+        "loss_detrended_mean": -0.12612640008878268,
+        "leaves_per_step_mean": 50561.875
+      },
+      {
+        "phase_1based": 9,
+        "count": 16,
+        "step_seconds_mean": 89.71494757143796,
+        "loss_detrended_mean": -0.12627858900762007,
+        "leaves_per_step_mean": 54136.5625
+      },
+      {
+        "phase_1based": 10,
+        "count": 16,
+        "step_seconds_mean": 94.44837745293762,
+        "loss_detrended_mean": -0.07997634829999267,
+        "leaves_per_step_mean": 57239.0625
+      },
+      {
+        "phase_1based": 11,
+        "count": 16,
+        "step_seconds_mean": 100.05985598624989,
+        "loss_detrended_mean": -0.004615189235469802,
+        "leaves_per_step_mean": 61001.875
+      },
+      {
+        "phase_1based": 12,
+        "count": 16,
+        "step_seconds_mean": 106.05409531956252,
+        "loss_detrended_mean": -0.029157457235365725,
+        "leaves_per_step_mean": 65040.0
+      },
+      {
+        "phase_1based": 13,
+        "count": 16,
+        "step_seconds_mean": 113.25130482818736,
+        "loss_detrended_mean": 0.07244869980736754,
+        "leaves_per_step_mean": 69610.3125
+      },
+      {
+        "phase_1based": 14,
+        "count": 16,
+        "step_seconds_mean": 121.22173764487502,
+        "loss_detrended_mean": 0.16773857499499445,
+        "leaves_per_step_mean": 74874.375
+      },
+      {
+        "phase_1based": 15,
+        "count": 16,
+        "step_seconds_mean": 129.92800461075058,
+        "loss_detrended_mean": 0.30885219561213717,
+        "leaves_per_step_mean": 80741.5625
+      },
+      {
+        "phase_1based": 16,
+        "count": 16,
+        "step_seconds_mean": 145.65717050150033,
+        "loss_detrended_mean": 0.5147931801673731,
+        "leaves_per_step_mean": 91272.5
+      }
+    ]
+  },
+  "startup_seconds": {
+    "startup/normalizer_seconds": 0.00033002900090650655,
+    "startup/total_seconds": 16.760324742001103,
+    "startup/data_seconds": 13.804234062998148
+  },
+  "complete_cycle_analysis": {
+    "complete_cycles": 16,
+    "complete_cycle_step_range": [
+      1,
+      256
+    ],
+    "mean_loss_by_complete_cycle": [
+      2.273648090660572,
+      2.0923947244882584,
+      1.9631570428609848,
+      1.7739949598908424,
+      1.6122620850801468,
+      1.5184145271778107,
+      1.3097185119986534,
+      1.1607007086277008,
+      1.0636964850127697,
+      0.9668670184910297,
+      0.9225188978016376,
+      0.9301914535462856,
+      0.8817769773304462,
+      0.9115588143467903,
+      0.8669088296592236,
+      0.8768985606729984
+    ],
+    "mean_step_seconds_by_phase_complete_cycles": [
+      55.606173292250105,
+      59.3360920567502,
+      64.99521461674908,
+      67.24842145931211,
+      70.80696490974947,
+      75.50675516662545,
+      80.50553736118718,
+      84.56376953731228,
+      89.71494757143796,
+      94.44837745293762,
+      100.05985598624989,
+      106.05409531956252,
+      113.25130482818736,
+      121.22173764487502,
+      129.92800461075058,
+      145.65717050150033
+    ],
+    "mean_cycle_centered_loss_by_phase_complete_cycles": [
+      0.08319433848373592,
+      -0.08424137835390866,
+      -0.11136910249479115,
+      -0.13758368347771466,
+      -0.10422189836390316,
+      -0.06308826734311879,
+      -0.12880551000125706,
+      -0.11972751026041806,
+      -0.1256895095575601,
+      -0.08519707922823727,
+      -0.01564573054201901,
+      -0.04599780892021954,
+      0.04979853774420917,
+      0.13927860255353153,
+      0.2745824127923697,
+      0.4747135869693011
+    ],
+    "first_complete_cycle_mean_loss": 2.273648090660572,
+    "last_complete_cycle_mean_loss": 0.8768985606729984,
+    "phase_plot_loss_centering": "Subtract each complete cycle's own mean before averaging by phase"
+  },
+  "mechanism": {
+    "source": "src/stmem/training/data.py:TrainingData._permutation and sample_position",
+    "order": "Shuffle decisions within each task, then sort each consecutive 32 by execution decision index",
+    "per_task_examples_per_update": 2,
+    "predicted_period_updates": 16,
+    "history": "Execution prefix is execution[:index]; sorting decision index sorts its frame count",
+    "timing": "Full-history teacher reconstructs each sampled causal prefix; leaves correlate with update work",
+    "loss": "Masked action MSE is normalized by valid action dimensions, not history length. Ordered batches change episode stage/target distribution and context; observed phase correlation supports this common input cause, but does not isolate the relative effects on loss.",
+    "epoch_caveat": "Later task-specific epoch boundaries may offset the cycle when task candidate counts are not multiples of 32",
+    "four_gpu": "Global ordering and predicted cycle persist with four GPUs at unchanged effective batch32"
+  },
+  "synthetic_control": {
+    "kind": "synthetic_metadata_diagnostic_not_training_or_real_run_measurement",
+    "mechanism": "production sampler shuffles each task then sorts each32 candidates by decision index",
+    "tasks": 16,
+    "effective_batch": 32,
+    "candidates_per_task_per_update": 2,
+    "predicted_period_updates": 16,
+    "bucketed": {
+      "bucket_size": 32,
+      "lag16_correlation_of_batch_mean_history_frames": 0.9970457793082652,
+      "strictly_increasing_16_update_blocks": 4,
+      "first_17_update_mean_history_frames": [
+        44.625,
+        84.5,
+        114.75,
+        146.5,
+        184.375,
+        214.75,
+        241.125,
+        279.25,
+        312.75,
+        345.75,
+        382.375,
+        411.75,
+        444.5,
+        484.5,
+        517.75,
+        566.125,
+        16.75
+      ]
+    },
+    "unbucketed_control": {
+      "bucket_size": 1,
+      "lag16_correlation_of_batch_mean_history_frames": -0.020459101628671716,
+      "strictly_increasing_16_update_blocks": 0,
+      "first_17_update_mean_history_frames": [
+        296,
+        282.625,
+        258.5,
+        281.375,
+        305.375,
+        337.375,
+        274.25,
+        298.625,
+        318.875,
+        315.875,
+        311,
+        309,
+        325.375,
+        277.25,
+        276.375,
+        307.5,
+        283.25
+      ]
+    },
+    "exact_candidate_multisets_equal_every512_global_samples": true,
+    "four_gpu_global_candidate_order_identical": true,
+    "four_gpu_rank_task_assignment": [
+      {
+        "rank": 0,
+        "fixed_tasks": [
+          "BinFill",
+          "MoveCube",
+          "PickHighlight",
+          "VideoUnmask"
+        ],
+        "examples_per_update": 8
+      },
+      {
+        "rank": 1,
+        "fixed_tasks": [
+          "InsertPeg",
+          "PickXtimes",
+          "VideoRepick",
+          "VideoUnmaskSwap"
+        ],
+        "examples_per_update": 8
+      },
+      {
+        "rank": 2,
+        "fixed_tasks": [
+          "ButtonUnmask",
+          "PatternLock",
+          "SwingXtimes",
+          "VideoPlaceButton"
+        ],
+        "examples_per_update": 8
+      },
+      {
+        "rank": 3,
+        "fixed_tasks": [
+          "ButtonUnmaskSwap",
+          "RouteStick",
+          "StopCube",
+          "VideoPlaceOrder"
+        ],
+        "examples_per_update": 8
+      }
+    ],
+    "observed_hpc_loss_or_timings": null,
+    "caveat": "Execution-prefix length is exactly decision index; conditioning length also contributes to true history cost. No model loss or walltime is simulated."
+  },
+  "proposed_correction": {
+    "training_length_bucket_size": 1,
+    "effect": "Disable within-task sorting while retaining seeded permutation, task balance and candidate coverage",
+    "training_modified": false,
+    "resume_note": "Changing this setting changes batch composition and the training provenance hash; do not silently change an exact-resume configuration",
+    "performance_note": "Reordering does not remove the total full-history work and is not a measured throughput optimization"
+  },
+  "limitations": [
+    "Snapshot contains updates1..262 only; this is not completed training or validation evidence",
+    "Elapsed update time is host walltime with existing synchronization, not component-level GPU profiling",
+    "Data-loading fraction is the sample_position timer; the remainder includes encoding, CPU archive work, forward/backward and optimizer work",
+    "No full real dataset is present locally; sampler intervention measured synthetic metadata ordering, not real-data training outcomes"
+  ],
+  "local_artifacts": "runs/loss_periodicity",
+  "reproduction": [
+    "uv run python runs/loss_periodicity/reproduce_sampler.py",
+    "uv run python runs/loss_periodicity/plot_analysis.py"
+  ],
+  "hardware": {
+    "gpu": "NVIDIA H200 NVL",
+    "world_size": 1,
+    "precision": "bf16",
+    "torch": "2.9.1+cu128",
+    "driver": "580.126.20"
+  }
+}

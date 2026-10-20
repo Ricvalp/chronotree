@@ -1,0 +1,509 @@
+{
+  "date_local": "2026-10-20",
+  "scope": "Bounded implementation diagnostics only; no full-data training, HPC allocation or policy-quality claim.",
+  "defaults": {
+    "effective_batch": 32,
+    "microbatch": 8,
+    "encoder_block_batch_size": 32,
+    "length_bucket_size": 1,
+    "system_stats": true
+  },
+  "cpu_tests": {
+    "suite_passed": 396,
+    "suite_seconds": 51.42,
+    "additional_dynamic_ddp_gradient_test_passed": 1,
+    "dynamic_ddp_seconds": 2.21,
+    "note": "The main suite includes true batching, masks, causal/padding isolation, serial output/gradient parity, remainder weighting, deterministic resume and two-rank CPU training. The additional case checks an encoder unused in the final synchronized accumulation pass."
+  },
+  "device_doctor": {
+    "device": "NVIDIA RTX 5000 Ada Generation",
+    "torch": "2.9.1+cu128",
+    "fp32": true,
+    "bf16": true,
+    "fp16": true,
+    "recommended_precision": "bf16"
+  },
+  "teacher_bf16": {
+    "diagnostic": "Synthetic forward/backward only; no optimizer updates, dataset I/O, or W&B.",
+    "created_utc": "2026-10-19T23:56:12.494577+00:00",
+    "source": {
+      "git": "5d681d1634d5bbea7cadd03beb7c47bad8658866",
+      "dirty": true,
+      "source_sha256": "d8f0d1b6d5802a4133f3a492ecbdd4540f3791505221e33989af9fca9e1a1163"
+    },
+    "gpu": "NVIDIA RTX 5000 Ada Generation",
+    "torch": "2.9.1+cu128",
+    "precision": "bf16",
+    "cpu_threads": 2,
+    "seed": 73,
+    "warmups": 2,
+    "repeats": 3,
+    "execution_history_frames": [
+      64,
+      96,
+      160,
+      256,
+      384,
+      512,
+      640,
+      768
+    ],
+    "conditioning_history_frames": [
+      0,
+      0,
+      32,
+      64,
+      96,
+      128,
+      160,
+      192
+    ],
+    "model": {
+      "encoder": "joint",
+      "points": 1024,
+      "block_size": 8,
+      "visual_tokens": 32,
+      "current_tokens": 64,
+      "width": 256,
+      "layers": 4,
+      "heads": 8,
+      "text_layers": 2,
+      "max_text_bytes": 256,
+      "horizon": 16,
+      "execute": 4,
+      "flow_steps": 8,
+      "solver": "euler",
+      "decoder": "flow",
+      "budget": 128,
+      "budgets": [
+        64,
+        128,
+        256
+      ],
+      "router_width": 128,
+      "mass_bias": true,
+      "max_execution_frames": 2600,
+      "max_conditioning_frames": 1300,
+      "action_space": "joint_angle",
+      "checkpoint_blocks": true,
+      "archive_device": "cpu",
+      "encoder_options": {}
+    },
+    "encoder_block_batch_size": 32,
+    "batch_size": 8,
+    "timing_includes": [
+      "host collation",
+      "host-to-device transfer",
+      "history and current encoding",
+      "text encoding",
+      "metadata adaptation",
+      "action decoder",
+      "backward"
+    ],
+    "timing_excludes": [
+      "dataset loading",
+      "optimizer updates",
+      "logging",
+      "checkpoint writes"
+    ],
+    "serial": {
+      "seconds": [
+        7.799281425774097,
+        7.623003369197249,
+        7.754525281488895
+      ],
+      "median_seconds": 7.754525281488895,
+      "examples_per_second": 1.0316556732488946,
+      "peak_allocated_bytes": 194559488,
+      "loss": 1.3919854164123535
+    },
+    "batched": {
+      "seconds": [
+        0.43242342583835125,
+        0.4329816121608019,
+        0.43770330026745796
+      ],
+      "median_seconds": 0.4329816121608019,
+      "examples_per_second": 18.476535204522584,
+      "peak_allocated_bytes": 1178123264,
+      "loss": 1.3920478820800781
+    },
+    "parity": {
+      "prediction_max_absolute_difference": 0.0078125,
+      "loss_absolute_difference": 6.246566772460938e-05,
+      "gradient_relative_l2_difference": 0.002326227459784992,
+      "gradient_max_absolute_difference": 0.001708984375,
+      "note": "Mixed-precision accumulation order differs. FP32 invariant tests assess correctness."
+    },
+    "median_speedup": 17.909594919723748
+  },
+  "teacher_fp32_confirmation": {
+    "diagnostic": "Synthetic forward/backward only; no optimizer updates, dataset I/O, or W&B.",
+    "created_utc": "2026-10-19T23:57:37.920290+00:00",
+    "source": {
+      "git": "5d681d1634d5bbea7cadd03beb7c47bad8658866",
+      "dirty": true,
+      "source_sha256": "4007a766772833c2e4fe6ea3dd904cc6c4a233276bb4b256009c2f91c4b43ef4"
+    },
+    "gpu": "NVIDIA RTX 5000 Ada Generation",
+    "torch": "2.9.1+cu128",
+    "precision": "fp32",
+    "cpu_threads": 2,
+    "seed": 73,
+    "warmups": 1,
+    "repeats": 1,
+    "execution_history_frames": [
+      64,
+      96,
+      160,
+      256,
+      384,
+      512,
+      640,
+      768
+    ],
+    "conditioning_history_frames": [
+      0,
+      0,
+      32,
+      64,
+      96,
+      128,
+      160,
+      192
+    ],
+    "model": {
+      "encoder": "joint",
+      "points": 1024,
+      "block_size": 8,
+      "visual_tokens": 32,
+      "current_tokens": 64,
+      "width": 256,
+      "layers": 4,
+      "heads": 8,
+      "text_layers": 2,
+      "max_text_bytes": 256,
+      "horizon": 16,
+      "execute": 4,
+      "flow_steps": 8,
+      "solver": "euler",
+      "decoder": "flow",
+      "budget": 128,
+      "budgets": [
+        64,
+        128,
+        256
+      ],
+      "router_width": 128,
+      "mass_bias": true,
+      "max_execution_frames": 2600,
+      "max_conditioning_frames": 1300,
+      "action_space": "joint_angle",
+      "checkpoint_blocks": true,
+      "archive_device": "cpu",
+      "encoder_options": {}
+    },
+    "encoder_block_batch_size": 32,
+    "batch_size": 8,
+    "timing_includes": [
+      "host collation",
+      "host-to-device transfer",
+      "history and current encoding",
+      "text encoding",
+      "metadata adaptation",
+      "action decoder",
+      "backward"
+    ],
+    "timing_excludes": [
+      "dataset loading",
+      "optimizer updates",
+      "logging",
+      "checkpoint writes"
+    ],
+    "serial": {
+      "seconds": [
+        7.460217552259564
+      ],
+      "median_seconds": 7.460217552259564,
+      "examples_per_second": 1.072354786433399,
+      "peak_allocated_bytes": 233520640,
+      "loss": 1.3909883499145508
+    },
+    "batched": {
+      "seconds": [
+        0.6589456871151924
+      ],
+      "median_seconds": 0.6589456871151924,
+      "examples_per_second": 12.140606056658953,
+      "peak_allocated_bytes": 1789771264,
+      "loss": 1.3909883499145508
+    },
+    "parity": {
+      "prediction_max_absolute_difference": 5.960464477539062e-07,
+      "loss_absolute_difference": 0.0,
+      "gradient_relative_l2_difference": 1.49405597389738e-07,
+      "gradient_max_absolute_difference": 8.940696716308594e-08,
+      "note": "Batched GEMM/reduction order differs; FP32 is the tight numerical parity check."
+    },
+    "median_speedup": 11.321445299869486
+  },
+  "visual_component": {
+    "sequential": {
+      "seconds": [
+        0.04332457669079304,
+        0.0429622083902359,
+        0.04300031624734402
+      ],
+      "peak_allocated_bytes": 218571264
+    },
+    "batched": {
+      "seconds": [
+        0.003883732482790947,
+        0.00387447327375412,
+        0.0038911178708076477
+      ],
+      "peak_allocated_bytes": 270922752
+    },
+    "output_max_absolute_difference_bf16": 0.0,
+    "gradient_max_absolute_difference_bf16": {
+      "raw_tau_x": 1.1368683772161603e-13,
+      "raw_tau_t": 5.684341886080802e-14,
+      "point_mlp.0.weight": 2.384185791015625e-07,
+      "point_mlp.0.bias": 4.76837158203125e-07,
+      "point_mlp.2.weight": 4.76837158203125e-07,
+      "point_mlp.2.bias": 9.5367431640625e-07,
+      "edge_mlp.0.weight": 9.5367431640625e-07,
+      "edge_mlp.0.bias": 3.814697265625e-06,
+      "edge_mlp.2.weight": 7.152557373046875e-07,
+      "edge_mlp.2.bias": 7.62939453125e-06
+    },
+    "gpu": "NVIDIA RTX 5000 Ada Generation",
+    "diagnostic": "Synthetic local visual blocks only; not full teacher training throughput.",
+    "shape": {
+      "blocks": 8,
+      "frames": 8,
+      "points_per_frame": 1024,
+      "width": 256,
+      "centers_per_frame": 4,
+      "neighbor_cap": 128,
+      "precision": "bf16"
+    },
+    "torch": "2.9.1+cu128"
+  },
+  "wandb_system_statistics": {
+    "synthetic_debug_only": true,
+    "wandb_file": "runs/batching_system_stats_diagnostic/run/wandb/offline-run-20261020_015204-547fce036de8cfa5-attempt1/run-547fce036de8cfa5.wandb",
+    "stats_records": 2,
+    "keys": [
+      "cpu",
+      "disk./.usageGB",
+      "disk./.usagePercent",
+      "disk.nvme0n1p4.in",
+      "disk.nvme0n1p4.out",
+      "gpu.0.enforcedPowerLimitWatts",
+      "gpu.0.fanSpeed",
+      "gpu.0.gpu",
+      "gpu.0.memory",
+      "gpu.0.memoryAllocated",
+      "gpu.0.memoryAllocatedBytes",
+      "gpu.0.memoryClock",
+      "gpu.0.powerPercent",
+      "gpu.0.powerWatts",
+      "gpu.0.smClock",
+      "gpu.0.temp",
+      "memory_percent",
+      "network.recv",
+      "network.sent",
+      "proc.cpu.threads",
+      "proc.memory.availableMB",
+      "proc.memory.percent",
+      "proc.memory.rssMB"
+    ]
+  },
+  "real_data_diagnostic": {
+    "task": "VideoUnmask",
+    "episodes": 2,
+    "synthetic": false,
+    "debug": true,
+    "note": "Existing verified aligned training subset; repeated decisions across two short episodes, warm local storage. Not full 1600-episode shared-filesystem throughput. Default 256-wide/4-layer/1024-point model, 32 examples/update, 8/pass, 2 updates only.",
+    "manifest": {
+      "device": "cuda:0",
+      "environment": {
+        "details": {
+          "capability": [
+            8,
+            9
+          ],
+          "driver": "580.159.04",
+          "gpu": "NVIDIA RTX 5000 Ada Generation",
+          "packages": {
+            "PyYAML": "6.0.2",
+            "h5py": "3.14.0",
+            "mani-skill": "3.0.0b21",
+            "numpy": "1.26.4",
+            "robomme": "0.1.0",
+            "sapien": "3.0.3",
+            "torch": "2.9.1+cu128",
+            "torchvision": "0.24.1+cu128"
+          },
+          "platform": "Linux-6.17.0-1025-oem-x86_64-with-glibc2.39",
+          "python": "3.11.15 (main, Jun 11 2026, 04:03:40) [Clang 22.1.3 ]",
+          "torch_wheel_cuda": "12.8"
+        },
+        "sha256": "62ec2f884dca1653c846693025a3754f40b714b959b2632ecf7939d6fd7b19e1"
+      },
+      "logging": {
+        "log_every": 1,
+        "progress_every_seconds": 15.0
+      },
+      "precision": "bf16",
+      "provenance": {
+        "data": "b10400fad7364c2597431fbbbbd994022f65d2cdb510b34dc663d1f5cf684b8b",
+        "dependencies": {},
+        "effective_batch": 32,
+        "model": "17624f382265ad7acc312284699227e693f66396105907c487046c3ee8504870",
+        "rank_assignment": "rotating_rank_v1",
+        "sampler": "task_balanced_shuffle_v2",
+        "seed": 0,
+        "training": "4361d6bea1c56afbe331478ed2469206c7e2e11d5c9fa36b4b401499d506b829",
+        "training_engine": "padded_policy_batch_v1",
+        "world_size": 1
+      },
+      "source": {
+        "dirty": true,
+        "git": "5d681d1634d5bbea7cadd03beb7c47bad8658866",
+        "source_sha256": "6506c4489102e837c2b88584727788719f986f1eff68015b16e70d1cbeeaceb4"
+      },
+      "synthetic": false
+    },
+    "metrics": [
+      {
+        "step": 1,
+        "training_action_loss": 2.281193733215332,
+        "objective": "flow",
+        "seconds": 1.2307195365428925,
+        "step_seconds": 1.2306876350194216,
+        "data_loading_seconds_rank": 0.1557600386440754,
+        "examples": 32,
+        "effective_batch": 32,
+        "microbatch_size_rank": 8,
+        "microbatches_per_update_rank": 4,
+        "history_frames_mean_rank": 138.875,
+        "history_frames_max_rank": 214,
+        "history_leaves_per_update_rank": 22220,
+        "history_context_tokens_mean_rank": 694.375,
+        "examples_per_second": 26.00104983292004,
+        "allocated_gpu_hours": 0.00034186653792858126,
+        "gpu_profile": "local_rtx5000ada_diagnostic",
+        "fine_leaves_processed_rank": 22220,
+        "learning_rate": 2.0000000000000002e-07,
+        "gradient_norm_before_clip": 10.98783016204834,
+        "amp_scale": 1.0,
+        "amp_overflows_this_attempt": 0,
+        "gpu_peak_allocated_bytes_rank": 1109809664,
+        "gpu_peak_reserved_bytes_rank": 1556086784,
+        "cpu_process_rss_bytes": 1927188480,
+        "cpu_process_peak_rss_bytes": 1925967872
+      },
+      {
+        "step": 2,
+        "training_action_loss": 2.2099387645721436,
+        "objective": "flow",
+        "seconds": 1.967932503670454,
+        "step_seconds": 0.6147434003651142,
+        "data_loading_seconds_rank": 0.0015857815742492676,
+        "examples": 64,
+        "effective_batch": 32,
+        "microbatch_size_rank": 8,
+        "microbatches_per_update_rank": 4,
+        "history_frames_mean_rank": 145.625,
+        "history_frames_max_rank": 226,
+        "history_leaves_per_update_rank": 23300,
+        "history_context_tokens_mean_rank": 728.125,
+        "examples_per_second": 32.521440588349215,
+        "allocated_gpu_hours": 0.0005466479176862373,
+        "gpu_profile": "local_rtx5000ada_diagnostic",
+        "fine_leaves_processed_rank": 45520,
+        "learning_rate": 3.0000000000000004e-07,
+        "gradient_norm_before_clip": 10.986209869384766,
+        "amp_scale": 1.0,
+        "amp_overflows_this_attempt": 0,
+        "gpu_peak_allocated_bytes_rank": 1158063104,
+        "gpu_peak_reserved_bytes_rank": 1572864000,
+        "cpu_process_rss_bytes": 1955672064,
+        "cpu_process_peak_rss_bytes": 1989472256
+      }
+    ],
+    "scenes": [
+      {
+        "diagnostics/scenes_seconds": 0.4560080375522375,
+        "diagnostics/scenes_media_seconds": 0.06188270263373852,
+        "diagnostics/scenes_bytes": 482050,
+        "diagnostics/scenes_logged": 2,
+        "diagnostics/scenes_skipped": {},
+        "progress/step": 2,
+        "tracking/attempt": 1
+      }
+    ],
+    "wandb_pointcloud_files": 2,
+    "completion": {
+      "checkpoint": "/home/rvalperga/chronotree/runs/batched_real_diagnostic/seed0/teacher/last.pt",
+      "checkpoint_sha256": "5b1f50b0947ddfdfcb7e959a5d16a61defa7898e74fa5c01d794d680b2f3e7ec",
+      "completed_steps": 2,
+      "intended_steps": 2,
+      "status": "complete",
+      "synthetic": false
+    },
+    "reproduce": "WANDB_MODE=offline OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 uv run python -m stmem.train --config runs/batched_real_diagnostic/config.yaml --progress-every-seconds 15"
+  },
+  "reproduction": {
+    "bf16": "uv run python scripts/benchmark_teacher_batch.py",
+    "fp32": "uv run python scripts/benchmark_teacher_batch.py --precision fp32 --warmups 1 --repeats 1 --output runs/batched_teacher_diagnostic/benchmark_fp32.json"
+  },
+  "limitations": [
+    "Synthetic benchmark excludes disk loading, optimizer updates, logging and checkpoint writes.",
+    "Real subset has only two short VideoUnmask episodes and warm local storage.",
+    "No H200/B200 throughput or NCCL multi-GPU run was measured locally.",
+    "BF16 reduction shapes produce small numerical differences; FP32 full-shape reference parity is measured separately.",
+    "The previously documented historical point-cloud coverage issue remains unresolved."
+  ],
+  "synthetic_cached_pipeline": {
+    "synthetic_debug_only": true,
+    "status": "passed",
+    "device": "cpu",
+    "elapsed_seconds": 8.791078202426434,
+    "effective_batch": 4,
+    "microbatch": 2,
+    "steps_per_policy": 2,
+    "steps_per_router": 2,
+    "source": {
+      "git": "5d681d1634d5bbea7cadd03beb7c47bad8658866",
+      "dirty": true,
+      "source_sha256": "6506c4489102e837c2b88584727788719f986f1eff68015b16e70d1cbeeaceb4"
+    },
+    "stages": [
+      "teacher",
+      "cache",
+      "compact",
+      "perceiver",
+      "labels_tree",
+      "router_tree",
+      "labels_flat",
+      "router_flat"
+    ],
+    "frozen_encoders_equal_teacher": true,
+    "label_contexts_per_reader": 24,
+    "tree_label_moves": 12,
+    "flat_label_moves": 14,
+    "finite_online_readers": [
+      "CURRENT",
+      "FLAT",
+      "FULL",
+      "PERCEIVER",
+      "TREE",
+      "UNIFORM"
+    ],
+    "local_artifacts": "runs/batched_pipeline_diagnostic/evidence.json",
+    "note": "Actual frozen HDF5 cache built and loaded; synthetic debug checkpoint selection only. No official evaluation or model-quality claim."
+  }
+}

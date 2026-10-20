@@ -78,6 +78,8 @@ def dependency(cfg: dict, name: str) -> Path:
 
 
 def validate_config(cfg: dict) -> None:
+    if not isinstance(cfg.get("tracking", {}).get("system_stats", True), bool):
+        raise ValueError("tracking.system_stats must be boolean")
     scenes = cfg.get("tracking", {}).get("scenes", {})
     if not isinstance(scenes, dict) or set(scenes) - {"enabled", "count", "max_points"}:
         raise ValueError("tracking.scenes accepts only enabled, count, max_points")
@@ -94,6 +96,14 @@ def validate_config(cfg: dict) -> None:
         raise ValueError("Execute horizon must be in [1, action horizon]")
     if t["effective_batch"] < 1 or t["steps"] < 1:
         raise ValueError("Invalid training budget")
+    for key, default in (("microbatch", 8), ("encoder_block_batch_size", 32)):
+        value = t.get(key, default)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError(f"training.{key} must be a positive integer")
+    if t.get("length_bucket_size", 1) != 1:
+        raise ValueError(
+            "training.length_bucket_size must be 1; ordered length buckets are no longer supported"
+        )
     if cfg["data"].get("synthetic") and not cfg.get("debug", False):
         raise ValueError("Synthetic data is restricted to explicitly marked debug configurations")
     from stmem.memory.hierarchy import maximum_root_count

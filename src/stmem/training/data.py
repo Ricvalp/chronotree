@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 import random
 import time
+from operator import index as integer_index
 import torch
 from stmem.config import digest
 from stmem.data.canonical import valid_decision_indices
@@ -12,7 +13,23 @@ from stmem.data.dataset import EpisodeDataset, synthetic_episode
 from stmem.data.paths import alignment_path
 
 
+def rank_positions(step: int, batch: int, rank: int, world: int) -> list[int]:
+    """Disjoint positions for one update, rotating task ownership across ranks.
+
+    All ranks jointly consume the same contiguous global batch. Rotating the
+    modulo offset avoids permanently assigning a task to one GPU when the task
+    count and world size share a divisor.
+    """
+    if step < 0 or batch < 1 or world < 1 or not 0 <= rank < world:
+        raise ValueError("Invalid optimizer step, global batch, rank, or world size")
+    if batch % world:
+        raise ValueError("Effective batch must be divisible by world size")
+    return [step * batch + offset for offset in range((rank + step) % world, batch, world)]
+
+
 class TrainingData:
+    sampler_version = "task_balanced_shuffle_v2"
+
     def __init__(self, cfg, *, progress=None):
         started = time.perf_counter()
 
@@ -134,20 +151,44 @@ class TrainingData:
         items = list(self.candidates[task])
         rng = random.Random(self.cfg["seed"] * 1000003 + self.tasks.index(task) * 1009 + epoch)
         rng.shuffle(items)
-        # Shuffled length buckets reduce adjacent accumulation memory variance.
-        bucket = self.cfg["training"].get("length_bucket_size", 32)
-        return [
-            x
-            for start in range(0, len(items), bucket)
-            for x in sorted(items[start : start + bucket], key=lambda p: p[1])
-        ]
+        # Sorting every task's consecutive buckets by decision time synchronized
+        # short-to-long histories into a periodic training curriculum. Keep the
+        # epoch shuffled; padding/grouping within an update must not reorder the
+        # sequence of optimizer updates or discard any candidate.
+        return items
 
-    def sample_position(self, position):
+    def sample_reference(self, position):
+        """Resolve a global sample position without reading observation payloads."""
+        position = integer_index(position)
+        if position < 0:
+            raise ValueError("Global sample positions must be nonnegative")
         task = self.tasks[position % len(self.tasks)]
         within = position // len(self.tasks)
         n = len(self.candidates[task])
-        ep, time = self._permutation(task, within // n)[within % n]
-        return self.decision(ep, time)
+        return self._permutation(task, within // n)[within % n]
+
+    def sample_positions(self, positions):
+        """Fetch one microbatch with at most one episode load per unique episode.
+
+        The two-episode LRU alone cannot retain an interleaved multi-task batch.
+        Group requests before loading, then restore their exact input order.
+        Episode.decision remains the sole causal alignment/chunk constructor.
+        """
+        grouped = {}
+        size = 0
+        for size, position in enumerate(positions, start=1):
+            episode_index, decision_time = self.sample_reference(position)
+            grouped.setdefault(episode_index, []).append((size - 1, decision_time))
+        decisions = [None] * size
+        for episode_index, requested in grouped.items():
+            episode = self.episode(episode_index)
+            for output_index, decision_time in requested:
+                decisions[output_index] = episode.decision(decision_time, self.horizon)
+        return decisions
+
+    def sample_position(self, position):
+        episode_index, decision_time = self.sample_reference(position)
+        return self.decision(episode_index, decision_time)
 
     def fit_normalizer(self, normalizer):
         # The small sufficient statistics were collected during indexing. No

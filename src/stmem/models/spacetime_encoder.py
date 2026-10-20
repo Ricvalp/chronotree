@@ -17,6 +17,7 @@ from torch.utils.checkpoint import checkpoint
 
 from stmem.memory.hierarchy import stable_id
 from stmem.memory.records import MemoryRecord, leaf_record
+from .batched_spacetime import canonical_nearest, forward_batched
 from .event_encoder import EventEncoder
 
 
@@ -106,6 +107,16 @@ class SpacetimeEncoder(nn.Module):
     @property
     def tau_t(self) -> Tensor:
         return F.softplus(self.raw_tau_t.float()) + self.min_bandwidth
+
+    def forward_batched(
+        self,
+        points: Tensor,
+        valid: Tensor,
+        times: Tensor,
+        centers_per_frame: int | Sequence[int],
+    ) -> EncodedLeaves:
+        """Vectorized independent local blocks; masked leaves retain fixed slots."""
+        return forward_batched(self, points, valid, times, centers_per_frame)
 
     def forward(
         self,
@@ -244,12 +255,7 @@ class SpacetimeEncoder(nn.Module):
             if self.framewise:
                 allowed = allowed & (pf[None, :] == cf[start:end, None])
             distance = spatial / self.tau_x + temporal / self.tau_t
-            nearest = torch.topk(
-                distance.masked_fill(~allowed, float("inf")),
-                min(self.neighbor_cap, len(cloud)),
-                largest=False,
-                sorted=True,
-            ).indices
+            nearest = canonical_nearest(distance, allowed, self.neighbor_cap)
             mask = allowed.gather(1, nearest)
             row_valid = mask.any(-1)
             logits = -distance.gather(1, nearest)

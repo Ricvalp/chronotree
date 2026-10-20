@@ -13,10 +13,26 @@ class Perceiver(nn.Module):
         self.norm = nn.LayerNorm(width)
         self.ff = nn.Sequential(nn.Linear(width, width * 2), nn.GELU(), nn.Linear(width * 2, width))
 
-    def forward(self, history, bias):
-        if not len(history):
-            return history
-        x = self.latents[None]
-        x = x + self.attn(x, history[None], bias[None])
+    def forward(self, history, bias, *, return_mask=False):
+        """Resample padded histories, keeping empty examples explicitly invalid.
+
+        ``return_mask=True`` returns (content, valid). A batched empty history
+        occupies ``budget`` zero, invalid slots; it never creates learned
+        history tokens for an example which has no history.
+        """
+        unbatched = history.ndim == 2
+        if unbatched and not len(history):
+            valid = torch.zeros(0, device=history.device, dtype=torch.bool)
+            return (history, valid) if return_mask else history
+        if unbatched:
+            history, bias = history[None], bias[None]
+        if history.ndim != 3 or bias.shape != history.shape[:2]:
+            raise ValueError("Perceiver requires history [N,D] or [B,N,D] and matching bias")
+        valid = torch.isfinite(bias).any(-1, keepdim=True).expand(-1, len(self.latents))
+        x = self.latents[None].expand(history.shape[0], -1, -1)
+        x = x + self.attn(x, history, bias)
         x = x + self.ff(self.norm(x))
-        return x.squeeze(0)
+        x = x.masked_fill(~valid[..., None], 0)
+        if unbatched:
+            x, valid = x[0], valid[0]
+        return (x, valid) if return_mask else x

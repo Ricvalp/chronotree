@@ -81,8 +81,21 @@ def test_sdk_init_finish_preserve_training_rng(fake_wandb, tmp_path):
     assert random.random() == expected[0]
     assert np.random.random() == expected[1]
     torch.testing.assert_close(torch.rand(3), expected[2], rtol=0, atol=0)
-    assert fake_wandb[0].kwargs["settings"]["x_disable_stats"]
+    assert fake_wandb[0].kwargs["settings"]["x_disable_stats"] is False
+    assert fake_wandb[0].kwargs["settings"]["x_disable_meta"] is False
     assert fake_wandb[0].kwargs["settings"]["console"] == "off"
+
+
+@pytest.mark.parametrize("job_type", ["teacher", "compact", "perceiver", "router", "evaluate"])
+@pytest.mark.parametrize("system_stats", [True, False])
+def test_system_stats_setting_across_job_types(fake_wandb, tmp_path, job_type, system_stats):
+    cfg = config(tmp_path)
+    cfg["tracking"] = {"system_stats": system_stats}
+    with RunTracker(cfg, tmp_path / "run", job_type=job_type):
+        pass
+    settings = fake_wandb[0].kwargs["settings"]
+    assert settings["x_disable_stats"] is (not system_stats)
+    assert settings["x_disable_meta"] is (not system_stats)
 
 
 def test_resume_keeps_id_and_monotonic_history_with_rewound_optimizer(fake_wandb, tmp_path):
