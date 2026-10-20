@@ -55,6 +55,10 @@ fresh run. The original diagnosis is recorded in
   per-episode atomic results, videos, timing/storage/transfer counters and reports.
 - Bounded memory/budget/routing diagnostics, checkpoint selection, exact resume,
   DDP launch, Slurm dependency/resume planner and frozen official-test protocol.
+- Standalone teacher memory profiling with 10 warmup updates, separate baseline
+  and detailed trace passes, per-rank memory/phase reports and isolated W&B
+  output. A dedicated dry-run HPC launcher and optional long-history training
+  sampler are documented in [profiling.md](profiling.md).
 - W&B logging for all training stages, evaluation/selection shards, label jobs,
   aggregate reports and smoke diagnostics. Default offline recording, optional
   online transport, stable resume identities and one writer per DDP allocation.
@@ -81,7 +85,7 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 
 | Check | Measured outcome |
 |---|---|
-| Core test suite | **425 passed** in 72.05 s; subsequent five-case prefetch integration run passed in 22.83 s, including two new cases (**427 distinct tests** across commands) |
+| Core test suite | **452 passed** in 79.06 s; subsequent 30-case profiler/launcher run includes five new failure cases (**457 distinct tests** across commands) |
 | Package lock/install | `uv lock --check`, `uv pip check`, imports and lint pass |
 | Real data | One 1,251,608,544-byte VideoUnmask archive; SHA verified; two episodes prepared |
 | Expert replay | Both complete sampled training episodes reached official success; exact nonterminal post-command qpos match |
@@ -309,6 +313,19 @@ portable measured results are in
 These checks do not establish manipulation performance. Expert replay verifies
 the data/control interface. A two-update learned model's deliberately short
 timeout is a protocol check. Synthetic label quality is not a research result.
+
+The standalone memory profiler passed exact CPU model/AdamW parity checks,
+including detailed tracing, and two-rank Gloo runs with spawned loader workers.
+A local CUDA diagnostic completed 10 warmup, two measured and one traced update
+on two existing, alignment-verified VideoUnmask training episodes. It used the
+core-width teacher with 256 points, global batch 64, microbatch 16 and two loader
+workers. The two measured updates averaged 0.497 s and peaked at 5,206,243,328
+allocated bytes (4.85 GiB); the longest observed context was 1,197 tokens.
+These short local histories do not estimate memory headroom or throughput for
+the full 1,024-point, 16-task H200 job. The exported trace contains CUDA kernels
+and the allocation snapshot contains recorded allocation events. Outputs and
+W&B remain separate from teacher training. Portable evidence and commands are in
+[evidence/teacher_memory_profiler.json](evidence/teacher_memory_profiler.json).
 
 ## Not yet run / user-supplied prerequisites
 

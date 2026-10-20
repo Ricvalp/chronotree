@@ -1,0 +1,445 @@
+{
+  "cpu_tests": {
+    "command": "uv run pytest -q",
+    "distinct_passed": 457,
+    "new_failure_cases_after_full_suite": 5,
+    "passed": 452,
+    "seconds": 79.06,
+    "supplementary_command": "uv run pytest tests/test_profile_teacher_memory.py tests/test_profile_launcher.py -q",
+    "supplementary_passed": 30
+  },
+  "date": "2026-10-20",
+  "distributed_checks": [
+    {
+      "backend": "gloo",
+      "device": "cpu",
+      "effective_batch": 4,
+      "measured_steps": 1,
+      "microbatch": 1,
+      "status": "completed",
+      "summary": "runs/profile_ddp_check_qekrtszm/profile/summary.json",
+      "synthetic": true,
+      "warmup_steps": 5,
+      "workers_per_rank": 0,
+      "world_size": 2
+    },
+    {
+      "backend": "gloo",
+      "device": "cpu",
+      "effective_batch": 4,
+      "measured_steps": 1,
+      "microbatch": 1,
+      "status": "completed",
+      "summary": "runs/profile_ddp_workers_check_1jebc12o/profile/summary.json",
+      "synthetic": true,
+      "warmup_steps": 5,
+      "workers_per_rank": 1,
+      "world_size": 2
+    }
+  ],
+  "doctor": {
+    "bf16": "passed",
+    "command": "uv run python -m stmem.doctor",
+    "fp16": "passed",
+    "fp32": "passed"
+  },
+  "gpu_run": {
+    "command": "OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 WANDB_MODE=offline uv run python -u scripts/profile_teacher_memory.py --config runs/profiles/memory_validation_20261020/config.yaml --output runs/profiles/memory_validation_20261020/representative --warmup-steps 10 --steps 2 --trace-steps 1",
+    "config": {
+      "checkpoints": {
+        "compact": "{run_root}/seed{seed}/compact/selected.pt",
+        "teacher": "{run_root}/seed{seed}/teacher/selected.pt"
+      },
+      "data": {
+        "alignment": "verified_revision_registry_required",
+        "alignment_path": "data/alignment.json",
+        "benchmark_revision": "6503b26e00ff338611fceb039417fbc64826ccc8",
+        "clock": "recorded_frame",
+        "dataset_revision": "manifest_verified_at_download",
+        "decision_stride": 4,
+        "episodes_per_task": 2,
+        "fraction": 1.0,
+        "nominal_control_hz": 20,
+        "prepared_subdir": "prepared",
+        "process_every_observation": true,
+        "sensors": [
+          "front_rgb",
+          "wrist_rgb",
+          "front_depth",
+          "wrist_depth",
+          "camera_calibration",
+          "proprioception",
+          "goal_text",
+          "past_command"
+        ],
+        "simulator_revision": "07be6fbc66350ddca200abfb0a11b692f078f7fd",
+        "split": "train",
+        "synthetic": false,
+        "tasks": [
+          "VideoUnmask"
+        ]
+      },
+      "debug": true,
+      "evaluation": {
+        "episode_count": 50,
+        "max_steps": 1300,
+        "methods": [
+          "FULL",
+          "TREE",
+          "FLAT",
+          "UNIFORM",
+          "PERCEIVER",
+          "CURRENT"
+        ],
+        "seed": 1701,
+        "selection_episode_count": 2,
+        "split": "val",
+        "test_frozen_manifest": null,
+        "timeout_seconds": 1800,
+        "video_cap": 2
+      },
+      "geometry": {
+        "crop": [
+          [
+            -0.9,
+            -0.75,
+            -0.05
+          ],
+          [
+            0.75,
+            0.75,
+            1.25
+          ]
+        ],
+        "depth_unit": "millimetres_signed_int16",
+        "extrinsic_convention": "world_to_camera_cv",
+        "max_depth": 4.0,
+        "voxel_size": 0.005
+      },
+      "labels": {
+        "budgets": [
+          64,
+          128,
+          256
+        ],
+        "candidates": 4,
+        "contexts": 16000,
+        "exploration_fraction": 0.5,
+        "gain_epsilon": 1e-06,
+        "refresh_contexts": 8000,
+        "seed": 2026,
+        "split_fraction": 0.8
+      },
+      "model": {
+        "action_space": "joint_angle",
+        "archive_device": "cpu",
+        "block_size": 8,
+        "budget": 128,
+        "budgets": [
+          64,
+          128,
+          256
+        ],
+        "checkpoint_blocks": false,
+        "current_tokens": 64,
+        "decoder": "flow",
+        "encoder": "joint",
+        "encoder_options": {},
+        "execute": 4,
+        "flow_steps": 8,
+        "heads": 8,
+        "horizon": 16,
+        "layers": 4,
+        "mass_bias": true,
+        "max_conditioning_frames": 1300,
+        "max_execution_frames": 2600,
+        "max_text_bytes": 256,
+        "points": 256,
+        "router_width": 128,
+        "solver": "euler",
+        "text_layers": 2,
+        "visual_tokens": 32,
+        "width": 256
+      },
+      "paths": {
+        "cache_root": "cache",
+        "data_root": "data",
+        "run_root": "runs"
+      },
+      "profile": "a5000_debug",
+      "schema_version": 1,
+      "seed": 0,
+      "stage": "teacher",
+      "tracking": {
+        "dir": null,
+        "enabled": true,
+        "entity": null,
+        "mode": "offline",
+        "project": "chronotree",
+        "scenes": {
+          "enabled": false
+        },
+        "system_stats": true
+      },
+      "training": {
+        "checkpoint_every": 1000,
+        "checkpoint_steps": [
+          25000,
+          50000
+        ],
+        "context_mix": {
+          "current": 0.05,
+          "flat": 0.45,
+          "tree": 0.45,
+          "uniform": 0.05
+        },
+        "effective_batch": 64,
+        "encoder_block_batch_size": 32,
+        "grad_clip": 1.0,
+        "intermediate_probability": 0.5,
+        "length_bucket_size": 1,
+        "log_every": 50,
+        "lr": 0.0001,
+        "microbatch": 16,
+        "precision": "auto",
+        "prefetch_factor": 1,
+        "resume_boundary": "optimizer_step",
+        "steps": 50000,
+        "task_balanced": true,
+        "warmup_steps": 1000,
+        "weight_decay": 0.01,
+        "workers": 2
+      }
+    },
+    "data": "Two existing prepared VideoUnmask training episodes, verified revision-level alignment, 256 points per frame.",
+    "manifest": {
+      "data_identity": "f5180b7d8cf29cc8be2d0da4a4c0e9a822209faba4583894cd12123f3b2160ba",
+      "effective_batch": 64,
+      "environment": {
+        "details": {
+          "capability": [
+            8,
+            9
+          ],
+          "driver": "580.159.04",
+          "gpu": "NVIDIA RTX 5000 Ada Generation",
+          "packages": {
+            "PyYAML": "6.0.2",
+            "h5py": "3.14.0",
+            "mani-skill": "3.0.0b21",
+            "numpy": "1.26.4",
+            "robomme": "0.1.0",
+            "sapien": "3.0.3",
+            "torch": "2.9.1+cu128",
+            "torchvision": "0.24.1+cu128"
+          },
+          "platform": "Linux-6.17.0-1025-oem-x86_64-with-glibc2.39",
+          "python": "3.11.15 (main, Jun 11 2026, 04:03:40) [Clang 22.1.3 ]",
+          "torch_wheel_cuda": "12.8"
+        },
+        "sha256": "62ec2f884dca1653c846693025a3754f40b714b959b2632ecf7939d6fd7b19e1"
+      },
+      "initialization": "fresh weights; no training checkpoint read or written",
+      "kind": "standalone_teacher_memory_diagnostic",
+      "memory_history_max_entries": 100000,
+      "microbatch_rank": 16,
+      "notes": [
+        "Warmup and detailed trace are excluded from measured-step summaries.",
+        "Per-phase peaks include memory already live on entry; do not add phase peaks.",
+        "Phase GPU durations use stream events; overlapping stream durations are not additive.",
+        "CUDA allocator statistics exclude allocations made outside PyTorch (e.g. NCCL).",
+        "Free memory is sampled at step end, not at the exact peak.",
+        "Detailed tracing adds overhead; its time/memory is reported separately.",
+        "CPU debug memory fields are null and cannot estimate GPU capacity.",
+        "No checkpoint writes or point-cloud scene logging are included in update timing."
+      ],
+      "options": {
+        "cpu": false,
+        "output": "/home/rvalperga/chronotree/runs/profiles/memory_validation_20261020/representative",
+        "scenario": "representative",
+        "steps": 2,
+        "trace_steps": 1,
+        "warmup_steps": 10
+      },
+      "parameters": 6098698,
+      "precision": "bf16",
+      "profiler_script_sha256": "0adf3bcab267d76104c8554c32df03c50722e10c80631ca762e0fe8eec8faf22",
+      "sampler": "task_balanced_shuffle_v2",
+      "scenario": "representative",
+      "source": {
+        "dirty": true,
+        "git": "115576b9c67e646fbea67647530f8b9eddcd5017",
+        "source_sha256": "18644d50f0bc430ec0d256b691c5f1bf2cd12611e94b70e754ab38e2a2a6522b"
+      },
+      "synthetic": false,
+      "world_size": 1
+    },
+    "measured_phase_evidence": {
+      "action_transfer_and_flow": {
+        "calls": 8,
+        "cuda_elapsed_ms_sum": 1.8681919872760773,
+        "peak_allocated_bytes": 115762688
+      },
+      "backward": {
+        "calls": 8,
+        "cuda_elapsed_ms_sum": 463.4149398803711,
+        "peak_allocated_bytes": 5206243328
+      },
+      "current_encoder": {
+        "calls": 8,
+        "cuda_elapsed_ms_sum": 46.68815994262695,
+        "peak_allocated_bytes": 4969582080
+      },
+      "data_wait": {
+        "calls": 8,
+        "cuda_elapsed_ms_sum": 35.43148810148705,
+        "peak_allocated_bytes": 115719168
+      },
+      "decoder": {
+        "calls": 8,
+        "cuda_elapsed_ms_sum": 15.51798391342163,
+        "peak_allocated_bytes": 5156073984
+      },
+      "history_encoder": {
+        "calls": 8,
+        "cuda_elapsed_ms_sum": 388.61536407470703,
+        "peak_allocated_bytes": 4617615360
+      },
+      "metadata_adapter": {
+        "calls": 16,
+        "cuda_elapsed_ms_sum": 4.0453440099954605,
+        "peak_allocated_bytes": 5060575232
+      },
+      "optimizer": {
+        "calls": 2,
+        "cuda_elapsed_ms_sum": 2.3982080221176147,
+        "peak_allocated_bytes": 140116992
+      },
+      "text_encoder": {
+        "calls": 8,
+        "cuda_elapsed_ms_sum": 6.798016011714935,
+        "peak_allocated_bytes": 4958003200
+      }
+    },
+    "phase_peak_note": "Per-phase peaks include tensors live at entry; do not add phase peaks or overlapping stream durations.",
+    "summary": {
+      "kind": "standalone_teacher_memory_diagnostic",
+      "max_measured_peak_allocated_bytes_across_ranks": 5206243328,
+      "measured_steps": 2,
+      "output": "/home/rvalperga/chronotree/runs/profiles/memory_validation_20261020/representative",
+      "ranks": [
+        {
+          "device": "cuda:0",
+          "measure": {
+            "context_tokens_max": 1197,
+            "context_tokens_mean": 800.28125,
+            "gpu_free_bytes_at_step_end": 25696993280,
+            "gpu_peak_allocated_bytes": 5206243328,
+            "gpu_peak_reserved_bytes": 5729419264,
+            "gpu_total_bytes": 33759035392,
+            "history_frames_max": 226,
+            "padded_context_slots_max": 1227,
+            "seconds_max": 0.5180496722459793,
+            "seconds_mean": 0.4973499635234475,
+            "updates": 2
+          },
+          "phases": [
+            "action_transfer_and_flow",
+            "backward",
+            "current_encoder",
+            "data_wait",
+            "decoder",
+            "history_encoder",
+            "metadata_adapter",
+            "optimizer",
+            "text_encoder"
+          ],
+          "rank": 0,
+          "trace": {
+            "context_tokens_max": 1197,
+            "context_tokens_mean": 758.875,
+            "gpu_free_bytes_at_step_end": 25684410368,
+            "gpu_peak_allocated_bytes": 5077317632,
+            "gpu_peak_reserved_bytes": 5729419264,
+            "gpu_total_bytes": 33759035392,
+            "history_frames_max": 226,
+            "padded_context_slots_max": 1227,
+            "seconds_max": 0.5916764605790377,
+            "seconds_mean": 0.5916764605790377,
+            "updates": 1
+          },
+          "warmup": {
+            "context_tokens_max": 1197,
+            "context_tokens_mean": 782.4375,
+            "gpu_free_bytes_at_step_end": 25703284736,
+            "gpu_peak_allocated_bytes": 5483490304,
+            "gpu_peak_reserved_bytes": 5725224960,
+            "gpu_total_bytes": 33759035392,
+            "history_frames_max": 226,
+            "padded_context_slots_max": 1227,
+            "seconds_max": 1.4074172154068947,
+            "seconds_mean": 0.5575047846883535,
+            "updates": 10
+          }
+        }
+      ],
+      "scenario": "representative",
+      "status": "completed",
+      "synthetic": false,
+      "trace_steps": 1,
+      "warmup_steps": 10,
+      "world_size": 1
+    },
+    "teacher_checkpoints_written": false,
+    "trace": {
+      "allocation_history_events_by_device": [
+        83913
+      ],
+      "bytes": 99084331,
+      "event_categories": {
+        "Trace": 1,
+        "ac2g": 68293,
+        "cpu_instant_event": 59972,
+        "cpu_op": 131220,
+        "cuda_driver": 1188,
+        "cuda_runtime": 34602,
+        "fwdbwd": 12594,
+        "gpu_memcpy": 2544,
+        "gpu_memset": 874,
+        "gpu_user_annotation": 390,
+        "kernel": 29085,
+        "metadata": 62,
+        "overhead": 6,
+        "user_annotation": 399
+      },
+      "sha256": "d8354b28f0adcbdac15d7d78a42e766e3409c2efbf7c38647e3de32c97ac162c",
+      "snapshot_segments": 229
+    },
+    "wandb": {
+      "job_type": "teacher-memory-profile",
+      "logged_updates": 13,
+      "mode": "offline",
+      "status": "completed"
+    }
+  },
+  "hpc_dryrun": {
+    "command": "uv run python hpc/profile_memory.py --site runs/profiles/memory_validation_20261020/site.env --profile h200_4gpu --name teacher_memory_local_dryrun --dry-run",
+    "cpus": 64,
+    "effective_batch": 64,
+    "gpus": 4,
+    "measured_steps": 5,
+    "microbatch": 16,
+    "profile": "h200_4gpu",
+    "shell_syntax": "passed",
+    "submitted": false,
+    "trace_steps": 1,
+    "warmup_steps": 10,
+    "workers_per_rank": 8
+  },
+  "not_run": [
+    "Full-dataset H200/B200 profile",
+    "Multi-GPU NCCL",
+    "Slurm submission"
+  ],
+  "scope": "Implementation diagnostics only. These short, reduced-point local episodes do not establish full-data H200/B200 memory headroom, speed or policy quality."
+}

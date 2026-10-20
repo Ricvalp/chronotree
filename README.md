@@ -299,6 +299,11 @@ resume, signals, resource profiles, final protocol freeze and accounting.
 
 ## Analysis and artifacts
 
+The [standalone teacher memory profiler](docs/profiling.md) runs 10 warmup
+optimizer updates, 5 measured updates and one separate detailed trace. It reuses
+the teacher and data loader, with per-GPU reports and its own W&B run/output
+directory. The dedicated HPC launcher defaults to dry-run.
+
 `stmem.evaluate --budget 64|128|256` supports matched reader budget curves;
 `--intervention erase_execution|permute_execution|erase_conditioning` supports
 fixed-validation memory sensitivity. PERCEIVER has a fixed trained latent count

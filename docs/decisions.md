@@ -339,3 +339,40 @@
     four-GPU job with literal `--cpus-per-task=64`, eight workers per rank,
     prefetch factor one and valid shell syntax.
     No training or Slurm submission is part of this configuration change.
+
+22. **Standalone teacher memory profiling (20 October).** The profiler lives in
+    `scripts/profile_teacher_memory.py`; normal training, model modules and
+    configuration defaults are unchanged. It imports the production data index,
+    packed loader, model and loss, and matches the teacher's AdamW, schedule,
+    equal-example accumulation and DDP synchronization. Ten complete optimizer
+    updates warm the model and allocate AdamW state before five measured updates.
+    One subsequent update adds an operator trace and bounded CUDA allocation
+    history. Warmup and trace measurements remain separate from the baseline.
+
+    Temporary wrappers record encoder, adapter, decoder, backward and optimizer
+    phases. CUDA events avoid synchronizing at each phase; synchronization at
+    update boundaries makes timings comparable. Peak counters are harvested
+    before every reset, including work outside named phases. Phase peaks include
+    memory live at entry and cannot be added. PyTorch allocator counters do not
+    account for external allocations such as NCCL; end-of-update free memory is
+    not an exact peak headroom measurement.
+
+    The normal sampler is the default. An explicit long-history diagnostic
+    selects the latest valid decisions in the longest 10% of episodes per task,
+    retaining complete causal prefixes and task balance. Length-based selection
+    is diagnostic bookkeeping, never a policy feature. Neither mode consumes
+    official validation/test seeds, resumes a checkpoint or saves teacher weights.
+    Existing output paths are rejected; profiling has a separate W&B identity.
+    Failures preserve their original exception and save available phase/memory
+    diagnostics. Completed baseline measurements survive a failed detailed trace.
+
+    `hpc/profile_memory.py` renders one allocation under
+    `hpc/generated/profiles/<name>`; results go under
+    `$STMEM_RUN_ROOT/profiles/<name>`. Only explicit `--submit` calls Slurm.
+    Tests establish exact CPU model/optimizer parity, isolation, causal sampler
+    behavior, memory accounting and failure recovery. Two-rank Gloo checks
+    include spawned loader workers. A bounded real-data RTX 5000 Ada check
+    validates CUDA traces and snapshots; its reduced-data/point-count scope and
+    measured results are recorded in
+    [evidence/teacher_memory_profiler.json](evidence/teacher_memory_profiler.json).
+    Full-data H200/B200 capacity and NCCL behavior remain unmeasured locally.
