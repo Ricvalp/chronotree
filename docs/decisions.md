@@ -376,3 +376,37 @@
     measured results are recorded in
     [evidence/teacher_memory_profiler.json](evidence/teacher_memory_profiler.json).
     Full-data H200/B200 capacity and NCCL behavior remain unmeasured locally.
+
+23. **Explicit 100k-update teacher experiment (20 October follow-up).** At the
+    user's request, `configs/experiments/teacher_b128_m64_blocks128_100k.yaml`
+    sets 100,000 optimizer updates, global batch 128, microbatch cap 64 and
+    encoder block batch size 128. Four H200 ranks receive 32 decisions each,
+    so the actual microbatch is 32 with one forward/backward pass per update.
+    This deliberately changes total sampled exposure to 12.8 million decisions,
+    four times the core 50,000-update/global-64 budget. The learning rate stays
+    at the inherited value and decay follows the new total update count.
+    Immutable validation candidates are fixed at 50,000 and 100,000 updates;
+    neither is automatically selected.
+
+    `hpc/train_teacher.py` launches this one full training stage with an explicit
+    configuration, name and fresh output root. It reuses the existing Slurm
+    renderer, distributed training entrypoint, stop handling and completion
+    checks. Site files, canonical plan defaults, architecture and scientific
+    data contracts are unchanged. Generated files live under
+    `hpc/generated/training/<name>`; training outputs have a separate run root
+    and W&B identity. No profiling or automatic downstream work is included.
+    Only `--submit` submits. Existing run roots and previously submitted names
+    are rejected, and the allocation atomically claims its root before writing.
+    This entrypoint supports fresh runs only.
+
+    Twenty-one launcher tests passed, including generated-shell execution with
+    simulated Slurm commands, a real local USR1 warning, preservation of partial
+    exit status, output isolation and 100k completion requirements. Twenty-eight
+    configuration contract tests also passed. A dry-run of the exact experiment
+    with local paths verified four GPUs, 64 CPUs, actual microbatch 32, online
+    W&B settings, system metrics and checkpoint scenes; shell syntax and Ruff
+    checks passed. The architecture diagram check passed without regeneration
+    because its core defaults and model remain unchanged. No training or real
+    submission ran locally: this workspace has no Slurm client or established
+    HPC connection. These checks do not establish this larger batch's GPU
+    memory peak or throughput.

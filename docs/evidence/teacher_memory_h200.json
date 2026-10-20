@@ -1,0 +1,609 @@
+{
+  "access": "Synced user-generated files and read-only official W&B API using existing credentials; no job submission or remote mutation.",
+  "configuration": {
+    "activation_checkpointing": false,
+    "effective_batch": 64,
+    "episodes_per_task": 100,
+    "length_bucket_size": 1,
+    "microbatch_rank": 16,
+    "parameters": 6098698,
+    "points_per_frame": 1024,
+    "precision": "bf16",
+    "prefetch_factor": 1,
+    "scenario": "representative",
+    "synthetic": false,
+    "tasks": 16,
+    "workers_per_rank": 8,
+    "world_size": 4
+  },
+  "data_identity": "8a23b41311552dde8a8e044b600b32fbdfb80376ff3e7ea2eb7f109f1e8751d5",
+  "environment": {
+    "details": {
+      "capability": [
+        9,
+        0
+      ],
+      "driver": "580.126.20\n580.126.20\n580.126.20\n580.126.20",
+      "gpu": "NVIDIA H200 NVL",
+      "packages": {
+        "PyYAML": "6.0.2",
+        "h5py": "3.14.0",
+        "mani-skill": "3.0.0b21",
+        "numpy": "1.26.4",
+        "robomme": "0.1.0",
+        "sapien": "3.0.3",
+        "torch": "2.9.1+cu128",
+        "torchvision": "0.24.1+cu128"
+      },
+      "platform": "Linux-6.8.0-117-generic-x86_64-with-glibc2.39",
+      "python": "3.11.15 (main, Jul 18 2026, 17:02:49) [Clang 22.1.3 ]",
+      "torch_wheel_cuda": "12.8"
+    },
+    "sha256": "8b840de7b9068497a56b10e5f3411da6e716b156538fec75ac8e0e26ed1e7157"
+  },
+  "inspection_date": "2026-10-20",
+  "interpretation": [
+    "Observed batches have substantial GPU memory headroom; five representative updates are not a worst-case capacity test.",
+    "Visual point/edge activations dominate allocated memory. Grouped stack attribution includes nested operators and temporary tensors, not just named layer outputs.",
+    "Input waits and unequal history work propagate through DDP synchronization. NCCL kernel durations here are not evidence of poor link bandwidth.",
+    "Startup progress specifically identifies an approximately 685-second action-only index/normalization scan. It does not separate filesystem latency from CPU work.",
+    "System telemetry is present but samples roughly every15seconds; only one active GPU sample covers this very short update window.",
+    "The roughly59percent padding metric describes decoder context slots, not59percent of total training compute."
+  ],
+  "kind": "read_only_inspection_of_user_executed_H200_profile",
+  "limitations": [
+    "Detailed tracing adds substantial overhead and uses a different batch from the five baseline measurements; timings are not production throughput.",
+    "Allocation attribution groups each live allocation by the nearest stmem source frame; grouping includes called functions, gathers, concatenations and casts at that line, not just module weights.",
+    "History event allocation sizes are requested payload sizes, while allocator counters include block rounding. Replay plus final baseline therefore approximates, and does not exactly equal, the step allocator high-water mark.",
+    "Allocations that predate the recorded step have no allocation stack in the trace and remain an unassigned baseline.",
+    "Summed GPU kernel durations can overlap streams and include NCCL waiting; they are not wall-clock utilization or network transfer bandwidth.",
+    "A single representative trace cannot establish worst-case memory bounds or sustained throughput.",
+    "No full-history stress profile or maximum microbatch demonstrated.",
+    "No steady-state long-run throughput or learned-policy quality result.",
+    "Phase CUDA-event intervals may include idle time/waits; phase absolute memory peaks must not be added."
+  ],
+  "local_overview_plot": "runs/profile_analysis/63302afad9af0d6f/profile_overview.png",
+  "measured_context": {
+    "global_examples": 320,
+    "max_history_frames": 1237,
+    "max_tokens": 6252,
+    "mean_tokens": 1796.78125,
+    "padded_slot_fraction_proxy": 0.5881775727710291
+  },
+  "profiler_script_sha256": "0adf3bcab267d76104c8554c32df03c50722e10c80631ca762e0fe8eec8faf22",
+  "rank0_rank1_measured_phase_averages": {
+    "0": {
+      "action_transfer_and_flow": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 0.7848639965057373,
+        "host_ms_per_update": 0.7846005260944366,
+        "max_absolute_peak_allocated_gib": 0.15512990951538086,
+        "mean_end_allocated_gib": 0.15511274337768555,
+        "mean_start_allocated_gib": 0.15507984161376953
+      },
+      "backward": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 270.8681396484375,
+        "host_ms_per_update": 153.12766022980213,
+        "max_absolute_peak_allocated_gib": 18.70548915863037,
+        "mean_end_allocated_gib": 0.1778392791748047,
+        "mean_start_allocated_gib": 15.401857471466064
+      },
+      "current_encoder": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 21.453894424438477,
+        "host_ms_per_update": 21.458912268280983,
+        "max_absolute_peak_allocated_gib": 17.802213668823242,
+        "mean_end_allocated_gib": 14.82949619293213,
+        "mean_start_allocated_gib": 14.483611965179444
+      },
+      "data_wait": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 148.75847148001193,
+        "host_ms_per_update": 148.76157864928246,
+        "max_absolute_peak_allocated_gib": 0.15507984161376953,
+        "mean_end_allocated_gib": 0.15507984161376953,
+        "mean_start_allocated_gib": 0.15507984161376953
+      },
+      "decoder": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 9.94256649017334,
+        "host_ms_per_update": 9.94519218802452,
+        "max_absolute_peak_allocated_gib": 18.719624042510986,
+        "mean_end_allocated_gib": 15.470739459991455,
+        "mean_start_allocated_gib": 15.038556575775146
+      },
+      "history_encoder": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 207.20002136230468,
+        "host_ms_per_update": 207.2035387158394,
+        "max_absolute_peak_allocated_gib": 17.54225206375122,
+        "mean_end_allocated_gib": 14.483611965179444,
+        "mean_start_allocated_gib": 0.15511322021484375
+      },
+      "metadata_adapter": {
+        "calls": 10,
+        "cuda_elapsed_ms_per_update": 2.4260735869407655,
+        "host_ms_per_update": 2.2795580327510834,
+        "max_absolute_peak_allocated_gib": 18.33292293548584,
+        "mean_end_allocated_gib": 14.993475866317748,
+        "mean_start_allocated_gib": 14.871509790420532
+      },
+      "optimizer": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 5.4370622634887695,
+        "host_ms_per_update": 122.21781685948372,
+        "max_absolute_peak_allocated_gib": 0.2005610466003418,
+        "mean_end_allocated_gib": 0.1778402328491211,
+        "mean_start_allocated_gib": 0.1778397560119629
+      },
+      "text_encoder": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 7.562336015701294,
+        "host_ms_per_update": 7.564923912286758,
+        "max_absolute_peak_allocated_gib": 17.8051815032959,
+        "mean_end_allocated_gib": 14.86941556930542,
+        "mean_start_allocated_gib": 14.82949619293213
+      }
+    },
+    "1": {
+      "action_transfer_and_flow": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 0.8030336022377014,
+        "host_ms_per_update": 0.8027788251638412,
+        "max_absolute_peak_allocated_gib": 0.15512990951538086,
+        "mean_end_allocated_gib": 0.15511274337768555,
+        "mean_start_allocated_gib": 0.15507984161376953
+      },
+      "backward": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 190.22735443115235,
+        "host_ms_per_update": 124.2787778377533,
+        "max_absolute_peak_allocated_gib": 19.14390468597412,
+        "mean_end_allocated_gib": 0.1778392791748047,
+        "mean_start_allocated_gib": 16.711596488952637
+      },
+      "current_encoder": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 19.99336967468262,
+        "host_ms_per_update": 19.998804852366447,
+        "max_absolute_peak_allocated_gib": 18.401330947875977,
+        "mean_end_allocated_gib": 16.14529867172241,
+        "mean_start_allocated_gib": 15.799634170532226
+      },
+      "data_wait": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 81.07832009345293,
+        "host_ms_per_update": 81.08189664781094,
+        "max_absolute_peak_allocated_gib": 0.15507984161376953,
+        "mean_end_allocated_gib": 0.15507984161376953,
+        "mean_start_allocated_gib": 0.15507984161376953
+      },
+      "decoder": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 8.277241611480713,
+        "host_ms_per_update": 8.27871523797512,
+        "max_absolute_peak_allocated_gib": 19.12849473953247,
+        "mean_end_allocated_gib": 16.779988288879395,
+        "mean_start_allocated_gib": 16.350740814208983
+      },
+      "history_encoder": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 214.01583251953124,
+        "host_ms_per_update": 214.01980370283127,
+        "max_absolute_peak_allocated_gib": 18.13543701171875,
+        "mean_end_allocated_gib": 15.799634170532226,
+        "mean_start_allocated_gib": 0.15511322021484375
+      },
+      "metadata_adapter": {
+        "calls": 10,
+        "cuda_elapsed_ms_per_update": 1.9758784174919128,
+        "host_ms_per_update": 1.8124647438526154,
+        "max_absolute_peak_allocated_gib": 18.816218852996826,
+        "mean_end_allocated_gib": 16.30576801300049,
+        "mean_start_allocated_gib": 16.184701013565064
+      },
+      "optimizer": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 4.684390354156494,
+        "host_ms_per_update": 69.45425979793072,
+        "max_absolute_peak_allocated_gib": 0.2005610466003418,
+        "mean_end_allocated_gib": 0.1778402328491211,
+        "mean_start_allocated_gib": 0.1778397560119629
+      },
+      "text_encoder": {
+        "calls": 5,
+        "cuda_elapsed_ms_per_update": 5.7899328708648685,
+        "host_ms_per_update": 5.791650339961052,
+        "max_absolute_peak_allocated_gib": 18.397149562835693,
+        "mean_end_allocated_gib": 16.182590770721436,
+        "mean_start_allocated_gib": 16.14529867172241
+      }
+    }
+  },
+  "rank_measurements": [
+    {
+      "measure": {
+        "context_tokens_max": 6252,
+        "context_tokens_mean": 1758.1875,
+        "gpu_free_bytes_at_step_end": 126581800960,
+        "gpu_peak_allocated_bytes": 20100043264,
+        "gpu_peak_allocated_gib": 18.719624042510986,
+        "gpu_peak_reserved_bytes": 21846032384,
+        "gpu_peak_reserved_gib": 20.345703125,
+        "gpu_total_bytes": 150109880320,
+        "gpu_total_gib": 139.80072021484375,
+        "history_frames_max": 1237,
+        "padded_context_slots_max": 6267,
+        "seconds_max": 1.237932512536645,
+        "seconds_mean": 0.6906740367412567,
+        "updates": 5
+      },
+      "rank": 0,
+      "trace_peak_allocated_bytes": 22690000896,
+      "warmup_peak_allocated_bytes": 21241271808
+    },
+    {
+      "measure": {
+        "context_tokens_max": 5902,
+        "context_tokens_mean": 1922.9375,
+        "gpu_free_bytes_at_step_end": 126653104128,
+        "gpu_peak_allocated_bytes": 20555611136,
+        "gpu_peak_allocated_gib": 19.14390468597412,
+        "gpu_peak_reserved_bytes": 21774729216,
+        "gpu_peak_reserved_gib": 20.279296875,
+        "gpu_total_bytes": 150109880320,
+        "gpu_total_gib": 139.80072021484375,
+        "history_frames_max": 1167,
+        "padded_context_slots_max": 5907,
+        "seconds_max": 1.228012753650546,
+        "seconds_mean": 0.6871022339910269,
+        "updates": 5
+      },
+      "rank": 1,
+      "trace_peak_allocated_bytes": 10073675776,
+      "warmup_peak_allocated_bytes": 20178776064
+    },
+    {
+      "measure": {
+        "context_tokens_max": 5832,
+        "context_tokens_mean": 1737.9375,
+        "gpu_free_bytes_at_step_end": 124136521728,
+        "gpu_peak_allocated_bytes": 20849680896,
+        "gpu_peak_allocated_gib": 19.417778491973877,
+        "gpu_peak_reserved_bytes": 24291311616,
+        "gpu_peak_reserved_gib": 22.623046875,
+        "gpu_total_bytes": 150109880320,
+        "gpu_total_gib": 139.80072021484375,
+        "history_frames_max": 1153,
+        "padded_context_slots_max": 5867,
+        "seconds_max": 1.2279316019266844,
+        "seconds_mean": 0.6901871763169766,
+        "updates": 5
+      },
+      "rank": 2,
+      "trace_peak_allocated_bytes": 16085548544,
+      "warmup_peak_allocated_bytes": 23383873024
+    },
+    {
+      "measure": {
+        "context_tokens_max": 5867,
+        "context_tokens_mean": 1768.0625,
+        "gpu_free_bytes_at_step_end": 124157493248,
+        "gpu_peak_allocated_bytes": 19729648640,
+        "gpu_peak_allocated_gib": 18.374667167663574,
+        "gpu_peak_reserved_bytes": 24270340096,
+        "gpu_peak_reserved_gib": 22.603515625,
+        "gpu_total_bytes": 150109880320,
+        "gpu_total_gib": 139.80072021484375,
+        "history_frames_max": 1160,
+        "padded_context_slots_max": 5867,
+        "seconds_max": 1.2280372399836779,
+        "seconds_mean": 0.6909111008048058,
+        "updates": 5
+      },
+      "rank": 3,
+      "trace_peak_allocated_bytes": 16783520768,
+      "warmup_peak_allocated_bytes": 22863275008
+    }
+  ],
+  "run": "ricvalp/chronotree/63302afad9af0d6f",
+  "scope": "Preliminary detailed analysis: complete all-four-rank summaries and W&B history; rank0/rank1 allocation snapshots and rank1 detailed trace. Rank0 detailed JSON trace was truncated locally during rsync and excluded from kernel analysis.",
+  "snapshot_and_trace_analysis": {
+    "0": {
+      "allocation_counter_peak_GiB": 21.131710052490234,
+      "allocation_counter_peak_bytes": 22690000896,
+      "counter_minus_replay_fraction": 0.0012606851860037934,
+      "final_snapshot_allocated_bytes": 190911488,
+      "step_end_counter_allocated_bytes": 190954496,
+      "top_peak_allocation_sites": {
+        "src/stmem/models/action_flow.py:106:forward": {
+          "GiB": 0.09783858060836792,
+          "allocation_age_at_peak_ms_max": 13.372,
+          "allocation_age_at_peak_ms_median": 5.961,
+          "allocations": 5,
+          "fraction_of_counter_peak": 0.004629941465472563,
+          "lifetime_ms_max": 46.855,
+          "lifetime_ms_median": 28.207,
+          "requested_bytes": 105053376
+        },
+        "src/stmem/models/action_flow.py:112:forward": {
+          "GiB": 0.5881729125976562,
+          "allocation_age_at_peak_ms_max": 14.292,
+          "allocation_age_at_peak_ms_median": 8.211,
+          "allocations": 32,
+          "fraction_of_counter_peak": 0.027833663775277094,
+          "lifetime_ms_max": 49.001,
+          "lifetime_ms_median": 26.704,
+          "requested_bytes": 631545856
+        },
+        "src/stmem/models/batched_policy.py:33:adapt": {
+          "GiB": 0.24892377853393555,
+          "allocation_age_at_peak_ms_max": 24.006,
+          "allocation_age_at_peak_ms_median": 23.4295,
+          "allocations": 20,
+          "fraction_of_counter_peak": 0.011779632500901246,
+          "lifetime_ms_max": 69.5,
+          "lifetime_ms_median": 62.5865,
+          "requested_bytes": 267279872
+        },
+        "src/stmem/models/batched_policy.py:600:batch_context": {
+          "GiB": 0.0974578857421875,
+          "allocation_age_at_peak_ms_max": 16.429,
+          "allocation_age_at_peak_ms_median": 16.429,
+          "allocations": 1,
+          "fraction_of_counter_peak": 0.0046119261290310356,
+          "lifetime_ms_max": 18.234,
+          "lifetime_ms_median": 18.234,
+          "requested_bytes": 104644608
+        },
+        "src/stmem/models/batched_spacetime.py:134:forward_batched": {
+          "GiB": 7.445743560791016,
+          "allocation_age_at_peak_ms_max": 615.918,
+          "allocation_age_at_peak_ms_median": 371.096,
+          "allocations": 97,
+          "fraction_of_counter_peak": 0.35234931495350436,
+          "lifetime_ms_max": 908.639,
+          "lifetime_ms_median": 562.813,
+          "requested_bytes": 7994806272
+        },
+        "src/stmem/models/batched_spacetime.py:141:forward_batched": {
+          "GiB": 1.84375,
+          "allocation_age_at_peak_ms_max": 615.07,
+          "allocation_age_at_peak_ms_median": 342.64750000000004,
+          "allocations": 128,
+          "fraction_of_counter_peak": 0.08725039267622954,
+          "lifetime_ms_max": 906.966,
+          "lifetime_ms_median": 522.115,
+          "requested_bytes": 1979711488
+        },
+        "src/stmem/models/batched_spacetime.py:146:forward_batched": {
+          "GiB": 0.921875,
+          "allocation_age_at_peak_ms_max": 614.493,
+          "allocation_age_at_peak_ms_median": 342.1785,
+          "allocations": 64,
+          "fraction_of_counter_peak": 0.04362519633811477,
+          "lifetime_ms_max": 905.892,
+          "lifetime_ms_median": 521.325,
+          "requested_bytes": 989855744
+        },
+        "src/stmem/models/batched_spacetime.py:158:forward_batched": {
+          "GiB": 9.52209758758545,
+          "allocation_age_at_peak_ms_max": 612.787,
+          "allocation_age_at_peak_ms_median": 347.61199999999997,
+          "allocations": 260,
+          "fraction_of_counter_peak": 0.45060705280987573,
+          "lifetime_ms_max": 902.805,
+          "lifetime_ms_median": 527.7660000000001,
+          "requested_bytes": 10224274432
+        }
+      },
+      "trace": {
+        "complete": false,
+        "error": "Expecting value: line 700926 column 118 (char 25427968)",
+        "file_bytes": 25427968
+      }
+    },
+    "1": {
+      "allocation_counter_peak_GiB": 9.381841659545898,
+      "allocation_counter_peak_bytes": 10073675776,
+      "counter_minus_replay_fraction": 0.0014325074899055397,
+      "final_snapshot_allocated_bytes": 190911488,
+      "step_end_counter_allocated_bytes": 190954496,
+      "top_peak_allocation_sites": {
+        "no_stmem_frame": {
+          "GiB": 0.18821054324507713,
+          "allocation_age_at_peak_ms_max": 850.168,
+          "allocation_age_at_peak_ms_median": 3.146,
+          "allocations": 26,
+          "fraction_of_counter_peak": 0.02006115111243382,
+          "lifetime_ms_max": 1459.25,
+          "lifetime_ms_median": 12.745,
+          "requested_bytes": 202089532
+        },
+        "src/stmem/models/action_flow.py:112:forward": {
+          "GiB": 0.1916351318359375,
+          "allocation_age_at_peak_ms_max": 20.244,
+          "allocation_age_at_peak_ms_median": 15.931,
+          "allocations": 23,
+          "fraction_of_counter_peak": 0.020426174176682178,
+          "lifetime_ms_max": 38.199,
+          "lifetime_ms_median": 26.942,
+          "requested_bytes": 205766656
+        },
+        "src/stmem/models/batched_policy.py:33:adapt": {
+          "GiB": 0.0962209701538086,
+          "allocation_age_at_peak_ms_max": 28.006,
+          "allocation_age_at_peak_ms_median": 27.3825,
+          "allocations": 16,
+          "fraction_of_counter_peak": 0.010256085494248886,
+          "lifetime_ms_max": 55.924,
+          "lifetime_ms_median": 54.035,
+          "requested_bytes": 103316480
+        },
+        "src/stmem/models/batched_spacetime.py:134:forward_batched": {
+          "GiB": 3.193359375,
+          "allocation_age_at_peak_ms_max": 313.479,
+          "allocation_age_at_peak_ms_median": 204.779,
+          "allocations": 43,
+          "fraction_of_counter_peak": 0.3403766009790625,
+          "lifetime_ms_max": 437.123,
+          "lifetime_ms_median": 290.082,
+          "requested_bytes": 3428843520
+        },
+        "src/stmem/models/batched_spacetime.py:141:forward_batched": {
+          "GiB": 0.79296875,
+          "allocation_age_at_peak_ms_max": 312.75,
+          "allocation_age_at_peak_ms_median": 185.0565,
+          "allocations": 60,
+          "fraction_of_counter_peak": 0.08452165137461735,
+          "lifetime_ms_max": 435.56,
+          "lifetime_ms_median": 263.02099999999996,
+          "requested_bytes": 851443712
+        },
+        "src/stmem/models/batched_spacetime.py:146:forward_batched": {
+          "GiB": 0.396484375,
+          "allocation_age_at_peak_ms_max": 312.206,
+          "allocation_age_at_peak_ms_median": 184.6105,
+          "allocations": 30,
+          "fraction_of_counter_peak": 0.04226082568730868,
+          "lifetime_ms_max": 434.171,
+          "lifetime_ms_median": 262.3195,
+          "requested_bytes": 425721856
+        },
+        "src/stmem/models/batched_spacetime.py:158:forward_batched": {
+          "GiB": 4.251771926879883,
+          "allocation_age_at_peak_ms_max": 310.51,
+          "allocation_age_at_peak_ms_median": 184.712,
+          "allocations": 122,
+          "fraction_of_counter_peak": 0.45319161004532216,
+          "lifetime_ms_max": 431.323,
+          "lifetime_ms_median": 262.07500000000005,
+          "requested_bytes": 4565305344
+        },
+        "src/stmem/models/text_encoder.py:33:forward": {
+          "GiB": 0.028417587280273438,
+          "allocation_age_at_peak_ms_max": 41.566,
+          "allocation_age_at_peak_ms_median": 31.4495,
+          "allocations": 36,
+          "fraction_of_counter_peak": 0.003028998816171548,
+          "lifetime_ms_max": 76.409,
+          "lifetime_ms_median": 63.3285,
+          "requested_bytes": 30513152
+        }
+      },
+      "trace": {
+        "complete": true,
+        "file_bytes": 32828736,
+        "kernel_count": 9589,
+        "memcpy_summed_gpu_ms": 19.55744099999999,
+        "nccl_kernels": [
+          {
+            "duration_ms": 493.081478,
+            "name": "ncclDevKernel_Broadcast_RING_LL(ncclDevKernelArgsStorage<4096ul>)",
+            "start_ms_from_first_phase": 18.331412109375,
+            "stream": 19
+          },
+          {
+            "duration_ms": 0.124577,
+            "name": "ncclDevKernel_Broadcast_RING_LL(ncclDevKernelArgsStorage<4096ul>)",
+            "start_ms_from_first_phase": 511.41404296875,
+            "stream": 19
+          },
+          {
+            "duration_ms": 471.23517599999997,
+            "name": "ncclDevKernel_AllReduce_Sum_f32_RING_LL(ncclDevKernelArgsStorage<4096ul>)",
+            "start_ms_from_first_phase": 964.6275529785156,
+            "stream": 19
+          },
+          {
+            "duration_ms": 7.1576509999999995,
+            "name": "ncclDevKernel_AllReduce_Sum_f32_RING_LL(ncclDevKernelArgsStorage<4096ul>)",
+            "start_ms_from_first_phase": 1435.8646809082031,
+            "stream": 19
+          },
+          {
+            "duration_ms": 0.173506,
+            "name": "ncclDevKernel_AllReduce_Sum_u32_RING_LL(ncclDevKernelArgsStorage<4096ul>)",
+            "start_ms_from_first_phase": 1443.0244130859376,
+            "stream": 19
+          }
+        ],
+        "non_nccl_kernel_count": 9584,
+        "non_nccl_kernel_fraction_below_5us": 0.6884390651085142,
+        "non_nccl_median_kernel_us": 2.431,
+        "non_nccl_summed_kernel_ms": 89.83780000000036
+      }
+    }
+  },
+  "source": {
+    "dirty": true,
+    "git": "22f00b683dc8badcd639a104e33dd7b4d199290d",
+    "source_sha256": "18644d50f0bc430ec0d256b691c5f1bf2cd12611e94b70e754ab38e2a2a6522b"
+  },
+  "source_files_sha256": {
+    "runs/profile_analysis/63302afad9af0d6f/wandb_history.jsonl": "1fbe60936ce862c3a43be4bbf4d04026f9bd7fb413e59110e651e1964900163a",
+    "runs/profiles/teacher_4gpu_memory/config.json": "0979be6a9fba67fe237a3c22bf9d4042704dd58386b0c9e9e02d592206e0c5fb",
+    "runs/profiles/teacher_4gpu_memory/manifest.json": "238d2e522449d2d808877d00d1b2af1b87ec2e51ed5e04c44bd96bc0925e8d55",
+    "runs/profiles/teacher_4gpu_memory/rank0/memory_snapshot.pickle": "dbd38ae49ca9b2697ea58e412f094caed2e278ac843d1ebcbc694ee11ec3fc86",
+    "runs/profiles/teacher_4gpu_memory/rank0/phases.jsonl": "5de01d216f964f5588d1526c1eebabc15de219c33f2599c703ee8a8cdb0fc179",
+    "runs/profiles/teacher_4gpu_memory/rank0/steps.jsonl": "1f6cb21566ed711af3801f3ccb92b5bf76005773bde32ff8ed1823fa2555507b",
+    "runs/profiles/teacher_4gpu_memory/rank1/memory_snapshot.pickle": "41baacaf42d50b327a38501420c995700c4e07223e237a1ca82669884679ae1e",
+    "runs/profiles/teacher_4gpu_memory/rank1/phases.jsonl": "302061bcfcce7573a07bbc1f648b2334c8add1b2767b705fa46aa6da31f445e9",
+    "runs/profiles/teacher_4gpu_memory/rank1/steps.jsonl": "da36389d5cb60aa6a67d9e9f496b528e3bdcdd6c8eba20ca163c0123a10e898a",
+    "runs/profiles/teacher_4gpu_memory/rank1/trace.json": "534d00eb63fe78c5dead24884c0c42904ba3d1cf9627b0fd5cda0d63ec99bbe1",
+    "runs/profiles/teacher_4gpu_memory/summary.json": "0e075283792b6a3e1d044494ed62c03648aa9aa78de4749a52750bc68f1cb1b6"
+  },
+  "startup": {
+    "action_index_seconds": 684.649595933035,
+    "data_index_ready_progress_t_seconds": 696.2158862520009,
+    "index_started_progress_t_seconds": 11.566290318965912,
+    "last_progress_seconds": 751.9513406790793,
+    "notes": "Progress ready refers to TrainingData constructor completing the action index and action normalization statistics, not model/DDP/worker readiness. W&B clock starts slightly before TrainingProgress.",
+    "wandb_final_update_runtime_seconds": 748.747168314,
+    "wandb_first_update_runtime_seconds": 732.09534476,
+    "wandb_measured_average_including_between_update_work": 0.7611521938000123,
+    "wandb_measured_window_seconds_from_warmup10_to_step15": 3.8057609690000618
+  },
+  "state": "finished",
+  "timing": {
+    "measure": {
+      "seconds_mean": 0.697521410137415,
+      "seconds_median": 0.4893291722983122,
+      "seconds_sum": 3.4876070506870747,
+      "slowest_rank_seconds_per_update": [
+        0.4893291722983122,
+        1.237932512536645,
+        0.8674950320273638,
+        0.4788701944053173,
+        0.41398013941943645
+      ]
+    },
+    "trace": {
+      "seconds_mean": 1.4851965866982937,
+      "seconds_median": 1.4851965866982937,
+      "seconds_sum": 1.4851965866982937,
+      "slowest_rank_seconds_per_update": [
+        1.4851965866982937
+      ]
+    },
+    "warmup": {
+      "seconds_mean": 2.0396770112216474,
+      "seconds_median": 0.666252807714045,
+      "seconds_sum": 20.396770112216473,
+      "slowest_rank_seconds_per_update": [
+        11.728759890422225,
+        0.9617796000093222,
+        0.6474218145012856,
+        0.6197255738079548,
+        0.6548017151653767,
+        0.6777039002627134,
+        0.5824690274894238,
+        0.5958202220499516,
+        2.8936546444892883,
+        1.0346337240189314
+      ]
+    }
+  },
+  "url": "https://forge.coreweave.com/wandb/ricvalp/chronotree/runs/63302afad9af0d6f"
+}

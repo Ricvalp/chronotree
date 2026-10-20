@@ -327,6 +327,36 @@ and the allocation snapshot contains recorded allocation events. Outputs and
 W&B remain separate from teacher training. Portable evidence and commands are in
 [evidence/teacher_memory_profiler.json](evidence/teacher_memory_profiler.json).
 
+The user's subsequent four-H200 run `ricvalp/chronotree/63302afad9af0d6f`
+completed on the full prepared training configuration: 16 tasks, 100 episodes
+per task, 1,024 points, microbatch 16/global batch 64 and eight loader workers
+per rank. Read-only W&B inspection and synced summaries show five measured
+updates averaging 0.698 s (slowest rank per update; median 0.489 s), with a
+19.42 GiB maximum allocated peak and 22.62 GiB maximum reserved peak against
+139.80 GiB device capacity. Measured contexts averaged 1,797 tokens and reached
+6,252; this is not a maximum-history stress test.
+
+The first detailed inspection used complete rank 0/1 allocation snapshots and
+rank 1's complete trace; rank 0's trace JSON was truncated locally during rsync.
+Rank 0's separate traced update peaked at 21.13 GiB. Stack attribution assigns
+approximately 9.52 GiB to edge MLP/gather/concatenation, 7.45 GiB to point MLPs,
+2.77 GiB to geometry intermediates and 0.59 GiB to decoder K/V projections.
+These are approximate live allocations at one traced peak, not independent
+phase peaks summed together. Rank 1's collective waits align with rank 0 input
+waits and heavier historical encoding; they do not establish a network
+bandwidth bottleneck. Baseline history encoding averages 207–214 ms on ranks
+0/1, compared with 8–10 ms for the decoder.
+
+The whole W&B run lasted about 752 s: progress records identify roughly 685 s
+in the action-only index/statistics scan. All timed updates together took
+25.37 s including warmup and tracing. The remaining startup bottleneck is
+therefore distinct from update throughput; exact filesystem versus CPU costs
+were not instrumented. System telemetry is present, but its 15 s cadence is too
+sparse to characterize this short update window. This is a user-executed,
+bounded profile, not an agent-submitted job or a long-run scaling result.
+Evidence and scope are in
+[evidence/teacher_memory_h200.json](evidence/teacher_memory_h200.json).
+
 ## Not yet run / user-supplied prerequisites
 
 - Full 16-task data is user-reported prepared on the cluster, but is not present

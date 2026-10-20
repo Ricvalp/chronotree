@@ -50,6 +50,7 @@ hpc/
   site.env                      local default settings
   site_4gpu.env                  optional local four-GPU settings
   plan.py                       planner
+  train_teacher.py              standalone teacher experiment launcher
   jobs/                         maintained job templates
   generated/
     core_seed0_validation_h200_1gpu/
@@ -60,6 +61,12 @@ hpc/
       stops/                    allocation-specific stop requests
     core_seed0_validation_h200_4gpu/
       ...                       same structure for the four-GPU plan
+    training/<experiment-name>/
+      config.yaml               resolved standalone teacher configuration
+      plan.json                 resources, batch accounting and expected outputs
+      jobs/seed0_teacher.sbatch  generated training allocation
+      submitted.json            submission receipt
+      stops/                    allocation-specific stop requests
   logs/                         Slurm stdout/stderr, named with job IDs
 ```
 
@@ -80,6 +87,78 @@ profile creates a different default plan directory but does not change the run
 root. Use a different `STMEM_RUN_ROOT` for an independent comparison to isolate
 its checkpoints, W&B identity and stage markers. Prepared data stays under the
 configured data root.
+
+## Standalone teacher experiments
+
+Use `hpc/train_teacher.py` for an explicitly configured full teacher run outside
+the canonical multi-stage plan. The source configuration remains under
+`configs/experiments/`; generated configuration snapshots and scripts remain under
+`hpc/generated/training/<name>/`. Both `--name` and a fresh `--run-root` are required.
+The launcher copies site resource and data settings, overrides the run root for
+this job, and leaves the site file untouched.
+
+The experiment `configs/experiments/teacher_b128_m64_blocks128_100k.yaml` uses:
+
+| Setting | Value |
+|---|---|
+| Optimizer updates | 100,000 |
+| Global effective batch | 128 decisions |
+| Configured microbatch cap | 64 decisions per GPU |
+| Actual microbatch on four GPUs | 32 decisions per GPU |
+| Forward/backward passes per GPU per update | 1 |
+| Encoder blocks per call | 128 |
+| Immutable checkpoint steps | 50,000 and 100,000 |
+
+The actual microbatch is `min(microbatch, effective_batch / GPU_count)`.
+Four GPUs therefore process `4 × 32 = 128` decisions per optimizer update.
+This is 12.8 million sampled decisions over the full run, four times the exposure
+of the core 50,000-update/global-64 configuration. The inherited learning rate is
+unchanged; the decay schedule uses the new 100,000-update budget. All 16 tasks,
+full causal histories, verified alignment checks, prepared data and eight loading
+workers per rank are retained. Larger batches and block groups increase peak
+memory; the previous smaller-batch profile does not establish this run's peak.
+
+After syncing these source files to the HPC, run from its repository root:
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+.venv/bin/python hpc/train_teacher.py \
+  --site hpc/site_4gpu.env --profile h200_4gpu \
+  --config configs/experiments/teacher_b128_m64_blocks128_100k.yaml \
+  --name teacher_b128_m64_blocks128_100k \
+  --run-root "$PWD/runs/teacher_b128_m64_blocks128_100k" \
+  --dry-run
+```
+
+Inspect `hpc/generated/training/teacher_b128_m64_blocks128_100k/plan.json`,
+`config.yaml` and `jobs/seed0_teacher.sbatch`. Then repeat the same arguments with
+`--submit` in place of `--dry-run`:
+
+```bash
+.venv/bin/python hpc/train_teacher.py \
+  --site hpc/site_4gpu.env --profile h200_4gpu \
+  --config configs/experiments/teacher_b128_m64_blocks128_100k.yaml \
+  --name teacher_b128_m64_blocks128_100k \
+  --run-root "$PWD/runs/teacher_b128_m64_blocks128_100k" \
+  --submit
+```
+
+This submits one ordinary training allocation, with per-update metrics and
+30-second progress messages by default. `--log-every` and
+`--progress-every-seconds` override those intervals. W&B mode/project/entity come
+from the site settings; system metrics and the configured checkpoint point-cloud
+scenes remain enabled. Its checkpoints and W&B files go under
+`runs/teacher_b128_m64_blocks128_100k/seed0/teacher/`. `last.pt` is refreshed every
+1,000 updates and on a coordinated stop. Completion requires both planned
+checkpoint files, `last.pt` and `complete.json`.
+
+The launcher rejects an existing run root or a previously submitted name.
+The generated job also atomically claims its fresh root at startup, so competing
+jobs cannot write into it. Existing teacher runs are independent and continue
+unless explicitly cancelled. This launcher starts from scratch and does not
+automatically resume, resubmit, evaluate, select a checkpoint, or launch downstream
+stages. Validation selection remains necessary before creating encoder caches;
+the final training checkpoint is not automatically the selected teacher.
 
 ## Parallel data preparation
 
