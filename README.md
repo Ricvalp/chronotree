@@ -213,6 +213,12 @@ training. Each task is opened independently; there is no framewise train/test sp
 
 ## Stages and comparisons
 
+Explore the [interactive teacher architecture](docs/diagrams/teacher_architecture.html)
+or open the [editable draw.io diagram](docs/diagrams/teacher_architecture.drawio).
+Its four linked pages cover the full dataflow, encoder layers, action decoder,
+context shapes and exact parameter counts. See the
+[reading and maintenance guide](docs/architecture_diagram.md).
+
 | Stage | Behavior |
 |---|---|
 | Teacher | Train visual/event/text encoders and action-query full-leaf flow policy. |

@@ -1,0 +1,627 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="Chronotree architecture generator" pages="4">
+  <diagram id="overview" name="01 · Overview">
+    <mxGraphModel dx="1800" dy="1240" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1240" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" value="Architecture" parent="0" />
+        <mxCell id="notes" value="Reading notes" parent="0" />
+        <mxCell id="overview-1" value="The full-history teacher" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=36;fontColor=#0F172A;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="30" width="1690" height="55" />
+        </mxCell>
+        <mxCell id="overview-2" value="One causal decision → evidence tokens → action-query flow decoder → a chunk of robot commands" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="92" width="1690" height="44" />
+        </mxCell>
+        <object id="overview-3" label="&lt;b&gt;01 · Overview&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,overview">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="overview-4" label="&lt;b&gt;02 · Encoders&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,encoders">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="480" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="overview-5" label="&lt;b&gt;03 · Action decoder&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,decoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="912" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="overview-6" label="&lt;b&gt;04 · Context &amp;amp; size&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1344" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <mxCell id="overview-7" value="CHRONOTREE  /  Teacher · configs/teacher.yaml     •     Click page tabs or linked blocks · hover for details · all shapes are editable" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=14;fontColor=#64748B;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="1192" width="1690" height="30" />
+        </mxCell>
+        <mxCell id="overview-8" value="01  AVAILABLE OBSERVATIONS" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="225" width="300" height="35" />
+        </mxCell>
+        <mxCell id="overview-9" value="02  SHARED ENCODERS" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="440" y="225" width="340" height="35" />
+        </mxCell>
+        <mxCell id="overview-10" value="03  CONTEXT TOKENS" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="875" y="225" width="390" height="35" />
+        </mxCell>
+        <mxCell id="overview-11" value="04  ACTION PREDICTION" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="1380" y="225" width="372" height="35" />
+        </mxCell>
+        <object id="overview-12" label="&lt;b&gt;History available at decision t&lt;/b&gt;&lt;br&gt;&lt;br&gt;Conditioning observations&lt;br&gt;Execution frames strictly before t&lt;br&gt;XYZRGB + state + available&lt;br&gt;preceding commands" tooltip="Source: training/data.py and batched_policy.py. Conditioning and execution are separate source-local histories. Future observations never enter the context.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="285" width="300" height="180" />
+          </mxCell>
+        </object>
+        <object id="overview-13" label="&lt;b&gt;Historical visual + event&lt;/b&gt;&lt;br&gt;&lt;br&gt;Separate 8-frame blocks per source&lt;br&gt;Up to 32 visual + 8 event leaves&lt;br&gt;Each token has 256 features&lt;br&gt;Shared metadata adapter" tooltip="Historical visual + event&#10;Separate 8-frame blocks per source&#10;Up to 32 visual + 8 event leaves&#10;Each token has 256 features&#10;Shared metadata adapter" link="data:page/id,encoders">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="440" y="285" width="340" height="180" />
+          </mxCell>
+        </object>
+        <object id="overview-14" label="&lt;b&gt;Full fine-leaf history&lt;/b&gt;&lt;br&gt;&lt;br&gt;All causal blocks and partial prefixes&lt;br&gt;No teacher history token budget&lt;br&gt;No learned router / parent selection&lt;br&gt;Padding is masked" tooltip="Teacher training consumes all fine leaves. The compact TREE/FLAT readers and their token budgets are later stages, not components of this teacher forward pass." link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="875" y="285" width="390" height="180" />
+          </mxCell>
+        </object>
+        <object id="overview-15" label="&lt;b&gt;Current observation at t&lt;/b&gt;&lt;br&gt;&lt;br&gt;Up to 1,024 XYZRGB points&lt;br&gt;Robot state + preceding command&lt;br&gt;Two source-local clocks" tooltip="Current observation at t&#10;Up to 1,024 XYZRGB points&#10;Robot state + preceding command&#10;Two source-local clocks">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="565" width="300" height="165" />
+          </mxCell>
+        </object>
+        <object id="overview-16" label="&lt;b&gt;Current observation encoders&lt;/b&gt;&lt;br&gt;&lt;br&gt;Same visual encoder → ≤64 tokens&lt;br&gt;Same metadata adapter on visual&lt;br&gt;State MLP + clock projection" tooltip="Current observation encoders&#10;Same visual encoder → ≤64 tokens&#10;Same metadata adapter on visual&#10;State MLP + clock projection" link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#0F766E;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="440" y="565" width="340" height="165" />
+          </mxCell>
+        </object>
+        <object id="overview-17" label="&lt;b&gt;Current + auxiliary · ≤67 tokens&lt;/b&gt;&lt;br&gt;&lt;br&gt;≤64 current visual tokens&lt;br&gt;1 state + 1 goal + 1 clock&lt;br&gt;Width 256 throughout" tooltip="Current + auxiliary · ≤67 tokens&#10;≤64 current visual tokens&#10;1 state + 1 goal + 1 clock&#10;Width 256 throughout" link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#0F766E;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="875" y="565" width="390" height="165" />
+          </mxCell>
+        </object>
+        <object id="overview-18" label="&lt;b&gt;Task instruction&lt;/b&gt;&lt;br&gt;&lt;br&gt;UTF-8 goal text from the episode" tooltip="Task instruction&#10;UTF-8 goal text from the episode">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F5F3FF;strokeColor=#7C3AED;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="825" width="300" height="115" />
+          </mxCell>
+        </object>
+        <object id="overview-19" label="&lt;b&gt;Byte-level text Transformer&lt;/b&gt;&lt;br&gt;&lt;br&gt;2 layers → 1 pooled goal token" tooltip="Byte-level text Transformer&#10;2 layers → 1 pooled goal token" link="data:page/id,encoders">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F5F3FF;strokeColor=#7C3AED;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="440" y="825" width="340" height="115" />
+          </mxCell>
+        </object>
+        <object id="overview-20" label="&lt;b&gt;Noisy action chunk + flow time&lt;/b&gt;&lt;br&gt;&lt;br&gt;[B, 16, 8] and u ∈ [0, 1]&lt;br&gt;Projected to action queries" tooltip="Noisy action chunk + flow time&#10;[B, 16, 8] and u ∈ [0, 1]&#10;Projected to action queries" link="data:page/id,decoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1380" y="285" width="372" height="125" />
+          </mxCell>
+        </object>
+        <object id="overview-21" label="&lt;b&gt;4 action-query decoder blocks&lt;/b&gt;&lt;br&gt;&lt;br&gt;16 queries · width 256 · 8 heads&lt;br&gt;Query self-attention&lt;br&gt;Cross-attention to all context&lt;br&gt;Feed-forward 256 → 1024 → 256" tooltip="4 action-query decoder blocks&#10;16 queries · width 256 · 8 heads&#10;Query self-attention&#10;Cross-attention to all context&#10;Feed-forward 256 → 1024 → 256" link="data:page/id,decoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1380" y="515" width="372" height="225" />
+          </mxCell>
+        </object>
+        <object id="overview-22" label="&lt;b&gt;Velocity · [B, 16, 8]&lt;/b&gt;&lt;br&gt;&lt;br&gt;Inference: 8 Euler evaluations&lt;br&gt;Denormalize; execute 4 commands" tooltip="Velocity · [B, 16, 8]&#10;Inference: 8 Euler evaluations&#10;Denormalize; execute 4 commands" link="data:page/id,decoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1380" y="835" width="372" height="125" />
+          </mxCell>
+        </object>
+        <mxCell id="overview-23" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="overview-12" target="overview-13">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="overview-24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="overview-13" target="overview-14">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="overview-25" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#0F766E;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="overview-15" target="overview-16">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="overview-26" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#0F766E;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="overview-16" target="overview-17">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="overview-27" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7C3AED;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="overview-18" target="overview-19">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="overview-28" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7C3AED;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="overview-19" target="overview-17">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="overview-29" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#0F766E;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="overview-17" target="overview-21">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="overview-30" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#B45309;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="overview-20" target="overview-21">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="overview-31" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#B45309;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="overview-21" target="overview-22">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="overview-32" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;entryX=0;entryY=0.2;entryDx=0;entryDy=0;" edge="1" parent="1" source="overview-14" target="overview-21">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <object id="overview-33" label="&lt;b&gt;6,098,698 trainable parameters&lt;/b&gt;&lt;br&gt;&lt;br&gt;All encoders and the decoder train from scratch.&lt;br&gt;Hover over blocks for details." tooltip="6,098,698 trainable parameters&#10;All encoders and the decoder train from scratch.&#10;Hover over blocks for details." link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="48" y="1030" width="525" height="112" />
+          </mxCell>
+        </object>
+        <object id="overview-34" label="&lt;b&gt;Causality is defined at the decision&lt;/b&gt;&lt;br&gt;&lt;br&gt;A past block may pool jointly across its frames.&lt;br&gt;Current visual evidence stays separate." tooltip="Causality is defined at the decision&#10;A past block may pool jointly across its frames.&#10;Current visual evidence stays separate.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="614" y="1030" width="525" height="112" />
+          </mxCell>
+        </object>
+        <object id="overview-35" label="&lt;b&gt;History is read by action queries&lt;/b&gt;&lt;br&gt;&lt;br&gt;No dense self-attention over the full history.&lt;br&gt;Decoder self-attention uses only its 16 queries." tooltip="History is read by action queries&#10;No dense self-attention over the full history.&#10;Decoder self-attention uses only its 16 queries.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="1180" y="1030" width="572" height="112" />
+          </mxCell>
+        </object>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="encoders" name="02 · Encoders">
+    <mxGraphModel dx="1800" dy="1580" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1580" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" value="Architecture" parent="0" />
+        <mxCell id="notes" value="Reading notes" parent="0" />
+        <mxCell id="encoders-1" value="How observations become evidence tokens" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=36;fontColor=#0F172A;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="30" width="1690" height="55" />
+        </mxCell>
+        <mxCell id="encoders-2" value="Blue: shared visual encoder   ·   Teal: historical events   ·   Violet: task instruction" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="92" width="1690" height="44" />
+        </mxCell>
+        <object id="encoders-3" label="&lt;b&gt;01 · Overview&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,overview">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="encoders-4" label="&lt;b&gt;02 · Encoders&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,encoders">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="480" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="encoders-5" label="&lt;b&gt;03 · Action decoder&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,decoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="912" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="encoders-6" label="&lt;b&gt;04 · Context &amp;amp; size&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1344" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <mxCell id="encoders-7" value="CHRONOTREE  /  Teacher · configs/teacher.yaml     •     Click page tabs or linked blocks · hover for details · all shapes are editable" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=14;fontColor=#64748B;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="1532" width="1690" height="30" />
+        </mxCell>
+        <mxCell id="encoders-8" value="A  VISUAL ENCODER  /  Same weights for history and current frame" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="230" width="1600" height="35" />
+        </mxCell>
+        <object id="encoders-9" label="&lt;b&gt;Per-frame point cloud&lt;/b&gt;&lt;br&gt;&lt;br&gt;N ≤ 1,024 · XYZRGB&lt;br&gt;6 channels per point&lt;br&gt;World coordinates + mask" tooltip="Per-frame point cloud&#10;N ≤ 1,024 · XYZRGB&#10;6 channels per point&#10;World coordinates + mask">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="370" width="245" height="155" />
+          </mxCell>
+        </object>
+        <object id="encoders-10" label="&lt;b&gt;Point MLP&lt;/b&gt;&lt;br&gt;&lt;br&gt;Linear 6 → 256&lt;br&gt;SiLU → Linear 256 → 256" tooltip="spacetime_encoder.py: SpacetimeEncoder.point_mlp. 67,584 trainable parameters; applied independently to each point.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="365" y="285" width="285" height="135" />
+          </mxCell>
+        </object>
+        <object id="encoders-11" label="&lt;b&gt;Observed centers + neighbors&lt;/b&gt;&lt;br&gt;&lt;br&gt;FPS: 4/historical frame&lt;br&gt;or 64/current frame&lt;br&gt;≤128 neighbors per center&lt;br&gt;Radius 0.3 m; Δt ≤ 8 frames" tooltip="spacetime_encoder.py + batched_spacetime.py. Deterministic FPS on observed XYZ, independent per frame. Candidate neighbors are restricted to the same source, example and block. Temporal distance uses source-local recorded frames, not seconds. Centers sample spatial extent; they are not semantic object or robot keypoints.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="365" y="480" width="285" height="190" />
+          </mxCell>
+        </object>
+        <object id="encoders-12" label="&lt;b&gt;Gather local edge features&lt;/b&gt;&lt;br&gt;&lt;br&gt;Point feature 256&lt;br&gt;+ relative XYZ (3)&lt;br&gt;+ relative time (1) = 260" tooltip="Gather local edge features&#10;Point feature 256&#10;+ relative XYZ (3)&#10;+ relative time (1) = 260">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="735" y="370" width="285" height="155" />
+          </mxCell>
+        </object>
+        <object id="encoders-13" label="&lt;b&gt;Edge MLP&lt;/b&gt;&lt;br&gt;&lt;br&gt;Linear 260 → 256&lt;br&gt;SiLU → Linear 256 → 256" tooltip="spacetime_encoder.py: SpacetimeEncoder.edge_mlp. 132,608 trainable parameters.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1100" y="370" width="270" height="155" />
+          </mxCell>
+        </object>
+        <object id="encoders-14" label="&lt;b&gt;Gaussian weighted pool&lt;/b&gt;&lt;br&gt;&lt;br&gt;Softmax over valid neighbors&lt;br&gt;1 vector of width 256/center&lt;br&gt;Learned positive τx and τt&lt;br&gt;Initial τx=0.01 m²; τt=4 frames²" tooltip="Gaussian score = −||ΔXYZ||²/τx − Δt²/τt; softmax-weighted sum of edge features. τx and τt use softplus plus a small positive floor. This is one local pooling stage.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1450" y="370" width="302" height="190" />
+          </mxCell>
+        </object>
+        <mxCell id="encoders-15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-9" target="encoders-10">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-9" target="encoders-11">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-10" target="encoders-12">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-18" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-11" target="encoders-12">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-19" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-12" target="encoders-13">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-13" target="encoders-14">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <object id="encoders-21" label="&lt;b&gt;Historical block: up to 32 visual leaves  •  Current: up to 64&lt;/b&gt;&lt;br&gt;&lt;br&gt;Separate 8-frame blocks per source. Keep observed prefix frames; mask only unused slots." tooltip="Historical block: up to 32 visual leaves  •  Current: up to 64&#10;Separate 8-frame blocks per source. Keep observed prefix frames; mask only unused slots.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="735" y="590" width="1017" height="100" />
+          </mxCell>
+        </object>
+        <mxCell id="encoders-22" value="B  EVENT ENCODER  /  One token per historical frame" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="740" width="1600" height="35" />
+        </mxCell>
+        <object id="encoders-23" label="&lt;b&gt;Observed state · 15 values&lt;/b&gt;&lt;br&gt;&lt;br&gt;7 joints + end-effector XYZ (3)&lt;br&gt;+ quaternion (4) + gripper (1)" tooltip="Observed state · 15 values&#10;7 joints + end-effector XYZ (3)&#10;+ quaternion (4) + gripper (1)">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#0F766E;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="800" width="360" height="120" />
+          </mxCell>
+        </object>
+        <object id="encoders-24" label="&lt;b&gt;Previous command + available flag&lt;/b&gt;&lt;br&gt;&lt;br&gt;8 masked action values + 1 flag&lt;br&gt;Conditioning commands are unavailable" tooltip="Previous command + available flag&#10;8 masked action values + 1 flag&#10;Conditioning commands are unavailable">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#0F766E;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="970" width="360" height="120" />
+          </mxCell>
+        </object>
+        <object id="encoders-25" label="&lt;b&gt;State branch&lt;/b&gt;&lt;br&gt;&lt;br&gt;Linear 15 → 256 → SiLU&lt;br&gt;Linear 256 → 256" tooltip="State branch&#10;Linear 15 → 256 → SiLU&#10;Linear 256 → 256">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#0F766E;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="490" y="800" width="320" height="120" />
+          </mxCell>
+        </object>
+        <object id="encoders-26" label="&lt;b&gt;Command branch&lt;/b&gt;&lt;br&gt;&lt;br&gt;Linear 9 → 256 → SiLU&lt;br&gt;Linear 256 → 256" tooltip="Command branch&#10;Linear 9 → 256 → SiLU&#10;Linear 256 → 256">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#0F766E;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="490" y="970" width="320" height="120" />
+          </mxCell>
+        </object>
+        <object id="encoders-27" label="&lt;b&gt;Add branches&lt;/b&gt;&lt;br&gt;&lt;br&gt;SiLU → Linear 256 → 256&lt;br&gt;One event token per frame" tooltip="event_encoder.py: EventEncoder. 204,032 parameters. Unavailable preceding commands are zeroed before their branch projection.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#0F766E;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="910" y="885" width="345" height="135" />
+          </mxCell>
+        </object>
+        <object id="encoders-28" label="&lt;b&gt;Attach metadata&lt;/b&gt;&lt;br&gt;&lt;br&gt;Same adapter as the visual tokens&lt;br&gt;Adds location / time / source fields" tooltip="Attach metadata&#10;Same adapter as the visual tokens&#10;Adds location / time / source fields" link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#0F766E;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1370" y="885" width="382" height="135" />
+          </mxCell>
+        </object>
+        <mxCell id="encoders-29" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#0F766E;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-23" target="encoders-25">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-30" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#0F766E;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-24" target="encoders-26">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-31" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#0F766E;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-25" target="encoders-27">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-32" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#0F766E;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-26" target="encoders-27">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-33" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#0F766E;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-27" target="encoders-28">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-34" value="C  GOAL TEXT ENCODER  /  Trained from scratch" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="1160" width="1600" height="35" />
+        </mxCell>
+        <object id="encoders-35" label="&lt;b&gt;UTF-8 bytes + start token&lt;/b&gt;&lt;br&gt;&lt;br&gt;At most 256 bytes&lt;br&gt;Vocabulary: 257 IDs&lt;br&gt;Padding is masked" tooltip="UTF-8 bytes + start token&#10;At most 256 bytes&#10;Vocabulary: 257 IDs&#10;Padding is masked">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F5F3FF;strokeColor=#7C3AED;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="1230" width="300" height="170" />
+          </mxCell>
+        </object>
+        <object id="encoders-36" label="&lt;b&gt;Token + position embeddings&lt;/b&gt;&lt;br&gt;&lt;br&gt;Token table: 257 × 256&lt;br&gt;Position table: 257 × 256" tooltip="Token + position embeddings&#10;Token table: 257 × 256&#10;Position table: 257 × 256">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F5F3FF;strokeColor=#7C3AED;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="425" y="1230" width="340" height="170" />
+          </mxCell>
+        </object>
+        <object id="encoders-37" label="&lt;b&gt;2 Transformer encoder layers&lt;/b&gt;&lt;br&gt;&lt;br&gt;8-head self-attention · width 256&lt;br&gt;FFN: 256 → 512 → 256 with ReLU&lt;br&gt;Residual connections + post LayerNorm&lt;br&gt;Dropout = 0; no causal text mask" tooltip="text_encoder.py: TextEncoder. Standard PyTorch TransformerEncoderLayer (norm_first=False). Instruction text is available as a whole at each decision.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F5F3FF;strokeColor=#7C3AED;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="845" y="1230" width="470" height="210" />
+          </mxCell>
+        </object>
+        <object id="encoders-38" label="&lt;b&gt;Masked mean → LayerNorm&lt;/b&gt;&lt;br&gt;&lt;br&gt;One goal vector · [B, 1, 256]&lt;br&gt;Goes directly to context&lt;br&gt;No metadata adapter" tooltip="Masked mean → LayerNorm&#10;One goal vector · [B, 1, 256]&#10;Goes directly to context&#10;No metadata adapter">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F5F3FF;strokeColor=#7C3AED;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1395" y="1230" width="357" height="170" />
+          </mxCell>
+        </object>
+        <mxCell id="encoders-39" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7C3AED;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-35" target="encoders-36">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-40" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7C3AED;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-36" target="encoders-37">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="encoders-41" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#7C3AED;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="encoders-37" target="encoders-38">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="decoder" name="03 · Action decoder">
+    <mxGraphModel dx="1800" dy="1610" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1610" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" value="Architecture" parent="0" />
+        <mxCell id="notes" value="Reading notes" parent="0" />
+        <mxCell id="decoder-1" value="Action-query conditional flow matching" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=36;fontColor=#0F172A;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="30" width="1690" height="55" />
+        </mxCell>
+        <mxCell id="decoder-2" value="Training predicts a velocity field once; inference integrates that field to produce robot commands." style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="92" width="1690" height="44" />
+        </mxCell>
+        <object id="decoder-3" label="&lt;b&gt;01 · Overview&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,overview">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="decoder-4" label="&lt;b&gt;02 · Encoders&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,encoders">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="480" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="decoder-5" label="&lt;b&gt;03 · Action decoder&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,decoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="912" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="decoder-6" label="&lt;b&gt;04 · Context &amp;amp; size&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1344" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <mxCell id="decoder-7" value="CHRONOTREE  /  Teacher · configs/teacher.yaml     •     Click page tabs or linked blocks · hover for details · all shapes are editable" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=14;fontColor=#64748B;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="1562" width="1690" height="30" />
+        </mxCell>
+        <object id="decoder-8" label="&lt;b&gt;Noisy action · [B, 16, 8]&lt;/b&gt;&lt;br&gt;&lt;br&gt;Linear 8 → 256&lt;br&gt;+ learned 16 × 256 positions" tooltip="Noisy action · [B, 16, 8]&#10;Linear 8 → 256&#10;+ learned 16 × 256 positions">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="270" width="340" height="150" />
+          </mxCell>
+        </object>
+        <object id="decoder-9" label="&lt;b&gt;Flow interpolation time u&lt;/b&gt;&lt;br&gt;&lt;br&gt;16 sine + 16 cosine features&lt;br&gt;Linear 32 → 256 → SiLU&lt;br&gt;Linear 256 → 256" tooltip="action_flow.py: ActionFlow.time_in. u is the flow interpolation time; it is independent of the source-local episode clocks in the observation context.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="495" width="340" height="175" />
+          </mxCell>
+        </object>
+        <object id="decoder-10" label="&lt;b&gt;Add query embeddings&lt;/b&gt;&lt;br&gt;&lt;br&gt;16 action-query tokens&lt;br&gt;Shape [B, 16, 256]" tooltip="Add query embeddings&#10;16 action-query tokens&#10;Shape [B, 16, 256]">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="480" y="350" width="330" height="150" />
+          </mxCell>
+        </object>
+        <object id="decoder-11" label="&lt;b&gt;4 decoder blocks in sequence&lt;/b&gt;&lt;br&gt;&lt;br&gt;Block 1 → … → Block 4&lt;br&gt;Each preserves [B, 16, 256]&lt;br&gt;1,053,440 parameters/block&lt;br&gt;Independent weights per block&lt;br&gt;Every block reads the same context" tooltip="4 decoder blocks in sequence&#10;Block 1 → … → Block 4&#10;Each preserves [B, 16, 256]&#10;1,053,440 parameters/block&#10;Independent weights per block&#10;Every block reads the same context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="910" y="270" width="390" height="270" />
+          </mxCell>
+        </object>
+        <object id="decoder-12" label="&lt;b&gt;Full observation context&lt;/b&gt;&lt;br&gt;&lt;br&gt;[B, L, 256] + validity mask&lt;br&gt;All fine leaves + current/auxiliary" tooltip="Full observation context&#10;[B, L, 256] + validity mask&#10;All fine leaves + current/auxiliary" link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="910" y="620" width="390" height="135" />
+          </mxCell>
+        </object>
+        <object id="decoder-13" label="&lt;b&gt;Output projection&lt;/b&gt;&lt;br&gt;&lt;br&gt;LayerNorm → Linear 256 → 8&lt;br&gt;Velocity vθ · [B, 16, 8]&lt;br&gt;7 arm joints + gripper" tooltip="Output is velocity in normalized action space, not a Cartesian end-effector position or a raw joint command. The flow solver and action normalizer convert it.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1410" y="305" width="342" height="180" />
+          </mxCell>
+        </object>
+        <mxCell id="decoder-14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#B45309;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="decoder-8" target="decoder-10">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="decoder-15" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#B45309;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="decoder-9" target="decoder-10">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="decoder-16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#B45309;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="decoder-10" target="decoder-11">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="decoder-17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="decoder-12" target="decoder-11">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="decoder-18" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#B45309;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="decoder-11" target="decoder-13">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <object id="decoder-19" label="&lt;b&gt;Attention dimensions&lt;/b&gt;&lt;br&gt;&lt;br&gt;8 heads × 32 features/head&lt;br&gt;Self: 16 queries ↔ 16 queries&lt;br&gt;Cross: 16 queries → L context&lt;br&gt;No history-to-history attention" tooltip="Attention dimensions&#10;8 heads × 32 features/head&#10;Self: 16 queries ↔ 16 queries&#10;Cross: 16 queries → L context&#10;No history-to-history attention">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="1410" y="565" width="342" height="190" />
+          </mxCell>
+        </object>
+        <mxCell id="decoder-20" value="INSIDE EACH DECODER BLOCK  /  Pre-normalized residual sublayers" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="820" width="1650" height="35" />
+        </mxCell>
+        <object id="decoder-21" label="&lt;b&gt;1  Query self-attention&lt;/b&gt;&lt;br&gt;&lt;br&gt;y = LayerNorm(x)&lt;br&gt;Q, K, V from the 16 query tokens&lt;br&gt;8 heads → output projection&lt;br&gt;x ← x + SelfAttention(y, y)" tooltip="1  Query self-attention&#10;y = LayerNorm(x)&#10;Q, K, V from the 16 query tokens&#10;8 heads → output projection&#10;x ← x + SelfAttention(y, y)">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="890" width="490" height="195" />
+          </mxCell>
+        </object>
+        <object id="decoder-22" label="&lt;b&gt;2  Context cross-attention&lt;/b&gt;&lt;br&gt;&lt;br&gt;Q = projected LayerNorm(x)&lt;br&gt;K, V = projected observation context&lt;br&gt;Invalid context slots have −∞ bias&lt;br&gt;x ← x + CrossAttention(Q, context)" tooltip="2  Context cross-attention&#10;Q = projected LayerNorm(x)&#10;K, V = projected observation context&#10;Invalid context slots have −∞ bias&#10;x ← x + CrossAttention(Q, context)">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="655" y="890" width="490" height="195" />
+          </mxCell>
+        </object>
+        <object id="decoder-23" label="&lt;b&gt;3  Feed-forward network&lt;/b&gt;&lt;br&gt;&lt;br&gt;y = LayerNorm(x)&lt;br&gt;Linear 256 → 1024 → GELU&lt;br&gt;Linear 1024 → 256&lt;br&gt;x ← x + FFN(y)" tooltip="3  Feed-forward network&#10;y = LayerNorm(x)&#10;Linear 256 → 1024 → GELU&#10;Linear 1024 → 256&#10;x ← x + FFN(y)">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1262" y="890" width="490" height="195" />
+          </mxCell>
+        </object>
+        <mxCell id="decoder-24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#B45309;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="decoder-21" target="decoder-22">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="decoder-25" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#B45309;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="decoder-22" target="decoder-23">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <object id="decoder-26" label="&lt;b&gt;TRAINING  /  One sampled flow time per example&lt;/b&gt;&lt;br&gt;&lt;br&gt;y = normalized ground-truth action chunk&lt;br&gt;ε ∼ Normal(0, I);   u ∼ Uniform(0, 1)&lt;br&gt;xᵤ = (1 − u) ε + u y;   target velocity = y − ε&lt;br&gt;One decoder evaluation predicts vθ(xᵤ, u | context).&lt;br&gt;MSE over valid action dimensions within each example;&lt;br&gt;then average examples equally. Padding has zero loss.&lt;br&gt;Future actions are supervision; future observations are excluded." tooltip="TRAINING  /  One sampled flow time per example&#10;y = normalized ground-truth action chunk&#10;ε ∼ Normal(0, I);   u ∼ Uniform(0, 1)&#10;xᵤ = (1 − u) ε + u y;   target velocity = y − ε&#10;One decoder evaluation predicts vθ(xᵤ, u | context).&#10;MSE over valid action dimensions within each example;&#10;then average examples equally. Padding has zero loss.&#10;Future actions are supervision; future observations are excluded.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="48" y="1160" width="810" height="325" />
+          </mxCell>
+        </object>
+        <object id="decoder-27" label="&lt;b&gt;INFERENCE  /  Receding-horizon control&lt;/b&gt;&lt;br&gt;&lt;br&gt;Start with a Gaussian action chunk at flow time u = 0.&lt;br&gt;Apply 8 Euler steps with the same decoder weights.&lt;br&gt;Δu = 1/8;   x ← x + Δu · vθ(x, u | context)&lt;br&gt;Denormalize the resulting 16 × 8 action chunk.&lt;br&gt;Execute the first 4 commands, then observe and replan.&lt;br&gt;The observation context is shared across the flow evaluations.&lt;br&gt;Training does not run this whole Euler loop for each example." tooltip="INFERENCE  /  Receding-horizon control&#10;Start with a Gaussian action chunk at flow time u = 0.&#10;Apply 8 Euler steps with the same decoder weights.&#10;Δu = 1/8;   x ← x + Δu · vθ(x, u | context)&#10;Denormalize the resulting 16 × 8 action chunk.&#10;Execute the first 4 commands, then observe and replan.&#10;The observation context is shared across the flow evaluations.&#10;Training does not run this whole Euler loop for each example.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="920" y="1160" width="832" height="325" />
+          </mxCell>
+        </object>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="context" name="04 · Context &amp; size">
+    <mxGraphModel dx="1800" dy="1860" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1860" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" value="Architecture" parent="0" />
+        <mxCell id="notes" value="Reading notes" parent="0" />
+        <mxCell id="context-1" value="Context assembly, tensor shapes &amp;amp; model size" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=36;fontColor=#0F172A;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="30" width="1690" height="55" />
+        </mxCell>
+        <mxCell id="context-2" value="B = examples in this device pass   ·   Hc = conditioning frames   ·   He = strictly past execution frames" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="92" width="1690" height="44" />
+        </mxCell>
+        <object id="context-3" label="&lt;b&gt;01 · Overview&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,overview">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="context-4" label="&lt;b&gt;02 · Encoders&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,encoders">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="480" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="context-5" label="&lt;b&gt;03 · Action decoder&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,decoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="912" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <object id="context-6" label="&lt;b&gt;04 · Context &amp;amp; size&lt;/b&gt;" tooltip="Click to open this diagram page. Hover over blocks for implementation details." link="data:page/id,context">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1344" y="153" width="408" height="46" />
+          </mxCell>
+        </object>
+        <mxCell id="context-7" value="CHRONOTREE  /  Teacher · configs/teacher.yaml     •     Click page tabs or linked blocks · hover for details · all shapes are editable" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=14;fontColor=#64748B;fontStyle=0;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="1812" width="1690" height="30" />
+        </mxCell>
+        <mxCell id="context-8" value="SHARED METADATA ADAPTER  /  Applied to historical visual/event leaves and current visual tokens" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="230" width="1650" height="35" />
+        </mxCell>
+        <object id="context-9" label="&lt;b&gt;Token content&lt;/b&gt;&lt;br&gt;&lt;br&gt;Linear 256 → 256" tooltip="Token content&#10;Linear 256 → 256">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="295" width="330" height="115" />
+          </mxCell>
+        </object>
+        <object id="context-10" label="&lt;b&gt;23 metadata values&lt;/b&gt;&lt;br&gt;&lt;br&gt;Linear 23 → 256 → SiLU&lt;br&gt;Linear 256 → 256" tooltip="metadata_adapter.py: geometry anchor/bounds (9), source-local times (2), ages (2), log mass/depth/scale (3), completed/disconnected flags (2), source one-hot (2), modality one-hot (2), singleton flag (1). Total 23.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="460" width="330" height="145" />
+          </mxCell>
+        </object>
+        <object id="context-11" label="&lt;b&gt;Add → LayerNorm&lt;/b&gt;&lt;br&gt;&lt;br&gt;Adapted token of width 256&lt;br&gt;138,240 shared parameters" tooltip="Add → LayerNorm&#10;Adapted token of width 256&#10;138,240 shared parameters">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="475" y="365" width="330" height="145" />
+          </mxCell>
+        </object>
+        <object id="context-12" label="&lt;b&gt;Current auxiliary tokens · three separate branches&lt;/b&gt;&lt;br&gt;&lt;br&gt;State: 15 observed + 8 preceding action + 1 availability = 24&lt;br&gt;Linear 24 → 256 → SiLU → Linear 256 → 256  ⇒  1 token&lt;br&gt;Goal: pooled text encoder output  ⇒  1 token&lt;br&gt;Clock: [conditioning, execution] / 100 → Linear 2 → 256  ⇒  1 token&lt;br&gt;These three tokens bypass the metadata adapter.&lt;br&gt;Concatenate with ≤64 adapted current visual tokens." tooltip="Current auxiliary tokens · three separate branches&#10;State: 15 observed + 8 preceding action + 1 availability = 24&#10;Linear 24 → 256 → SiLU → Linear 256 → 256  ⇒  1 token&#10;Goal: pooled text encoder output  ⇒  1 token&#10;Clock: [conditioning, execution] / 100 → Linear 2 → 256  ⇒  1 token&#10;These three tokens bypass the metadata adapter.&#10;Concatenate with ≤64 adapted current visual tokens.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F0FDFA;strokeColor=#0F766E;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="930" y="295" width="822" height="310" />
+          </mxCell>
+        </object>
+        <mxCell id="context-13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="context-9" target="context-11">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="context-14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="context-10" target="context-11">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <object id="context-15" label="&lt;b&gt;Valid context length · before padding&lt;/b&gt;&lt;br&gt;&lt;br&gt;Lvalid ≤ 5(Hc + He) + 67&lt;br&gt;Each historical frame: ≤4 visual + 1 event token&lt;br&gt;Each full 8-frame block: ≤32 visual + 8 event = 40&lt;br&gt;Current/auxiliary: ≤64 visual + 3&lt;br&gt;Teacher retains all causal history; budget=128 is for later readers." tooltip="Valid context length · before padding&#10;Lvalid ≤ 5(Hc + He) + 67&#10;Each historical frame: ≤4 visual + 1 event token&#10;Each full 8-frame block: ≤32 visual + 8 event = 40&#10;Current/auxiliary: ≤64 visual + 3&#10;Teacher retains all causal history; budget=128 is for later readers.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="670" width="804" height="250" />
+          </mxCell>
+        </object>
+        <object id="context-16" label="&lt;b&gt;Allocated context length · batched tensor&lt;/b&gt;&lt;br&gt;&lt;br&gt;Lpad = 40 · maxᵢ(⌈Hcᵢ/8⌉ + ⌈Heᵢ/8⌉) + 67&lt;br&gt;Context tensor: [B, Lpad, 256]; mask: [B, Lpad]&lt;br&gt;Partial source blocks and short examples occupy padded slots.&lt;br&gt;Attention masks every invalid slot; no history truncation.&lt;br&gt;Teacher leaf mass = 1, so valid log-mass attention bias = 0." tooltip="batched_policy.py: full_history_context / packed context. Conditioning and execution are blocked separately per example. Only the fine-leaf bank is assembled; hierarchy parents are not built in the teacher tensor path.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="930" y="670" width="822" height="250" />
+          </mxCell>
+        </object>
+        <mxCell id="context-17" value="TRAINABLE PARAMETERS  /  Counted from a CPU model instance" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="985" width="820" height="35" />
+        </mxCell>
+        <mxCell id="context-18" value="CURRENT CORE TRAINING CONFIGURATION" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="970" y="985" width="780" height="35" />
+        </mxCell>
+        <object id="context-19" label="&lt;b&gt;Shared visual encoder&lt;/b&gt;" tooltip="Shared visual encoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="1040" width="565" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-20" label="&lt;b&gt;200,194&lt;/b&gt;" tooltip="200,194">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="613" y="1040" width="260" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-21" label="&lt;b&gt;Historical event encoder&lt;/b&gt;" tooltip="Historical event encoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="1088" width="565" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-22" label="&lt;b&gt;204,032&lt;/b&gt;" tooltip="204,032">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="613" y="1088" width="260" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-23" label="&lt;b&gt;Goal text encoder&lt;/b&gt;" tooltip="Goal text encoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="1136" width="565" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-24" label="&lt;b&gt;1,186,304&lt;/b&gt;" tooltip="1,186,304">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="613" y="1136" width="260" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-25" label="&lt;b&gt;Shared metadata adapter&lt;/b&gt;" tooltip="Shared metadata adapter">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="1184" width="565" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-26" label="&lt;b&gt;138,240&lt;/b&gt;" tooltip="138,240">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="613" y="1184" width="260" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-27" label="&lt;b&gt;Current state MLP&lt;/b&gt;" tooltip="Current state MLP">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="1232" width="565" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-28" label="&lt;b&gt;72,192&lt;/b&gt;" tooltip="72,192">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="613" y="1232" width="260" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-29" label="&lt;b&gt;Source clock projection&lt;/b&gt;" tooltip="Source clock projection">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="1280" width="565" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-30" label="&lt;b&gt;768&lt;/b&gt;" tooltip="768">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="613" y="1280" width="260" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-31" label="&lt;b&gt;Action flow decoder&lt;/b&gt;" tooltip="Action flow decoder">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="1328" width="565" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-32" label="&lt;b&gt;4,296,968&lt;/b&gt;" tooltip="4,296,968">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=12;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="613" y="1328" width="260" height="48" />
+          </mxCell>
+        </object>
+        <object id="context-33" label="&lt;b&gt;TOTAL · all trainable, initialized from scratch&lt;/b&gt;" tooltip="TOTAL · all trainable, initialized from scratch">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=15;fontFamily=Arial;fontSize=17;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="1384" width="565" height="58" />
+          </mxCell>
+        </object>
+        <object id="context-34" label="&lt;b&gt;6,098,698&lt;/b&gt;" tooltip="6,098,698">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=15;fontFamily=Arial;fontSize=20;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="613" y="1384" width="260" height="58" />
+          </mxCell>
+        </object>
+        <object id="context-35" label="&lt;b&gt;Decision batching and compute&lt;/b&gt;&lt;br&gt;&lt;br&gt;Global effective batch: 64 decisions/update&lt;br&gt;Microbatch cap: 16 decisions/device/pass&lt;br&gt;4-GPU example: 16 decisions/rank/update&lt;br&gt;Historical encoder block batch: 32&lt;br&gt;CPU loader workers: 8/rank; prefetch factor: 1&lt;br&gt;Activation checkpointing: false&lt;br&gt;50,000 optimizer updates · AdamW · learning rate 0.0001&lt;br&gt;Auto precision prefers BF16; geometry/reductions remain FP32.&lt;br&gt;Loader workers prefetch raw packed observations, not learned features." tooltip="Decision batching and compute&#10;Global effective batch: 64 decisions/update&#10;Microbatch cap: 16 decisions/device/pass&#10;4-GPU example: 16 decisions/rank/update&#10;Historical encoder block batch: 32&#10;CPU loader workers: 8/rank; prefetch factor: 1&#10;Activation checkpointing: false&#10;50,000 optimizer updates · AdamW · learning rate 0.0001&#10;Auto precision prefers BF16; geometry/reductions remain FP32.&#10;Loader workers prefetch raw packed observations, not learned features.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=19;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="970" y="1040" width="782" height="410" />
+          </mxCell>
+        </object>
+        <object id="context-36" label="&lt;b&gt;Weights are small; history activations can be large&lt;/b&gt;&lt;br&gt;&lt;br&gt;FP32 parameter storage: 24.39 MB&lt;br&gt;Weights + gradients + two FP32 Adam moments: ~97.58 MB&lt;br&gt;These figures exclude activations, attention workspace and CUDA.&lt;br&gt;Autocast does not change the stored FP32 parameter count.&lt;br&gt;Each DDP rank holds a replica; GPU memory is not pooled." tooltip="Weights are small; history activations can be large&#10;FP32 parameter storage: 24.39 MB&#10;Weights + gradients + two FP32 Adam moments: ~97.58 MB&#10;These figures exclude activations, attention workspace and CUDA.&#10;Autocast does not change the stored FP32 parameter count.&#10;Each DDP rank holds a replica; GPU memory is not pooled.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="48" y="1510" width="825" height="225" />
+          </mxCell>
+        </object>
+        <object id="context-37" label="&lt;b&gt;Scope and source of truth&lt;/b&gt;&lt;br&gt;&lt;br&gt;This diagram describes the joint-encoder, flow-decoder teacher.&lt;br&gt;Prepared data supplies calibrated XYZRGB and causal state.&lt;br&gt;Compact TREE/FLAT/router/Perceiver are subsequent stages.&lt;br&gt;Action normalizer: no trainable weights; fitted statistics are buffers.&lt;br&gt;Code + config are authoritative. Regenerate after architecture edits." tooltip="Scope and source of truth&#10;This diagram describes the joint-encoder, flow-decoder teacher.&#10;Prepared data supplies calibrated XYZRGB and causal state.&#10;Compact TREE/FLAT/router/Perceiver are subsequent stages.&#10;Action normalizer: no trainable weights; fitted statistics are buffers.&#10;Code + config are authoritative. Regenerate after architecture edits.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
+            <mxGeometry as="geometry" x="970" y="1510" width="782" height="225" />
+          </mxCell>
+        </object>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

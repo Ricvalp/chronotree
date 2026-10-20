@@ -1,0 +1,91 @@
+{
+  "configuration": "configs/teacher.yaml",
+  "fp32_weight_bytes": 24394792,
+  "model": {
+    "action_space": "joint_angle",
+    "archive_device": "cpu",
+    "block_size": 8,
+    "budget": 128,
+    "budgets": [
+      64,
+      128,
+      256
+    ],
+    "checkpoint_blocks": false,
+    "current_tokens": 64,
+    "decoder": "flow",
+    "encoder": "joint",
+    "encoder_options": {},
+    "execute": 4,
+    "flow_steps": 8,
+    "heads": 8,
+    "horizon": 16,
+    "layers": 4,
+    "mass_bias": true,
+    "max_conditioning_frames": 1300,
+    "max_execution_frames": 2600,
+    "max_text_bytes": 256,
+    "points": 1024,
+    "router_width": 128,
+    "solver": "euler",
+    "text_layers": 2,
+    "visual_tokens": 32,
+    "width": 256
+  },
+  "parameters": {
+    "Action flow decoder": 4296968,
+    "Current state MLP": 72192,
+    "Goal text encoder": 1186304,
+    "Historical event encoder": 204032,
+    "Shared metadata adapter": 138240,
+    "Shared visual encoder": 200194,
+    "Source clock projection": 768
+  },
+  "source_sha256": {
+    "configs/base.yaml": "36313037d6e12a1fb151c3f7e02e61852c5977528787e1e89d8f7567f029df2d",
+    "configs/teacher.yaml": "d2306b252f2da4338c0e73b64a4aa296c46b69f2b8731eb28117cb47d2a9add6",
+    "src/stmem/config.py": "4d7f5440589b00d23dffea475ea12e15236870d06c1693b4032bee39109ca4f5",
+    "src/stmem/models/action_flow.py": "0f4e91469f7ff1726e2835ae5d370eee7a4fc75b7c76b3683c5c37df0976db6e",
+    "src/stmem/models/batched_policy.py": "45062d77f9a12995b7a9917d372d5242123d54d8e88b69766e014ed9f244157c",
+    "src/stmem/models/batched_spacetime.py": "67f2cfdf080228593b73e1edc0c6ee772cd5d44c6b7cbd1ca27721cef2144d12",
+    "src/stmem/models/event_encoder.py": "bd8935c9a46149645cdf6ec1647c03bbaebbb1b8830f09ce470b62a156e25112",
+    "src/stmem/models/metadata_adapter.py": "e396f64ea28c7a2700dfb52b5f735cc680f6e8ab66c74c5a4a8a3fa148aca30b",
+    "src/stmem/models/policy.py": "e5aac4ff3f9449740412bb00bb1da03b354d03de316f9d67d2c7121b6faef2c0",
+    "src/stmem/models/spacetime_encoder.py": "a45843130f2cf1c969a05da4827f91a641560d21c034aa2c5057f7bb6121d4df",
+    "src/stmem/models/text_encoder.py": "84fafb56b901b9883e0f6ef548574a885f77f35d5960dfb2d6df5290b4a5e503",
+    "src/stmem/train.py": "1acda73606542b072ba696b547f19f51544f6bccf9150d99ab349c1ae48a8366",
+    "src/stmem/training/data.py": "1ad9a15d264cfc05840da0a1ca0ebf506f2b703754a46cca41f463fd91fc350d",
+    "src/stmem/training/loader.py": "f83cdd3ea6a31e24650aa2915a271fa28e5889a23d5e6f574671344e452b7df4"
+  },
+  "total_parameters": 6098698,
+  "trainable_parameters": 6098698,
+  "training": {
+    "checkpoint_every": 1000,
+    "checkpoint_steps": [
+      25000,
+      50000
+    ],
+    "context_mix": {
+      "current": 0.05,
+      "flat": 0.45,
+      "tree": 0.45,
+      "uniform": 0.05
+    },
+    "effective_batch": 64,
+    "encoder_block_batch_size": 32,
+    "grad_clip": 1.0,
+    "intermediate_probability": 0.5,
+    "length_bucket_size": 1,
+    "log_every": 50,
+    "lr": 0.0001,
+    "microbatch": 16,
+    "precision": "auto",
+    "prefetch_factor": 1,
+    "resume_boundary": "optimizer_step",
+    "steps": 50000,
+    "task_balanced": true,
+    "warmup_steps": 1000,
+    "weight_decay": 0.01,
+    "workers": 8
+  }
+}
