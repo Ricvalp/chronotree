@@ -112,7 +112,7 @@ Existing runs can already be filtered by `job_type=evaluation`.
 ## Inspect point clouds and encoder structure
 
 The optional offline HTML inspector shows prepared XYZRGB clouds, the encoder's
-actual FPS centers and weighted space-time pooling edges, and the local trees
+actual observed-point centers and weighted space-time pooling edges, and the local trees
 and temporal forest built from the causal history. It also shows the current
 frame separately and marks pending execution blocks. See the
 [visualization guide](docs/visualization.md) for installation, cluster export
@@ -216,8 +216,13 @@ phases; frame progress includes an estimated remaining conversion time per task.
 Details and resource overrides are in the
 [preparation guide](docs/hpc.md#parallel-data-preparation).
 
-Use the core 1,024-point preprocessing config for the actual experiment. The
-256-point two-episode prepared subset is intentionally incompatible with core
+Use the core 2,048-point preprocessing config for the actual experiment. It
+reserves 75% of the point budget for geometry above the calibrated table plane,
+balanced over 10 cm XY cells, and saves spatially balanced clustered centers.
+New outputs are in `data.prepared_subdir: prepared_balanced_v2` beneath the site
+data root; existing `prepared/` files remain separate. Preparation refuses to
+replace a different prepared format. The 256-point two-episode subset uses
+`prepared_balanced_v2_debug` and is intentionally incompatible with core
 training. Each task is opened independently; there is no framewise train/test split.
 
 ## Stages and comparisons
@@ -238,7 +243,7 @@ context shapes and exact parameter counts. See the
 | Labels/router | Signed paired teacher-velocity gains; episode-disjoint scorer diagnostics; one bounded refresh. |
 | Perceiver | Separately adapt B learned latents and decoder from teacher with frozen encoders. |
 
-Core configuration uses F=8, 32 visual leaves/block, 64 current visual tokens,
+Core configuration uses F=8, 32 visual centers/frame (256 visual leaves/block), 32 current visual tokens,
 d=256, H=16, execute=4, eight Euler flow steps and B=128. Training budgets are
 64/128/256. The debugging profile is explicitly smaller (d=64). Local Gaussian
 pooling uses metre-squared and recorded-frame-squared denominators; source-local
@@ -248,13 +253,23 @@ autocast. Sensitive geometry, reductions and aggregates remain FP32.
 
 Policy training batches decision examples with their complete causal histories.
 The teacher configuration trains for 100,000 updates with global effective batch
-128 and a microbatch cap of 64 examples per GPU per forward/backward pass.
-One GPU accumulates two batches of 64; four GPUs process 32 examples each in one
+256 and a microbatch cap of 64 examples per GPU per forward/backward pass.
+One GPU accumulates four batches of 64; four GPUs process 64 examples each in one
 concurrent round. Compact and Perceiver defaults remain global batch 64 with a
 microbatch cap of 16. Variable history/context
 lengths use padding with explicit validity masks. Each example's valid action
 dimensions are averaged before examples are averaged, preserving the loss weight
 of short terminal chunks. Teacher history is never truncated to make a profile fit.
+These existing batch settings have not been memory-validated with the larger
+32-centers/frame encoder; measure on the target GPU before training and reduce
+microbatch if needed while retaining the desired effective batch.
+
+Preparation computes the geometry-only center indices once per frame and stores
+them with versioned selection settings. The loader carries these small arrays
+through CPU packing to the encoder. Online RGB-D ingestion uses the identical
+point and center selectors once for each arriving observation; no object masks
+or hidden simulator state enter either selector. The resulting local Gaussian
+pooling and learned bandwidths remain trainable.
 
 Historical visual blocks are processed in tensor batches of at most 128 for the
 teacher, controlled by `training.encoder_block_batch_size`; the shared base

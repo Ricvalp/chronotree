@@ -15,6 +15,11 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
+from stmem.data.center_sampling import (
+    center_sampling_signature,
+    prepare_center_indices,
+    resolve_center_sampling,
+)
 from stmem.memory.hierarchy import stable_id
 from stmem.memory.records import MemoryRecord, leaf_record
 from .batched_spacetime import canonical_nearest, forward_batched
@@ -37,12 +42,33 @@ class EncodedLeaves:
     occupancy: Tensor
 
 
-def _lexicographic(points: Tensor) -> Tensor:
-    """Canonical point ordering makes center and nearest-neighbor ties invariant."""
+def _lexicographic_indices(points: Tensor) -> Tensor:
     order = torch.arange(len(points), device=points.device)
     for axis in reversed(range(points.shape[-1])):
         order = order[torch.argsort(points[order, axis], stable=True)]
-    return points[order]
+    return order
+
+
+def _lexicographic(points: Tensor) -> Tensor:
+    """Canonical point ordering makes center and nearest-neighbor ties invariant."""
+    return points[_lexicographic_indices(points)]
+
+
+def cached_frame_centers(frame: Any, count: int, settings: dict, signature: str | None = None) -> Tensor:
+    """Reuse prepared geometry, or compute it once for a CPU diagnostic frame.
+
+    Real prepared datasets validate and supply this cache before training. The
+    fallback serves synthetic inputs and individual acquired/diagnostic frames;
+    it never runs inside the batched CUDA encoder. Cache identity includes the
+    selector implementation and settings, independently of the center quota.
+    """
+    signature = signature or center_sampling_signature(settings)
+    if getattr(frame, "center_sampling_signature", None) != signature:
+        frame.center_indices = {}
+        frame.center_sampling_signature = signature
+    if count not in frame.center_indices:
+        frame.center_indices.update(prepare_center_indices(frame.points, frame.valid, [count], settings))
+    return frame.center_indices[count]
 
 
 def _fps(points: Tensor, count: int) -> Tensor:
@@ -76,6 +102,7 @@ class SpacetimeEncoder(nn.Module):
         center_chunk: int = 16,
         learnable_bandwidth: bool = True,
         framewise: bool = False,
+        center_sampling: dict | None = None,
     ):
         super().__init__()
         if (
@@ -85,6 +112,12 @@ class SpacetimeEncoder(nn.Module):
             raise ValueError("Encoder dimensions, locality limits and Gaussian denominators must be positive")
         self.width, self.neighbor_cap, self.center_chunk = width, neighbor_cap, center_chunk
         self.spatial_radius, self.temporal_radius, self.framewise = spatial_radius, temporal_radius, framewise
+        # None preserves the explicit global-FPS reference used by low-level
+        # invariants. Configured selectors consume CPU-prepared point indices.
+        self.center_sampling = None if center_sampling is None else resolve_center_sampling(center_sampling)
+        self.center_sampling_signature = (
+            None if self.center_sampling is None else center_sampling_signature(self.center_sampling)
+        )
         self.min_bandwidth = 1e-6
 
         # tau_x has metre^2 units; tau_t has recorded-frame^2 units.
@@ -114,9 +147,11 @@ class SpacetimeEncoder(nn.Module):
         valid: Tensor,
         times: Tensor,
         centers_per_frame: int | Sequence[int],
+        *,
+        center_indices: Tensor | None = None,
     ) -> EncodedLeaves:
         """Vectorized independent local blocks; masked leaves retain fixed slots."""
-        return forward_batched(self, points, valid, times, centers_per_frame)
+        return forward_batched(self, points, valid, times, centers_per_frame, center_indices=center_indices)
 
     def forward(
         self,
@@ -126,6 +161,7 @@ class SpacetimeEncoder(nn.Module):
         centers_per_frame: int | Sequence[int],
         *,
         trace: VisualTrace | None = None,
+        center_indices: Sequence[Tensor] | Tensor | None = None,
     ) -> EncodedLeaves:
         """Pool observed points; an optional observer receives the actual pooling graph.
 
@@ -141,6 +177,8 @@ class SpacetimeEncoder(nn.Module):
             quotas = list(centers_per_frame)
         if len(quotas) != len(points) or any(x < 0 for x in quotas):
             raise ValueError("One nonnegative temporal-stratum center quota is required per frame")
+        if center_indices is not None and len(center_indices) != len(points):
+            raise ValueError("One prepared center-index row is required per frame")
         device = self.raw_tau_x.device
         times = torch.as_tensor(times, dtype=torch.float32, device=device)
         if not torch.isfinite(times).all() or (len(times) > 1 and (times[1:] < times[:-1]).any()):
@@ -160,23 +198,45 @@ class SpacetimeEncoder(nn.Module):
             ):
                 raise ValueError("Expected points [N,6] and True-for-valid mask [N]")
             frame_valid = frame_valid & torch.isfinite(frame_points).all(-1)
-            cloud = _lexicographic(frame_points[frame_valid])
-            chosen = _fps(cloud.detach(), quota)
-            usable = len(chosen)
+            observed = torch.where(frame_valid)[0]
+            original_order = observed[_lexicographic_indices(frame_points[observed])]
+            cloud = frame_points[original_order]
+            supplied = None if center_indices is None else center_indices[frame_index]
+            if supplied is None and self.center_sampling is not None:
+                # Direct raw-tensor visualizations may request selection without
+                # a Frame cache. This explicit scalar fallback can copy to CPU;
+                # training's packed path always supplies prepared indices.
+                supplied = prepare_center_indices(frame_points, frame_valid, [quota], self.center_sampling)[
+                    quota
+                ]
+            if supplied is None:
+                selected = _fps(cloud.detach(), quota)
+                chosen = torch.cat([selected, selected.new_full((quota - len(selected),), -1)])
+            else:
+                supplied = torch.as_tensor(supplied, device=device)
+                if supplied.shape != (quota,) or supplied.dtype != torch.long:
+                    raise ValueError("Prepared center indices must be int64 with the exact frame quota")
+                inverse = torch.full((len(frame_points),), -1, device=device, dtype=torch.long)
+                inverse[original_order] = torch.arange(len(cloud), device=device)
+                if len(frame_points):
+                    in_range = (supplied >= 0) & (supplied < len(frame_points))
+                    chosen = inverse[supplied.clamp(0, len(frame_points) - 1)]
+                    chosen = torch.where(in_range, chosen, -1)
+                else:
+                    chosen = supplied.new_full((quota,), -1)
+            occupied = chosen >= 0
             if center_point_indices is not None:
                 offset = sum(len(previous) for previous in ordered)
-                center_point_indices.append(
-                    torch.cat(
-                        [chosen + offset, torch.full((quota - usable,), -1, device=device, dtype=torch.long)]
-                    )
-                )
+                center_point_indices.append(torch.where(occupied, chosen + offset, -1))
             ordered.append(cloud)
             frame_indices.append(torch.full((len(cloud),), frame_index, device=device, dtype=torch.long))
             point_times.append(times[frame_index].expand(len(cloud)))
-            anchors.append(torch.cat([cloud[chosen, :3], torch.zeros(quota - usable, 3, device=device)]))
+            frame_anchors = torch.zeros(quota, 3, device=device)
+            frame_anchors[occupied] = cloud[chosen[occupied], :3]
+            anchors.append(frame_anchors)
             center_times.append(times[frame_index].expand(quota))
             center_frames.append(torch.full((quota,), frame_index, device=device, dtype=torch.long))
-            center_valid.append(torch.arange(quota, device=device) < usable)
+            center_valid.append(occupied)
         m = sum(quotas)
         if not m:
             z = torch.zeros(0, device=device)
@@ -403,15 +463,23 @@ class BlockEncoder(nn.Module):
             for i in range(len(frames))
         ]
         points, valid, times = [f.points for f in frames], [f.valid for f in frames], [f.time for f in frames]
+        center_indices = None
+        if self.visual.center_sampling is not None:
+            center_indices = [
+                cached_frame_centers(
+                    f, quota, self.visual.center_sampling, self.visual.center_sampling_signature
+                )
+                for f, quota in zip(frames, quotas)
+            ]
         if self.checkpoint_blocks and self.training and torch.is_grad_enabled():
 
             def pool():
-                output = self.visual(points, valid, times, quotas, trace=trace)
+                output = self.visual(points, valid, times, quotas, trace=trace, center_indices=center_indices)
                 return tuple(getattr(output, name) for name in EncodedLeaves.__dataclass_fields__)
 
             pooled = EncodedLeaves(*checkpoint(pool, use_reentrant=False))
         else:
-            pooled = self.visual(points, valid, times, quotas, trace=trace)
+            pooled = self.visual(points, valid, times, quotas, trace=trace, center_indices=center_indices)
         records = self._visual_records(pooled, source, block_id, completed)
         device = self.visual.raw_tau_x.device
         state = torch.stack([f.proprio for f in frames]).to(device=device, dtype=torch.float32)
@@ -435,7 +503,24 @@ class BlockEncoder(nn.Module):
         return records
 
     def current(self, frame: Any, *, trace: VisualTrace | None = None) -> list[MemoryRecord]:
-        pooled = self.visual([frame.points], [frame.valid], [frame.time], [self.current_tokens], trace=trace)
+        indices = None
+        if self.visual.center_sampling is not None:
+            indices = [
+                cached_frame_centers(
+                    frame,
+                    self.current_tokens,
+                    self.visual.center_sampling,
+                    self.visual.center_sampling_signature,
+                )
+            ]
+        pooled = self.visual(
+            [frame.points],
+            [frame.valid],
+            [frame.time],
+            [self.current_tokens],
+            trace=trace,
+            center_indices=indices,
+        )
         return self._visual_records(pooled, frame.source, f"current:{frame.event_id}", True)
 
     @staticmethod

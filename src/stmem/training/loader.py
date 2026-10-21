@@ -39,7 +39,7 @@ class _PolicyDataset(Dataset):
         started = time.perf_counter()
         decisions = self.data.sample_positions(positions)
         loaded = time.perf_counter()
-        packed = pack_policy_batch(decisions, self.block_size)
+        packed = pack_policy_batch(decisions, self.block_size, model_config=self.data.cfg["model"])
         return LoadedBatch(
             tuple(positions), packed, loaded - started, time.perf_counter() - loaded, os.getpid()
         )

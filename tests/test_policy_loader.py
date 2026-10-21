@@ -51,6 +51,10 @@ def _assert_packed_equal(left, right):
         assert type(left) is type(right) and len(left) == len(right)
         for a, b in zip(left, right):
             _assert_packed_equal(a, b)
+    elif isinstance(left, dict):
+        assert left.keys() == right.keys()
+        for key in left:
+            _assert_packed_equal(left[key], right[key])
     else:
         assert left == right
 

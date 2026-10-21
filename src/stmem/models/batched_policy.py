@@ -8,7 +8,7 @@ shared with that reference path.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 
 import torch
@@ -16,7 +16,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.checkpoint import checkpoint
 
 from stmem.models.metadata_adapter import METADATA_DIM
-from stmem.models.spacetime_encoder import EncodedLeaves
+from stmem.models.spacetime_encoder import EncodedLeaves, cached_frame_centers
 
 
 @dataclass
@@ -48,6 +48,8 @@ class PackedBlocks:
     owner: torch.Tensor
     slot: torch.Tensor
     blocks_per_example: list[int]
+    center_indices: dict[int, torch.Tensor] = field(default_factory=dict)
+    center_sampling_signature: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,8 @@ class PackedFrameInfo:
     event_id: str
     source_index: int
     action_available: bool
+    center_counts: tuple[int, ...] = ()
+    center_sampling_signature: str | None = None
 
     @classmethod
     def from_frame(cls, frame):
@@ -70,6 +74,8 @@ class PackedFrameInfo:
             frame.event_id,
             frame.source_index,
             frame.action_available,
+            tuple(sorted(frame.center_indices)),
+            frame.center_sampling_signature,
         )
 
 
@@ -114,6 +120,8 @@ class PackedPolicyBatch:
     target_valid: torch.Tensor
     metadata: list[PackedDecisionInfo]
     block_size: int
+    current_center_indices: dict[int, torch.Tensor] = field(default_factory=dict)
+    current_center_sampling_signature: str | None = None
 
     @property
     def history_lengths(self):
@@ -128,7 +136,7 @@ class PackedPolicyBatch:
         """
         from stmem.data.canonical import Decision, Frame
 
-        def frame(info, points, valid, state, action):
+        def frame(info, points, valid, state, action, centers):
             return Frame(
                 points=points[: info.point_count],
                 valid=valid[: info.point_count],
@@ -139,6 +147,8 @@ class PackedPolicyBatch:
                 source=info.source,
                 event_id=info.event_id,
                 source_index=info.source_index,
+                center_indices={quota: centers[quota] for quota in info.center_counts},
+                center_sampling_signature=info.center_sampling_signature,
             )
 
         result, block = [], 0
@@ -155,6 +165,10 @@ class PackedPolicyBatch:
                                 self.history.valid[block, offset],
                                 self.history.state[block, offset],
                                 self.history.action[block, offset],
+                                {
+                                    quota: values[block, offset]
+                                    for quota, values in self.history.center_indices.items()
+                                },
                             )
                         )
                     block += 1
@@ -165,6 +179,7 @@ class PackedPolicyBatch:
                 self.current_valid[owner, 0],
                 self.current_state[owner, :15],
                 self.current_state[owner, 15:23],
+                {quota: values[owner, 0] for quota, values in self.current_center_indices.items()},
             )
             result.append(
                 Decision(
@@ -213,7 +228,15 @@ def _validate_banks(decisions):
             raise ValueError("The current observation must have a finite execution clock")
 
 
-def pack_blocks(decisions, block_size):
+def _center_cache_state(frames):
+    frames = list(frames)
+    counts = sorted({quota for frame in frames for quota in frame.center_indices})
+    signatures = {frame.center_sampling_signature for frame in frames}
+    signature = next(iter(signatures)) if len(signatures) == 1 else None
+    return counts, signature
+
+
+def pack_blocks(decisions, block_size, *, center_sampling=None, centers_per_frame=None):
     """Collate raw CPU frames once; no padding across an entire episode's points."""
     if block_size < 1:
         raise ValueError("History block size must be positive")
@@ -233,6 +256,16 @@ def pack_blocks(decisions, block_size):
         lengths.append(slot)
     n = max((len(frame.points) for part in blocks for frame in part), default=0)
     k = len(blocks)
+    if center_sampling is not None:
+        if centers_per_frame is None or len(centers_per_frame) != block_size:
+            raise ValueError("Configured center sampling requires one quota per block position")
+        from stmem.data.center_sampling import center_sampling_signature
+
+        signature = center_sampling_signature(center_sampling)
+        for part in blocks:
+            for position, frame in enumerate(part):
+                cached_frame_centers(frame, centers_per_frame[position], center_sampling, signature)
+    center_counts, signature = _center_cache_state(frame for part in blocks for frame in part)
     # Data preparation supplies CPU tensors. Also accept device-resident frames
     # for invariant checks; copy_ moves them to this bounded host staging buffer.
     points = torch.zeros(k, block_size, n, 6)
@@ -242,6 +275,7 @@ def pack_blocks(decisions, block_size):
     state = torch.zeros(k, block_size, 15)
     action = torch.zeros(k, block_size, 8)
     available = torch.zeros(k, block_size, dtype=torch.bool)
+    centers = {quota: torch.full((k, block_size, quota), -1, dtype=torch.long) for quota in center_counts}
     for i, part in enumerate(blocks):
         for j, frame in enumerate(part):
             count = len(frame.points)
@@ -252,6 +286,8 @@ def pack_blocks(decisions, block_size):
             state[i, j].copy_(frame.proprio)
             action[i, j].copy_(frame.previous_action)
             available[i, j] = frame.action_available and sources[i] == 1
+            for quota, indices in frame.center_indices.items():
+                centers[quota][i, j].copy_(indices)
         times[i, len(part) :] = part[-1].time
     return PackedBlocks(
         points,
@@ -266,19 +302,37 @@ def pack_blocks(decisions, block_size):
         torch.tensor(owners, dtype=torch.long),
         torch.tensor(slots, dtype=torch.long),
         lengths,
+        centers,
+        signature,
     )
 
 
-def pack_policy_batch(decisions, block_size):
+def pack_policy_batch(decisions, block_size, *, model_config=None):
     """Collate all policy inputs on CPU, suitable for a background worker."""
     decisions = list(decisions)
     if not decisions:
         raise ValueError("A policy batch must contain at least one decision")
-    history = pack_blocks(decisions, block_size)
+    center_sampling = (
+        None if model_config is None else model_config.get("encoder_options", {}).get("center_sampling")
+    )
+    quotas = None
+    if center_sampling is not None:
+        visual_tokens = model_config["visual_tokens"]
+        quotas = [
+            visual_tokens // block_size + int(i < visual_tokens % block_size) for i in range(block_size)
+        ]
+        from stmem.data.center_sampling import center_sampling_signature
+
+        signature = center_sampling_signature(center_sampling)
+        for decision in decisions:
+            cached_frame_centers(decision.current, model_config["current_tokens"], center_sampling, signature)
+    history = pack_blocks(decisions, block_size, center_sampling=center_sampling, centers_per_frame=quotas)
+    center_counts, signature = _center_cache_state(d.current for d in decisions)
     n = max(len(d.current.points) for d in decisions)
     points = torch.zeros(len(decisions), 1, n, 6)
     valid = torch.zeros(len(decisions), 1, n, dtype=torch.bool)
     states = torch.zeros(len(decisions), 24)
+    centers = {quota: torch.full((len(decisions), 1, quota), -1, dtype=torch.long) for quota in center_counts}
     for i, decision in enumerate(decisions):
         current = decision.current
         count = len(current.points)
@@ -287,6 +341,8 @@ def pack_policy_batch(decisions, block_size):
         states[i, :15].copy_(current.proprio)
         states[i, 15:23].copy_(current.previous_action)
         states[i, 23] = float(current.action_available)
+        for quota, indices in current.center_indices.items():
+            centers[quota][i, 0].copy_(indices)
     return PackedPolicyBatch(
         history=history,
         current_points=points,
@@ -308,6 +364,8 @@ def pack_policy_batch(decisions, block_size):
             for d in decisions
         ],
         block_size=block_size,
+        current_center_indices=centers,
+        current_center_sampling_signature=signature,
     )
 
 
@@ -352,7 +410,20 @@ def _clocks(decisions, device):
 
 def encode_history_bank(policy, decisions, clocks, *, packed=None):
     encoder, device = policy.encoder, policy.device
-    packed = packed if packed is not None else pack_blocks(decisions, encoder.block_size)
+    quotas = [
+        encoder.visual_tokens // encoder.block_size + int(i < encoder.visual_tokens % encoder.block_size)
+        for i in range(encoder.block_size)
+    ]
+    packed = (
+        packed
+        if packed is not None
+        else pack_blocks(
+            decisions,
+            encoder.block_size,
+            center_sampling=encoder.visual.center_sampling,
+            centers_per_frame=quotas,
+        )
+    )
     b, k = len(decisions), len(packed.owner)
     width = encoder.width
     if not k:
@@ -362,15 +433,22 @@ def encode_history_bank(policy, decisions, clocks, *, packed=None):
             torch.zeros(b, 0, dtype=torch.bool, device=device),
             torch.zeros(b, 0, device=device),
         )
-    quotas = [
-        encoder.visual_tokens // encoder.block_size + int(i < encoder.visual_tokens % encoder.block_size)
-        for i in range(encoder.block_size)
-    ]
+    prepared_centers = None
+    if encoder.visual.center_sampling is not None:
+        if packed.center_sampling_signature != encoder.visual.center_sampling_signature:
+            raise ValueError("Packed historical center settings do not match the encoder")
+        if any(quota not in packed.center_indices for quota in quotas):
+            raise ValueError(
+                "Packed history is missing a required center quota; prepare centers during CPU collation"
+            )
+        prepared_centers = torch.full((k, encoder.block_size, max(quotas)), -1, dtype=torch.long)
+        for position, quota in enumerate(quotas):
+            prepared_centers[:, position, :quota].copy_(packed.center_indices[quota][:, position])
     chunk_size = policy.config["training"].get("encoder_block_batch_size", 32)
     contents, metas, masks = [], [], []
 
-    def pool(points, valid, times):
-        result = encoder.visual.forward_batched(points, valid, times, quotas)
+    def pool(points, valid, times, indices):
+        result = encoder.visual.forward_batched(points, valid, times, quotas, center_indices=indices)
         return tuple(getattr(result, field) for field in EncodedLeaves.__dataclass_fields__)
 
     for start in range(0, k, chunk_size):
@@ -378,10 +456,11 @@ def encode_history_bank(policy, decisions, clocks, *, packed=None):
         points = packed.points[start:end].to(device)
         valid = packed.valid[start:end].to(device)
         times = packed.times[start:end].to(device)
+        indices = None if prepared_centers is None else prepared_centers[start:end].to(device)
         if encoder.checkpoint_blocks and encoder.training and torch.is_grad_enabled():
-            visual = EncodedLeaves(*checkpoint(pool, points, valid, times, use_reentrant=False))
+            visual = EncodedLeaves(*checkpoint(pool, points, valid, times, indices, use_reentrant=False))
         else:
-            visual = EncodedLeaves(*pool(points, valid, times))
+            visual = EncodedLeaves(*pool(points, valid, times, indices))
         state = packed.state[start:end].to(device)
         events = encoder.event(
             state, packed.action[start:end].to(device), packed.available[start:end].to(device)
@@ -428,6 +507,8 @@ def encode_history_bank(policy, decisions, clocks, *, packed=None):
 
 
 def encode_current_bank(policy, decisions, clocks, *, packed_batch=None):
+    encoder = policy.encoder
+    prepared_centers = None
     if packed_batch is None:
         n = max(len(d.current.points) for d in decisions)
         points = torch.zeros(len(decisions), 1, n, 6)
@@ -436,13 +517,32 @@ def encode_current_bank(policy, decisions, clocks, *, packed_batch=None):
             count = len(decision.current.points)
             points[i, 0, :count].copy_(decision.current.points)
             valid[i, 0, :count].copy_(decision.current.valid)
+        if encoder.visual.center_sampling is not None:
+            prepared_centers = torch.stack(
+                [
+                    cached_frame_centers(
+                        d.current,
+                        encoder.current_tokens,
+                        encoder.visual.center_sampling,
+                        encoder.visual.center_sampling_signature,
+                    ).cpu()
+                    for d in decisions
+                ]
+            )[:, None]
     else:
         points, valid = packed_batch.current_points, packed_batch.current_valid
+        if encoder.visual.center_sampling is not None:
+            if packed_batch.current_center_sampling_signature != encoder.visual.center_sampling_signature:
+                raise ValueError("Packed current center settings do not match the encoder")
+            if encoder.current_tokens not in packed_batch.current_center_indices:
+                raise ValueError("Packed current input is missing its required center quota")
+            prepared_centers = packed_batch.current_center_indices[encoder.current_tokens]
     visual = policy.encoder.visual.forward_batched(
         points.to(policy.device),
         valid.to(policy.device),
         clocks[:, 1:2],
         policy.encoder.current_tokens,
+        center_indices=None if prepared_centers is None else prepared_centers.to(policy.device),
     )
     meta = _leaf_metadata(
         visual.anchor,

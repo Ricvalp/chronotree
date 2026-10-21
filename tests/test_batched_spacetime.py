@@ -138,3 +138,90 @@ def test_batched_forward_never_reads_tensor_values_on_cpu(monkeypatch):
     for method in ("cpu", "item", "numpy", "tolist", "__bool__"):
         monkeypatch.setattr(torch.Tensor, method, forbidden)
     encoder.forward_batched(points, valid, times, [3, 2, 4])
+
+
+def _prepared_indices(points, valid, quotas, settings):
+    from stmem.data.center_sampling import prepare_center_indices
+
+    indices = torch.full((*points.shape[:2], max(quotas)), -1, dtype=torch.long)
+    for block in range(len(points)):
+        for frame, quota in enumerate(quotas):
+            indices[block, frame, :quota] = prepare_center_indices(
+                points[block, frame], valid[block, frame], [quota], settings
+            )[quota]
+    return indices
+
+
+@pytest.mark.parametrize("framewise", [False, True])
+def test_precomputed_cluster_centers_match_scalar_values_and_gradients(framewise, monkeypatch):
+    from stmem.data import center_sampling
+
+    points, valid, times = _inputs()
+    quotas = [3, 1, 4]
+    settings = {"method": "balanced_cluster"}
+    indices = _prepared_indices(points, valid, quotas, settings)
+    batched = _encoder(framewise=framewise, center_sampling=settings)
+    reference = deepcopy(batched)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Stored centers must not trigger selection during forward/backward")
+
+    monkeypatch.setattr(center_sampling, "select_center_indices", forbidden)
+    left = points.clone().requires_grad_()
+    right = points.clone().requires_grad_()
+    actual = batched.forward_batched(left, valid, times, quotas, center_indices=indices)
+    expected = [
+        reference(p, v, t, quotas, center_indices=[c[f, :q] for f, q in enumerate(quotas)])
+        for p, v, t, c in zip(right, valid, times, indices)
+    ]
+    _assert_fields_close(
+        actual,
+        EncodedLeaves(*(torch.stack([getattr(x, f.name) for x in expected]) for f in fields(EncodedLeaves))),
+    )
+    actual.content.square().sum().backward()
+    sum(x.content.square().sum() for x in expected).backward()
+    torch.testing.assert_close(left.grad, right.grad, atol=1e-6, rtol=3e-5)
+    for (name, a), (_, b) in zip(batched.named_parameters(), reference.named_parameters()):
+        torch.testing.assert_close(a.grad, b.grad, atol=3e-6, rtol=3e-5, msg=name)
+
+
+def test_precomputed_centers_remap_original_indices_through_permutation_and_padding():
+    points, valid, times = _inputs()
+    quotas = [3, 2, 4]
+    settings = {"method": "balanced_cluster"}
+    indices = _prepared_indices(points, valid, quotas, settings)
+    encoder = _encoder(center_sampling=settings)
+    expected = encoder.forward_batched(points, valid, times, quotas, center_indices=indices)
+    permutation = torch.tensor([4, 7, 2, 8, 0, 1, 5, 3, 6, 10, 9])
+    inverse = torch.argsort(permutation)
+    reordered_indices = torch.where(indices >= 0, inverse[indices.clamp_min(0)], -1)
+    padded = torch.full((3, 3, 19, 6), float("nan"))
+    padded[:, :, :11] = points[:, :, permutation]
+    padded_valid = torch.zeros(3, 3, 19, dtype=torch.bool)
+    padded_valid[:, :, :11] = valid[:, :, permutation]
+    actual = encoder.forward_batched(padded, padded_valid, times, quotas, center_indices=reordered_indices)
+    _assert_fields_close(actual, expected)
+
+
+def test_precomputed_batched_pooling_does_not_synchronize_or_compute_centers(monkeypatch):
+    from stmem.data import center_sampling
+
+    points, valid, times = _inputs()
+    quotas = [3, 2, 4]
+    settings = {"method": "balanced_cluster"}
+    indices = _prepared_indices(points, valid, quotas, settings)
+    encoder = _encoder(center_sampling=settings)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Prepared batched geometry must stay on the accelerator")
+
+    monkeypatch.setattr(center_sampling, "select_center_indices", forbidden)
+    for method in ("cpu", "item", "numpy", "tolist", "__bool__"):
+        monkeypatch.setattr(torch.Tensor, method, forbidden)
+    encoder.forward_batched(points, valid, times, quotas, center_indices=indices)
+
+
+def test_configured_batched_selector_requires_prepared_center_indices():
+    points, valid, times = _inputs()
+    with pytest.raises(ValueError, match="CPU-prepared"):
+        _encoder(center_sampling={}).forward_batched(points, valid, times, 3)

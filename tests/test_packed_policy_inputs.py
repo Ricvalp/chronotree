@@ -87,6 +87,10 @@ def _assert_decision_equal(expected, actual):
                 a, b = getattr(left, field.name), getattr(right, field.name)
                 if isinstance(a, torch.Tensor):
                     torch.testing.assert_close(a, b, atol=0, rtol=0, equal_nan=True)
+                elif isinstance(a, dict):
+                    assert a.keys() == b.keys()
+                    for key in a:
+                        torch.testing.assert_close(a[key], b[key], atol=0, rtol=0)
                 else:
                     assert a == b
 
@@ -99,6 +103,9 @@ def _tensors(value):
             yield from _tensors(getattr(value, field.name))
     elif isinstance(value, (list, tuple)):
         for entry in value:
+            yield from _tensors(entry)
+    elif isinstance(value, dict):
+        for entry in value.values():
             yield from _tensors(entry)
 
 
@@ -220,3 +227,75 @@ def test_packed_policy_rejects_mismatched_cardinality_and_block_size():
         pack_policy_batch([], 3)
     with pytest.raises(ValueError, match="positive"):
         pack_policy_batch(decisions, 0)
+
+
+@pytest.mark.parametrize("checkpoint_blocks", [False, True])
+def test_prepared_cluster_centers_roundtrip_and_match_serial_without_reselection(
+    checkpoint_blocks, monkeypatch
+):
+    from stmem.data import center_sampling
+
+    cfg = _config(checkpoint_blocks)
+    cfg["model"]["encoder_options"]["center_sampling"] = {"method": "balanced_cluster"}
+    policy = MemoryPolicy(cfg)
+    serial = deepcopy(policy)
+    decisions = _decisions()
+    packed = pack_policy_batch(decisions, 3, model_config=cfg["model"])
+    rebuilt = packed.decisions()
+    for original, actual in zip(decisions, rebuilt):
+        _assert_decision_equal(original, actual)
+    assert set(packed.history.center_indices) == {2, 3}
+    assert set(packed.current_center_indices) == {5}
+    # Each quota adds one contiguous storage, not one tensor per history frame.
+    assert len(list(_tensors(packed))) == 20
+
+    def cannot_select(*args, **kwargs):
+        raise AssertionError("Prepared center indices must be reused, including checkpoint recomputation")
+
+    monkeypatch.setattr(center_sampling, "select_center_indices", cannot_select)
+    again = pack_policy_batch(decisions, 3, model_config=cfg["model"])
+    assert again.history.center_sampling_signature == packed.history.center_sampling_signature
+    noisy, times = torch.randn(3, 4, 8), torch.tensor([0.2, 0.4, 0.8])
+    expected = torch.stack([serial(d, noisy[i], times[i]) for i, d in enumerate(rebuilt)])
+    actual = policy(packed.metadata, noisy, times, packed_batch=packed)
+    torch.testing.assert_close(actual, expected, atol=2e-6, rtol=3e-5)
+    target = torch.randn_like(noisy)
+    masked_mse(actual, target, packed.target_valid).backward()
+    masked_mse(expected, target, packed.target_valid).backward()
+    for (name, left), (_, right) in zip(policy.named_parameters(), serial.named_parameters()):
+        assert (left.grad is None) == (right.grad is None), name
+        if left.grad is not None:
+            torch.testing.assert_close(left.grad, right.grad, atol=4e-6, rtol=2e-4, msg=name)
+
+
+def test_prepared_center_settings_mismatch_is_rejected_before_encoding():
+    cfg = _config()
+    cfg["model"]["encoder_options"]["center_sampling"] = {"method": "balanced_cluster"}
+    packed = pack_policy_batch(_decisions(), 3, model_config=cfg["model"])
+    cfg["model"]["encoder_options"]["center_sampling"]["height_margin"] = 0.02
+    policy = MemoryPolicy(cfg)
+    with pytest.raises(ValueError, match="center settings do not match"):
+        policy(packed.metadata, torch.randn(3, 4, 8), torch.rand(3), packed_batch=packed)
+
+
+def test_frame_center_cache_is_recomputed_when_selector_settings_change(monkeypatch):
+    from stmem.data import center_sampling
+    from stmem.models.spacetime_encoder import cached_frame_centers
+
+    frame = synthetic_episode(3, 0, 40).execution[0]
+    select = center_sampling.select_center_indices
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs)
+        return select(*args, **kwargs)
+
+    monkeypatch.setattr(center_sampling, "select_center_indices", counted)
+    settings = {"method": "balanced_cluster"}
+    first = cached_frame_centers(frame, 5, settings)
+    assert cached_frame_centers(frame, 5, settings) is first
+    assert len(calls) == 1
+    old_signature = frame.center_sampling_signature
+    cached_frame_centers(frame, 5, {**settings, "height_margin": 0.02})
+    assert len(calls) == 2
+    assert frame.center_sampling_signature != old_signature

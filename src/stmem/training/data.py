@@ -57,7 +57,10 @@ class TrainingData:
             root = Path(cfg["paths"]["data_root"])
             alignment = alignment_path(cfg)
             self.dataset = EpisodeDataset(
-                root / cfg["data"].get("prepared_subdir", "prepared"), self.tasks, self.horizon, alignment
+                root / cfg["data"].get("prepared_subdir", "prepared_balanced_v2"),
+                self.tasks,
+                self.horizon,
+                alignment,
             )
             self.dataset.validate_preprocessing(cfg)
             cap = int(cfg["data"]["episodes_per_task"] * cfg["data"].get("fraction", 1.0))

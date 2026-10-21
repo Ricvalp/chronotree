@@ -18,7 +18,7 @@ def test_policy_loader_defaults_and_debug_override():
         validate_config(cfg)
         assert cfg["training"]["workers"] == 8
         assert cfg["training"]["prefetch_factor"] == 1
-        expected_batch, expected_microbatch = (128, 64) if cfg["stage"] == "teacher" else (64, 16)
+        expected_batch, expected_microbatch = (256, 64) if cfg["stage"] == "teacher" else (64, 16)
         assert cfg["training"]["effective_batch"] == expected_batch
         assert cfg["training"]["microbatch"] == expected_microbatch
         assert cfg["model"]["checkpoint_blocks"] is False
@@ -105,6 +105,19 @@ def test_policy_rejects_geometry_and_encoder_options():
     changed["model"]["encoder_options"]["temporal_denominator"] = 2
     with pytest.raises(ValueError, match="encoder_options"):
         validate_policy_config(cfg, changed)
+
+
+@pytest.mark.parametrize("missing", ["point_sampling", "center_sampling"])
+def test_old_resolved_sampling_defaults_are_rejected_even_if_checkpoint_matches(missing):
+    cfg = load_config("configs/teacher.yaml")
+    if missing == "point_sampling":
+        del cfg["geometry"][missing]
+    else:
+        del cfg["model"]["encoder_options"][missing]
+    with pytest.raises(ValueError, match=f"Missing explicit.*{missing}"):
+        validate_config(cfg)
+    with pytest.raises(ValueError, match=f"Missing explicit.*{missing}"):
+        validate_policy_config(cfg, deepcopy(cfg))
 
 
 def test_alignment_default_relocates_and_explicit_override_survives(tmp_path):

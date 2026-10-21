@@ -14,6 +14,8 @@ from stmem.config import load_config, dependency, run_dir, source_revision
 from stmem.evaluation.runner import OnlinePolicy, run_episode
 from stmem.evaluation.metrics import summarize_episodes
 from stmem.evaluation.robomme_adapter import RoboMMEAdapter
+from stmem.data.pointcloud import point_sampler_settings
+from stmem.data.center_sampling import center_sampler_settings, center_counts
 from stmem.training.runtime import load_policy, load_router, validate_policy_config, environment_manifest
 from stmem.training.checkpoints import file_sha256, atomic_json
 from stmem.tracking import RunTracker
@@ -325,6 +327,9 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
                 crop=cfg["geometry"]["crop"],
                 voxel_size=cfg["geometry"]["voxel_size"],
                 max_depth_m=cfg["geometry"]["max_depth"],
+                point_sampling=point_sampler_settings(cfg),
+                center_sampling=center_sampler_settings(cfg),
+                center_counts=center_counts(cfg),
             )
             seed = cfg["evaluation"]["seed"] + cfg["data"]["tasks"].index(task) * 1000 + episode_idx
             video = (

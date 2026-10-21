@@ -45,7 +45,31 @@ All HDF5 episode and timestep names are sorted numerically; data starts at zero.
 
 Depth is signed int16 millimetres. Nonpositive/nonfinite values are rejected before conversion to FP32 metres. Camera intrinsics are episode-level; each frame's front and wrist extrinsics are used. CV world-to-camera `[R|t]` is inverted as `world = (camera - t) @ R` in row-vector form.
 
-The fixed crop is x=[-0.9,0.75], y=[-0.75,0.75], z=[-0.05,1.25] metres; the table is z=0 and Panda base is (-0.615,0,0). This comes from benchmark workspace calibration, not hidden object poses. Depth range is (0,4) metres. Sampling takes deterministic lexicographic 5 mm voxel representatives followed by evenly spaced representatives. It merges both cameras, uses RGB, and uses no segmentation/object masks. Padding has zero points and `valid=False`.
+The fixed crop is x=[-0.9,0.75], y=[-0.75,0.75], z=[-0.05,1.25] metres; the table is z=0 and Panda base is (-0.615,0,0). This comes from benchmark workspace calibration, not hidden object poses. Depth range is (0,4) metres. The balanced-v2 sampler takes deterministic lexicographic 5 mm voxel representatives, then reserves 75% of the 2,048-point budget for z>5 mm. Those elevated samples are balanced over 10 cm XY cells; the remaining budget takes evenly spaced representatives from all unselected points. Unused elevated capacity returns to global coverage. It merges both cameras, uses RGB, and uses no segmentation/object masks. Padding has zero points and `valid=False`; observed points are never duplicated to fill a budget.
+
+Each frame also stores 32 observed-point center indices selected independently
+of other frames. Start with 24 elevated and eight global stratified-FPS seeds.
+Refine the elevated centers using weighted Lloyd assignments, then hold them
+fixed while refining the global centers. Each occupied 10 cm XYZ cell has total
+weight one; each centroid is snapped to an observed member point. Selection
+stops at stable indices or 20 iterations per stage. RGB only breaks canonical
+ties. Robot geometry qualifies as elevated; the rule does not identify objects.
+CPU clustering uses FP64 internal distance/centroid accumulations on FP32 input
+to reproduce the reviewed preview; stored points, neural geometry, Gaussian
+pooling and model reductions remain FP32. No learned feature or target enters
+preparation. Gaussian neighborhoods and bandwidths are computed by the encoder,
+so they remain trainable even though anchor indices are saved.
+
+`canonical_balanced_v2` files live under `prepared_balanced_v2/` by default,
+separate from the original `prepared/`. Manifest identity includes point and
+center recipe versions, resolved settings and every required center quota.
+Current and historical paths share the 32-center recipe; debug configurations
+store their own distinct quotas without truncating a larger center selection.
+Online ingestion uses the same selectors once per arriving observation. Indices
+carry a selector signature through CPU loading/packing, preventing reuse under
+different settings. Prepared indices and selected centers do not encode future
+frames or privileged state. Existing raw-data alignment evidence still applies
+because the RGB-D source, source clocks and action alignment are unchanged.
 
 `data/diagnostics/VideoUnmask_calibration.png` shows both clouds in a common world frame at conditioning, initial execution and moving-wrist frames. Visual inspection found coincident table/object geometry. Reprojection round-trip residual was below 0.0005 pixels for both cameras. The figure marks the documented robot base; it does not access simulator object state. Camera-visible robot geometry is retained.
 
@@ -64,7 +88,7 @@ OMP_NUM_THREADS=4 uv run --extra simulator python -m stmem.data.alignment --conf
 
 The archive size is shown before transfer. `--archive PATH` reuses an already downloaded archive and still verifies SHA256. `--episodes 2` restricts preparation, not the downloadable archive. `--steps 0` explicitly runs the short full expert replay; default replay is limited to 32 commands per episode.
 
-Large data and generated videos/figures are ignored by git. Copy raw/prepared data, download manifests and `alignment.json` together for offline HPC execution. Full experiment preparation uses 1024 points and all 100 released episodes per task; do not reuse the 256-point debug prepared data with the core configuration. Official val/test are environment seeds; no validation expert HDF5 is assumed.
+Large data and generated videos/figures are ignored by git. Copy raw/prepared data, download manifests and `alignment.json` together for offline HPC execution. Full experiment preparation uses 2,048 points and all 100 released episodes per task; do not reuse the 256-point `prepared_balanced_v2_debug/` data with the core configuration. Official val/test are environment seeds; no validation expert HDF5 is assumed.
 
 ## Bounded learned-policy path check
 

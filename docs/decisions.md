@@ -481,3 +481,80 @@
     segments. Ruff and whitespace checks passed. No online metadata was changed
     and no Slurm job was submitted. The pre-existing diagram mismatch described
     above is unaffected by this tracking-only change.
+
+27. **Approved balanced geometry and 32 centers per frame (21 October 2026).**
+    After reviewing matched real-scene HTML previews, the user selected spatially
+    balanced clustering with greater above-table point coverage. Core defaults
+    now sample 2,048 visible points and reserve 75% for z>5 mm, balanced over
+    10 cm XY cells after the same 5 mm voxel reduction. Remaining slots sample
+    all unselected geometry; a sparse elevated set returns its unused budget.
+    This uses only observed RGB-D and the calibrated table-height prior. It is
+    not object segmentation; visible robot points qualify too.
+
+    Both current and historical observations now use 32 observed-point centers:
+    24 elevated plus eight global seeds, initialized by stratified FPS. Each
+    occupied 10 cm XYZ cell has total weight one. Weighted Lloyd updates refine
+    elevated centers, then hold them fixed while refining global centers; each
+    centroid snaps to an observed cluster member. The cap is 20 iterations per
+    stage. Selection is frame-local and deterministic, with no future frames,
+    object identities, labels, learned features or target actions. CPU refinement
+    retains the preview's FP64 internal geometry on FP32 inputs; model geometry
+    and Gaussian pooling remain FP32. The original neighborhood radius, learned
+    bandwidths and 128-neighbor cap are unchanged.
+
+    A complete eight-frame block contains 256 visual and eight event leaves;
+    the current context contains 32 visual plus three auxiliary tokens. Exact
+    leaf coverage, separate source banks, pending-prefix construction and matched
+    TREE/FLAT supervision remain unchanged. The model parameter count remains
+    6,098,698; leaf count and activation cost increase. Existing effective-batch
+    256/microbatch-cap 64 settings are preserved but require fresh target-device
+    memory profiling. No full-history H200 capacity or throughput is claimed.
+
+    `canonical_balanced_v2` preparation writes a separate
+    `prepared_balanced_v2/` directory, with the smaller debug data under
+    `prepared_balanced_v2_debug/`. It saves fixed-length original-cloud center
+    indices for each required quota, padding only with -1. No larger selection
+    is truncated to emulate a smaller quota. Both selector recipes, versions and
+    quotas enter manifest identity; a different existing prepared format cannot
+    be overwritten. Configured preparation, training and checkpoint validation
+    require explicit selector settings, so old resolved YAML snapshots cannot
+    silently acquire new preprocessing defaults.
+
+    The online adapter computes the same indices once per arriving observation.
+    Dataset loading and background packing transport indices and a settings
+    signature; batched GPU pooling only remaps/gathers these anchors. Missing or
+    incompatible packed indices fail clearly. Synthetic/scalar diagnostic frames
+    can compute and cache their indices on CPU. Startup still reads only small
+    supervision arrays and center layout metadata, preserving the action-only
+    startup optimization. Existing verified raw-revision alignment remains valid.
+
+    Tests cover exact reviewed-cloud/center parity, sampling invariants, prepared
+    identity and old-format protection, online/offline equality, padding and
+    canonical index remapping, scalar/batched gradients, prefetch/resume/DDP,
+    source causality and unchanged scientific invariants. A four-record real
+    HDF5 diagnostic matches online ingestion exactly and deliberately remains
+    alignment-unresolved. A bounded RTX 5000 Ada BF16 forward/backward used two
+    eight-frame real replay blocks at the new 2,048/32 geometry: 512 valid leaves
+    and finite gradients, with CPU selection forbidden inside GPU execution.
+    Small FP32 CPU/CUDA outputs and gradients agree (maximum output difference
+    5.96e-8). These are implementation checks, not a trained-policy evaluation.
+    The bounded real-data/device measurements and implementation hashes are in
+    [balanced_geometry_integration.json](evidence/balanced_geometry_integration.json).
+
+    Final `uv run pytest -q`: 503 passed, one skipped in 88.64 seconds. The skip
+    requires the optional new-format debug prepared subset; the bounded real
+    RGB-D integration above runs independently. An earlier full pass attempt
+    had one intermittent PyTorch worker SIGABRT during persistent DataLoader
+    teardown, after the test body. Its five-test module then passed, all eight
+    fresh isolated repetitions passed, and the final full suite passed. The
+    local cause is unproven; no error suppression or private queue workaround
+    was added. Ruff, whitespace, batch-script syntax, the generated-config
+    dry-run and the architecture snapshot/XML checks pass. All four diagram
+    pages were browser-inspected; no Slurm submission was made.
+
+    Matched previews improved nearest-center geometry and table coverage but
+    showed a trade-off: one PickXtimes history block pooled 1,365/1,403 cube-point
+    observations versus FPS's 1,403/1,403, both preserving all eight frames. No
+    blanket object-coverage or success-rate improvement is claimed. The diagram,
+    data contract and HPC preparation instructions are updated; no full-data
+    preparation, long training or real Slurm submission was performed locally.

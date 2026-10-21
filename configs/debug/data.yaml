@@ -1,6 +1,7 @@
-extends: ../base.yaml
+extends: real_teacher.yaml
 debug: true
 data:
+  prepared_subdir: prepared_balanced_v2_debug
   tasks: [VideoUnmask]
   episodes_per_task: 2
   synthetic: false

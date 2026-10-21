@@ -7,17 +7,21 @@ import torch
 from stmem.config import load_config
 from stmem.data.dataset import EpisodeDataset
 from stmem.evaluation.robomme_adapter import RoboMMEAdapter
+from stmem.data.pointcloud import point_sampler_settings
+from stmem.data.center_sampling import center_sampler_settings, center_counts
 
 ROOT = Path("data")
+PREPARED = ROOT / "prepared_balanced_v2_debug"
 pytestmark = pytest.mark.skipif(
-    not (ROOT / "alignment.json").exists() or not (ROOT / "prepared/VideoUnmask.h5").exists(),
+    not (ROOT / "alignment.json").exists() or not (PREPARED / "VideoUnmask.h5").exists(),
     reason="real small subset/alignment audit has not been prepared",
 )
 
 
 def test_resolved_real_alignment_and_offline_online_sensor_parity():
-    dataset = EpisodeDataset(ROOT / "prepared", tasks=["VideoUnmask"])
-    dataset.validate_preprocessing(load_config("configs/debug/data.yaml"))
+    cfg = load_config("configs/debug/data.yaml")
+    dataset = EpisodeDataset(PREPARED, tasks=["VideoUnmask"])
+    dataset.validate_preprocessing(cfg)
     episode = dataset.load_episode(0)
     assert episode.alignment == "post_action_v1" and len(episode.conditioning) == 66
     assert not episode.execution[0].action_available and not episode.action_valid[0].any()
@@ -29,7 +33,14 @@ def test_resolved_real_alignment_and_offline_online_sensor_parity():
         )
         assert torch.equal(episode.execution[1].previous_action, episode.actions[1])
         # Policy receives exactly the same allowlisted sensors via online transport.
-        adapter = RoboMMEAdapter("VideoUnmask", env=object(), points=256)
+        adapter = RoboMMEAdapter(
+            "VideoUnmask",
+            env=object(),
+            points=256,
+            point_sampling=point_sampler_settings(cfg),
+            center_sampling=center_sampler_settings(cfg),
+            center_counts=center_counts(cfg),
+        )
         adapter.calibration = {
             f"{c}_camera_intrinsic": g["setup"][f"{c}_camera_intrinsic"][()] for c in ("front", "wrist")
         }
@@ -52,6 +63,8 @@ def test_resolved_real_alignment_and_offline_online_sensor_parity():
         assert torch.equal(frame.valid, episode.execution[1].valid)
         assert torch.equal(frame.proprio, episode.execution[1].proprio)
         assert torch.equal(frame.previous_action, episode.execution[1].previous_action)
+        for count in center_counts(cfg):
+            assert torch.equal(frame.center_indices[count], episode.execution[1].center_indices[count])
     # Terminal suffixes are unavailable targets, while the first completing command remains valid.
     assert episode.action_valid[161, :7].all()
     assert not episode.action_valid[162:].any()

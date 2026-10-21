@@ -4,6 +4,7 @@ paths:
   run_root: runs/real_debug
   cache_root: cache/real_debug
 data:
+  prepared_subdir: prepared_balanced_v2_debug
   synthetic: false
   tasks: [VideoUnmask]
   episodes_per_task: 2

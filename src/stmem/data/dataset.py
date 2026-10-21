@@ -9,7 +9,7 @@ import h5py
 import numpy as np
 import torch
 from .canonical import ACTION_DIM, PROPRIO_DIM, Frame, Episode, action_alignment_offset
-from .prepare import numeric_keys
+from .prepare import numeric_keys, FORMAT_VERSION, PREPARED_SUBDIR
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class EpisodeActions:
 
 
 class EpisodeDataset:
-    def __init__(self, root="data/prepared", tasks=None, horizon=16, alignment_path=None):
+    def __init__(self, root=f"data/{PREPARED_SUBDIR}", tasks=None, horizon=16, alignment_path=None):
         self.root = Path(root)
         self.horizon = horizon
         self.episodes = []
@@ -63,14 +63,28 @@ class EpisodeDataset:
             raise FileNotFoundError(f"No prepared episodes at {self.root}; run python -m stmem.data.prepare")
 
     def validate_preprocessing(self, config):
-        from .pointcloud import DEFAULT_CROP, CALIBRATION_VERSION
+        from stmem.config import require_sampling_contract
+        from .pointcloud import (
+            DEFAULT_CROP,
+            CALIBRATION_VERSION,
+            POINT_SAMPLING_VERSION,
+            point_sampler_settings,
+        )
+        from .center_sampling import CENTER_SAMPLING_VERSION, center_sampler_settings, center_counts
 
+        require_sampling_contract(config)
         expected = {
+            "format": FORMAT_VERSION,
             "points": config["model"]["points"],
             "crop": config.get("geometry", {}).get("crop", DEFAULT_CROP),
             "voxel_size": config.get("geometry", {}).get("voxel_size", 0.005),
             "max_depth_m": config.get("geometry", {}).get("max_depth", 4.0),
             "calibration": CALIBRATION_VERSION,
+            "point_sampling_version": POINT_SAMPLING_VERSION,
+            "point_sampling": point_sampler_settings(config),
+            "center_sampling_version": CENTER_SAMPLING_VERSION,
+            "center_sampling": center_sampler_settings(config),
+            "center_counts": center_counts(config),
         }
         for ref in self.episodes:
             for key, value in expected.items():
@@ -124,6 +138,19 @@ class EpisodeDataset:
         for name in ("valid", "action_valid"):
             if group[name].dtype != np.dtype(bool):
                 raise ValueError(f"{group.name}: {name} must be bool")
+        manifest = json.loads(group.file.attrs["manifest"])
+        if manifest.get("format") == FORMAT_VERSION:
+            counts = manifest.get("center_counts", [])
+            if (
+                not counts
+                or "center_indices" not in group
+                or set(group["center_indices"]) != {str(c) for c in counts}
+            ):
+                raise ValueError(f"{group.name}: missing prepared center indices; re-run prepare")
+            for count in counts:
+                centers = group["center_indices"][str(count)]
+                if centers.shape != (frames, count) or centers.dtype != np.dtype("i8"):
+                    raise ValueError(f"{group.name}: center indices must be int64 [frames,{count}]")
 
     def load_episode_actions(self, index):
         """Read only small source/action arrays for startup indexing/statistics."""
@@ -140,10 +167,21 @@ class EpisodeDataset:
         return EpisodeActions(actions, valid, len(actions), int(source.sum()), ref.key, alignment)
 
     def load_episode(self, index):
+        from .center_sampling import center_sampling_signature
+
         ref = self.episodes[index]
         alignment = self._alignment_for(ref)
         with h5py.File(ref.path, "r") as f:
             g = f[ref.key]
+            self._validate_episode_layout(g)
+            center_signature = None
+            centers = {}
+            if ref.metadata.get("format") == FORMAT_VERSION:
+                center_signature = center_sampling_signature(ref.metadata["center_sampling"])
+                centers = {
+                    int(count): torch.from_numpy(np.asarray(values))
+                    for count, values in g["center_indices"].items()
+                }
             source = np.asarray(g["source"])
             actions = torch.from_numpy(np.asarray(g["actions"]))
             masks = torch.from_numpy(np.asarray(g["action_valid"]))
@@ -173,6 +211,8 @@ class EpisodeDataset:
                         bank,
                         f"{ref.task}/{ref.key}/{int(raw_indices[row])}",
                         int(indices[row]),
+                        center_indices={count: values[row] for count, values in centers.items()},
+                        center_sampling_signature=center_signature,
                     )
                 )
             return Episode(

@@ -3,7 +3,7 @@ stage: teacher
 training:
   steps: 100000
   effective_batch: 256
-  # Cap per GPU: four GPUs use 32 examples each for global batch 128.
+  # Cap per GPU; profile memory before training the larger 32-centers/frame encoder.
   microbatch: 64
   encoder_block_batch_size: 128
   checkpoint_steps: [50000, 100000]

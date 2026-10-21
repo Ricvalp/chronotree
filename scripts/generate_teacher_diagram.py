@@ -15,6 +15,8 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from stmem.config import load_config
+from stmem.data.center_sampling import CENTER_SAMPLING_VERSION, center_sampler_settings
+from stmem.data.pointcloud import POINT_SAMPLING_VERSION, point_sampler_settings
 from stmem.models.policy import MemoryPolicy
 
 
@@ -39,6 +41,12 @@ SOURCES = [
     "configs/base.yaml",
     "configs/teacher.yaml",
     "src/stmem/config.py",
+    "src/stmem/data/pointcloud.py",
+    "src/stmem/data/center_sampling.py",
+    "src/stmem/data/canonical.py",
+    "src/stmem/data/prepare.py",
+    "src/stmem/data/dataset.py",
+    "src/stmem/evaluation/robomme_adapter.py",
     "src/stmem/models/policy.py",
     "src/stmem/models/spacetime_encoder.py",
     "src/stmem/models/batched_spacetime.py",
@@ -64,6 +72,12 @@ def snapshot():
         raise ValueError("Update the curated diagram for this encoder/decoder variant.")
     if cfg["model"]["visual_tokens"] % cfg["model"]["block_size"]:
         raise ValueError("Update the token-count formula for uneven per-frame visual quotas.")
+    if center_sampler_settings(cfg)["method"] != "balanced_cluster":
+        raise ValueError("Update the curated center-selection diagram for this sampling method.")
+    if point_sampler_settings(cfg)["sampling"] != "balanced":
+        raise ValueError("Update the curated observed-point sampling diagram for this method.")
+    if cfg["model"]["current_tokens"] != cfg["model"]["visual_tokens"] // cfg["model"]["block_size"]:
+        raise ValueError("Update the shared per-frame center-cache diagram for unequal quotas.")
     if not all(p.requires_grad for p in policy.parameters()):
         raise ValueError("Update the trainable/frozen labels for the current teacher.")
     parts = {
@@ -82,6 +96,12 @@ def snapshot():
         {
             "configuration": "configs/teacher.yaml",
             "model": cfg["model"],
+            "geometry": cfg["geometry"],
+            "prepared_subdir": cfg["data"]["prepared_subdir"],
+            "center_sampling": center_sampler_settings(cfg),
+            "center_sampling_version": CENTER_SAMPLING_VERSION,
+            "point_sampling": point_sampler_settings(cfg),
+            "point_sampling_version": POINT_SAMPLING_VERSION,
             "training": cfg["training"],
             "parameters": parts,
             "total_parameters": count(policy),
@@ -433,66 +453,106 @@ def overview(file, cfg, facts):
 def encoders(file, cfg, policy):
     m, visual = cfg["model"], policy.encoder.visual
     w, f, v, c = (m[k] for k in ("width", "block_size", "visual_tokens", "current_tokens"))
+    center_settings = center_sampler_settings(cfg)
+    point_settings = point_sampler_settings(cfg)
+    foreground_centers = int(c * center_settings["foreground_fraction"])
     p = Page(
         file,
         "encoders",
         "How observations become evidence tokens",
         "Blue: shared visual encoder   ·   Teal: historical events   ·   Violet: task instruction",
-        height=1580,
+        height=1770,
     )
-    p.section(48, 230, 1600, "A  VISUAL ENCODER  /  Same weights for history and current frame")
+    p.section(48, 230, 350, "A0  OBSERVED GEOMETRY")
+    p.section(440, 230, 1312, "A1  SHARED VISUAL ENCODER  /  History and current frame")
     raw = p.card(
         48,
-        370,
-        245,
-        155,
-        "Per-frame point cloud",
-        [f"N ≤ {m['points']:,} · XYZRGB", "6 channels per point", "World coordinates + mask"],
+        300,
+        300,
+        220,
+        "Calibrated point cloud",
+        [
+            f"N ≤ {m['points']:,} · XYZRGB + mask",
+            f"{point_settings['foreground_fraction']:.0%} elevated; rest broad-scene",
+            f"XY cells {point_settings['cell_size']:g} m; voxels {cfg['geometry']['voxel_size'] * 1000:g} mm",
+            f"Elevated: world z > {point_settings['table_z'] + point_settings['height_margin']:g} m",
+            "Front + wrist; fixed crop",
+        ],
         tone="data",
+        size=18,
+        tooltip="pointcloud.py: observed RGB-D is backprojected into calibrated world coordinates. "
+        "Point sampling reserves an elevated-geometry quota and retains broad-scene coverage. "
+        "No simulator object IDs, masks, or hidden poses are inputs.",
+    )
+    centers = p.card(
+        48,
+        555,
+        300,
+        260,
+        "Frame-local center indices",
+        [
+            f"≤{c} anchors; target {foreground_centers} elevated + {c - foreground_centers} broad",
+            "Cell-balanced centroid refinement",
+            "Snap to observed point positions",
+            f"XYZ cells: {center_settings['cell_size']:g} m",
+            f"≤{center_settings['max_iterations']} iterations per stage",
+            "Prepared once; shared online rule",
+        ],
+        tone="data",
+        size=18,
+        tooltip="center_sampling.py: deterministic stratified FPS initializes two refinement "
+        "stages. Each occupied world XYZ cell has total weight one. Elevated anchors are refined "
+        "first, then held fixed while broad-scene anchors refine residual coverage. Each centroid "
+        "is snapped to an observed member point. The cached indices depend only on this frame. "
+        "Preparation stores center_indices/<quota>; CPU loader workers reuse them. Online RGB-D "
+        "observations use the same selector once per acquired frame.",
     )
     point = p.card(
-        365,
-        285,
-        285,
-        135,
+        440,
+        300,
+        300,
+        145,
         "Point MLP",
         [f"Linear 6 → {w}", f"SiLU → Linear {w} → {w}"],
         tone="visual",
         tooltip="spacetime_encoder.py: SpacetimeEncoder.point_mlp. "
         f"{count(visual.point_mlp):,} trainable parameters; applied independently to each point.",
     )
-    fps = p.card(
-        365,
-        480,
-        285,
-        190,
-        "Observed centers + neighbors",
+    neighbors = p.card(
+        440,
+        555,
+        300,
+        230,
+        "Gather bounded neighborhoods",
         [
-            f"FPS: {v // f}/historical frame",
-            f"or {c}/current frame",
+            "Reuse prepared center indices",
+            f"{v // f}/historical or {c}/current frame",
             f"≤{visual.neighbor_cap} neighbors per center",
             f"Radius {visual.spatial_radius:g} m; Δt ≤ {visual.temporal_radius:g} frames",
+            "Same source, example and block",
         ],
         tone="visual",
-        tooltip="spacetime_encoder.py + batched_spacetime.py. Deterministic FPS on observed XYZ, "
-        "independent per frame. Candidate neighbors are restricted to the same source, example "
-        "and block. Temporal distance uses source-local recorded frames, not seconds. "
-        "Centers sample spatial extent; they are not semantic object or robot keypoints.",
+        size=18,
+        tooltip="spacetime_encoder.py + batched_spacetime.py. The shared per-frame observed-point "
+        "indices choose anchors; the encoder constructs exact bounded Gaussian neighborhoods "
+        "from the currently available block or prefix. Pooling neighbors are not clustering "
+        "assignments. Temporal distance uses source-local recorded frames, not seconds. "
+        "Centers are geometric samples, not semantic object or robot keypoints.",
     )
     gather = p.card(
-        735,
-        370,
-        285,
-        155,
+        820,
+        415,
+        270,
+        170,
         "Gather local edge features",
         [f"Point feature {w}", "+ relative XYZ (3)", f"+ relative time (1) = {w + 4}"],
         tone="visual",
     )
     edge = p.card(
-        1100,
-        370,
-        270,
-        155,
+        1150,
+        415,
+        250,
+        170,
         "Edge MLP",
         [f"Linear {w + 4} → {w}", f"SiLU → Linear {w} → {w}"],
         tone="visual",
@@ -500,10 +560,10 @@ def encoders(file, cfg, policy):
         f"{count(visual.edge_mlp):,} trainable parameters.",
     )
     pool = p.card(
-        1450,
-        370,
-        302,
-        190,
+        1465,
+        415,
+        287,
+        215,
         "Gaussian weighted pool",
         [
             "Softmax over valid neighbors",
@@ -517,23 +577,34 @@ def encoders(file, cfg, policy):
         tooltip="Gaussian score = −||ΔXYZ||²/τx − Δt²/τt; softmax-weighted sum of edge features. "
         "τx and τt use softplus plus a small positive floor. This is one local pooling stage.",
     )
-    for a, b in ((raw, point), (raw, fps), (point, gather), (fps, gather), (gather, edge), (edge, pool)):
+    for a, b in (
+        (raw, point),
+        (raw, centers),
+        (centers, neighbors),
+        (point, gather),
+        (neighbors, gather),
+        (gather, edge),
+        (edge, pool),
+    ):
         p.edge(a, b, tone="visual")
     p.card(
-        735,
-        590,
-        1017,
-        100,
+        820,
+        680,
+        932,
+        125,
         f"Historical block: up to {v} visual leaves  •  Current: up to {c}",
-        [f"Separate {f}-frame blocks per source. Keep observed prefix frames; mask only unused slots."],
+        [
+            f"Separate {f}-frame blocks per source; prefixes contain only observed frames.",
+            "Only points and center indices are prepared; learned content is recomputed.",
+        ],
         tone="note",
         size=18,
         parent="notes",
     )
-    p.section(48, 740, 1600, "B  EVENT ENCODER  /  One token per historical frame")
+    p.section(48, 930, 1600, "B  EVENT ENCODER  /  One token per historical frame")
     state = p.card(
         48,
-        800,
+        990,
         360,
         120,
         "Observed state · 15 values",
@@ -543,7 +614,7 @@ def encoders(file, cfg, policy):
     )
     command = p.card(
         48,
-        970,
+        1160,
         360,
         120,
         "Previous command + available flag",
@@ -552,14 +623,14 @@ def encoders(file, cfg, policy):
         size=18,
     )
     state_mlp = p.card(
-        490, 800, 320, 120, "State branch", [f"Linear 15 → {w} → SiLU", f"Linear {w} → {w}"], tone="event"
+        490, 990, 320, 120, "State branch", [f"Linear 15 → {w} → SiLU", f"Linear {w} → {w}"], tone="event"
     )
     action_mlp = p.card(
-        490, 970, 320, 120, "Command branch", [f"Linear 9 → {w} → SiLU", f"Linear {w} → {w}"], tone="event"
+        490, 1160, 320, 120, "Command branch", [f"Linear 9 → {w} → SiLU", f"Linear {w} → {w}"], tone="event"
     )
     combine = p.card(
         910,
-        885,
+        1075,
         345,
         135,
         "Add branches",
@@ -570,7 +641,7 @@ def encoders(file, cfg, policy):
     )
     event_out = p.card(
         1370,
-        885,
+        1075,
         382,
         135,
         "Attach metadata",
@@ -586,10 +657,10 @@ def encoders(file, cfg, policy):
         (combine, event_out),
     ):
         p.edge(a, b, tone="event")
-    p.section(48, 1160, 1600, "C  GOAL TEXT ENCODER  /  Trained from scratch")
+    p.section(48, 1350, 1600, "C  GOAL TEXT ENCODER  /  Trained from scratch")
     byte = p.card(
         48,
-        1230,
+        1420,
         300,
         170,
         "UTF-8 bytes + start token",
@@ -598,7 +669,7 @@ def encoders(file, cfg, policy):
     )
     emb = p.card(
         425,
-        1230,
+        1420,
         340,
         170,
         "Token + position embeddings",
@@ -607,7 +678,7 @@ def encoders(file, cfg, policy):
     )
     tx = p.card(
         845,
-        1230,
+        1420,
         470,
         210,
         f"{m['text_layers']} Transformer encoder layers",
@@ -623,7 +694,7 @@ def encoders(file, cfg, policy):
     )
     goal = p.card(
         1395,
-        1230,
+        1420,
         357,
         170,
         "Masked mean → LayerNorm",
@@ -946,7 +1017,7 @@ def context(file, cfg, policy, facts):
             f"Activation checkpointing: {str(m['checkpoint_blocks']).lower()}",
             f"{t['steps']:,} optimizer updates · AdamW · learning rate {t['lr']:g}",
             "Auto precision prefers BF16; geometry/reductions remain FP32.",
-            "Loader workers prefetch raw packed observations, not learned features.",
+            "CPU workers pack prepared points/center indices, not learned features.",
         ],
         tone="note",
         size=19,
@@ -978,7 +1049,7 @@ def context(file, cfg, policy, facts):
         "Scope and source of truth",
         [
             "This diagram describes the joint-encoder, flow-decoder teacher.",
-            "Prepared data supplies calibrated XYZRGB and causal state.",
+            "Prepared data: calibrated XYZRGB, frame-local centers, causal state.",
             "Compact TREE/FLAT/router/Perceiver are subsequent stages.",
             "Action normalizer: no trainable weights; fitted statistics are buffers.",
             "Code + config are authoritative. Regenerate after architecture edits.",

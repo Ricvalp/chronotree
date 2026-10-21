@@ -36,7 +36,7 @@ def canonical_nearest(distance: Tensor, allowed: Tensor, cap: int) -> Tensor:
         return torch.topk(key, min(cap, count), largest=False, sorted=True).indices
 
 
-def _canonical_cloud(points: Tensor, valid: Tensor) -> tuple[Tensor, Tensor]:
+def _canonical_cloud(points: Tensor, valid: Tensor) -> tuple[Tensor, Tensor, Tensor]:
     """Lexicographically order each padded frame and put invalid points last."""
     valid = valid & torch.isfinite(points).all(-1)
     points = torch.where(valid[..., None], points, torch.zeros_like(points))
@@ -50,7 +50,7 @@ def _canonical_cloud(points: Tensor, valid: Tensor) -> tuple[Tensor, Tensor]:
             order = order.gather(-1, torch.argsort(values, dim=-1, stable=True))
         ordered_valid = valid.gather(-1, order)
         order = order.gather(-1, torch.argsort(ordered_valid.to(torch.int8), descending=True, stable=True))
-    return points.gather(-2, order[..., None].expand(*order.shape, 6)), valid.gather(-1, order)
+    return points.gather(-2, order[..., None].expand(*order.shape, 6)), valid.gather(-1, order), order
 
 
 def _batched_fps(points: Tensor, valid: Tensor, count: int) -> Tensor:
@@ -78,6 +78,8 @@ def forward_batched(
     valid: Tensor,
     times: Tensor,
     centers_per_frame: int | Sequence[int],
+    *,
+    center_indices: Tensor | None = None,
 ) -> EncodedLeaves:
     """Pool independent padded local blocks [K,F,N,6] into leaves [K,M,...].
 
@@ -119,14 +121,29 @@ def forward_batched(
             center_time.clone(),
             z,
         )
-    cloud, point_valid = _canonical_cloud(points, valid)
-    chosen = _batched_fps(cloud, point_valid, max(quotas))
+    cloud, point_valid, order = _canonical_cloud(points, valid)
+    if center_indices is None:
+        if encoder.center_sampling is not None:
+            raise ValueError("Configured center sampling requires CPU-prepared indices in batched pooling")
+        chosen = _batched_fps(cloud, point_valid, max(quotas))
+        candidate_valid = (
+            torch.arange(max(quotas), device=device)[None, None, :] < point_valid.sum(-1)[..., None]
+        )
+    else:
+        if center_indices.shape != (k, frames, max(quotas)) or center_indices.dtype != torch.long:
+            raise ValueError("Prepared center indices require int64 [blocks,frames,max_frame_quota]")
+        center_indices = center_indices.to(device)
+        in_range = (center_indices >= 0) & (center_indices < point_count)
+        inverse = torch.empty_like(order)
+        inverse.scatter_(-1, order, torch.arange(point_count, device=device).expand_as(order))
+        chosen = inverse.gather(-1, center_indices.clamp(0, point_count - 1))
+        candidate_valid = in_range & point_valid.gather(-1, chosen)
     quota_index = torch.tensor([i for q in quotas for i in range(q)], device=device)
     selected = chosen[:, frame_index, quota_index]
     cloud = cloud.flatten(1, 2)
     selected = selected + frame_index[None, :] * point_count
     anchor = cloud[..., :3].gather(1, selected[..., None].expand(k, m, 3))
-    center_valid = quota_index[None, :] < point_valid.sum(-1)[:, frame_index]
+    center_valid = candidate_valid[:, frame_index, quota_index]
     anchor = torch.where(center_valid[..., None], anchor, torch.zeros_like(anchor))
     point_valid = point_valid.flatten(1, 2)
     point_time = times[:, :, None].expand(k, frames, point_count).flatten(1, 2)

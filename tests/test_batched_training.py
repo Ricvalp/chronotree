@@ -28,7 +28,7 @@ def _config(root, *, batch=5, steps=3):
         horizon=4,
         points=6,
         checkpoint_blocks=True,
-        encoder_options={"neighbor_cap": 4},
+        encoder_options={**cfg["model"]["encoder_options"], "neighbor_cap": 4},
     )
     cfg["training"].update(
         steps=steps,

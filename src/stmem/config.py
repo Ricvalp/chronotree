@@ -77,7 +77,25 @@ def dependency(cfg: dict, name: str) -> Path:
     return run_dir(cfg, name) / "selected.pt"
 
 
+def require_sampling_contract(cfg: dict) -> None:
+    """Old resolved snapshots must not acquire different preprocessing defaults.
+
+    Direct low-level encoders retain an explicit FPS reference. Policy configs
+    must record both selectors so preparation and learned inference cannot
+    resolve missing settings to different algorithms.
+    """
+    if not isinstance(cfg.get("geometry", {}).get("point_sampling"), dict):
+        raise ValueError(
+            "Missing explicit geometry.point_sampling; regenerate the configuration from configs/base.yaml"
+        )
+    if not isinstance(cfg.get("model", {}).get("encoder_options", {}).get("center_sampling"), dict):
+        raise ValueError(
+            "Missing explicit model.encoder_options.center_sampling; regenerate the configuration from configs/base.yaml"
+        )
+
+
 def validate_config(cfg: dict) -> None:
+    require_sampling_contract(cfg)
     if not isinstance(cfg.get("tracking", {}).get("system_stats", True), bool):
         raise ValueError("tracking.system_stats must be boolean")
     scenes = cfg.get("tracking", {}).get("scenes", {})
@@ -90,6 +108,18 @@ def validate_config(cfg: dict) -> None:
         if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
             raise ValueError(f"tracking.scenes.{key} must be an integer in [{low}, {high}]")
     m, t = cfg["model"], cfg["training"]
+    from stmem.data.pointcloud import point_sampler_settings
+    from stmem.data.center_sampling import center_sampler_settings, center_counts
+
+    point_sampler_settings(cfg)
+    center_sampler_settings(cfg)
+    center_counts(cfg)
+    points = m["points"]
+    if not isinstance(points, int) or isinstance(points, bool) or points < 1:
+        raise ValueError("model.points must be a positive integer")
+    subdir = Path(cfg["data"].get("prepared_subdir", "prepared_balanced_v2"))
+    if subdir.is_absolute() or ".." in subdir.parts or subdir == Path("."):
+        raise ValueError("data.prepared_subdir must be a nonempty relative directory below data-root")
     if m["width"] % m["heads"]:
         raise ValueError("Model width must be divisible by attention heads")
     if not 0 < m["execute"] <= m["horizon"]:

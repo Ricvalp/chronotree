@@ -106,6 +106,8 @@ def cli_command(root, *extra, tasks=TASKS):
         "stmem.data.prepare",
         "--data-root",
         str(root),
+        "--prepared-subdir",
+        "prepared",
         "--tasks",
         *tasks,
         "--points",
@@ -198,7 +200,14 @@ def test_parallel_cli_matches_serial_arrays_masks_and_manifest(raw_root, tmp_pat
                 assert dict(left[episode].attrs) == dict(right[episode].attrs)
                 assert set(left[episode]) == set(right[episode])
                 for name in left[episode]:
-                    np.testing.assert_array_equal(left[episode][name][()], right[episode][name][()])
+                    if name == "center_indices":
+                        assert set(left[episode][name]) == set(right[episode][name])
+                        for quota in left[episode][name]:
+                            np.testing.assert_array_equal(
+                                left[episode][name][quota][()], right[episode][name][quota][()]
+                            )
+                    else:
+                        np.testing.assert_array_equal(left[episode][name][()], right[episode][name][()])
                 group = left[episode]
                 np.testing.assert_array_equal(group["raw_index"], [0, 1, 2, 3, 5, 6, 7, 8, 10])
                 np.testing.assert_array_equal(group["source_index"], [0, 1, 0, 1, 2, 3, 4, 5, 6])

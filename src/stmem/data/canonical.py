@@ -46,6 +46,10 @@ class Frame:
     source: str
     event_id: str
     source_index: int = -1
+    # Geometry-only anchors into this frame's original sampled points, keyed by
+    # requested quota. Invalid/padded slots are -1; never truncate another quota.
+    center_indices: dict[int, Tensor] = field(default_factory=dict)
+    center_sampling_signature: str | None = None
 
     def __post_init__(self):
         if self.points.ndim != 2 or self.points.shape[-1] != 6:
@@ -62,6 +66,21 @@ class Frame:
             self.previous_action = torch.zeros_like(self.previous_action)
         if self.source_index < 0:
             self.source_index = int(self.time)
+        for count, indices in self.center_indices.items():
+            if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+                raise ValueError("center_indices keys must be positive integer quotas")
+            if indices.shape != (count,) or indices.dtype != torch.long:
+                raise ValueError("center_indices must contain int64 [quota] tensors")
+            # Full index/content checks happen once at CPU ingestion. Avoid
+            # synchronizing every Frame.to(cuda) or packed-batch reconstruction.
+            if indices.device.type == "cpu" and self.points.device.type == "cpu":
+                occupied = indices[indices >= 0]
+                if (indices < -1).any() or (occupied >= len(self.points)).any():
+                    raise ValueError("center index outside sampled point cloud")
+                if len(occupied.unique()) != len(occupied):
+                    raise ValueError("center indices must be distinct observed points")
+                if not self.valid[occupied].all() or not torch.isfinite(self.points[occupied]).all():
+                    raise ValueError("center indices must reference valid finite points")
 
     @property
     def xyz(self):
@@ -82,6 +101,7 @@ class Frame:
             valid=self.valid.to(device),
             proprio=self.proprio.to(device),
             previous_action=self.previous_action.to(device),
+            center_indices={count: indices.to(device) for count, indices in self.center_indices.items()},
         )
 
 

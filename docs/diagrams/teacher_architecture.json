@@ -1,6 +1,40 @@
 {
+  "center_sampling": {
+    "cell_size": 0.1,
+    "foreground_fraction": 0.75,
+    "height_margin": 0.005,
+    "max_iterations": 20,
+    "method": "balanced_cluster",
+    "table_z": 0.0
+  },
+  "center_sampling_version": "cell_balanced_observed_medoids_v1",
   "configuration": "configs/teacher.yaml",
   "fp32_weight_bytes": 24394792,
+  "geometry": {
+    "crop": [
+      [
+        -0.9,
+        -0.75,
+        -0.05
+      ],
+      [
+        0.75,
+        0.75,
+        1.25
+      ]
+    ],
+    "depth_unit": "millimetres_signed_int16",
+    "extrinsic_convention": "world_to_camera_cv",
+    "max_depth": 4.0,
+    "point_sampling": {
+      "cell_size": 0.1,
+      "foreground_fraction": 0.75,
+      "height_margin": 0.005,
+      "sampling": "balanced",
+      "table_z": 0.0
+    },
+    "voxel_size": 0.005
+  },
   "model": {
     "action_space": "joint_angle",
     "archive_device": "cpu",
@@ -12,10 +46,19 @@
       256
     ],
     "checkpoint_blocks": false,
-    "current_tokens": 64,
+    "current_tokens": 32,
     "decoder": "flow",
     "encoder": "joint",
-    "encoder_options": {},
+    "encoder_options": {
+      "center_sampling": {
+        "cell_size": 0.1,
+        "foreground_fraction": 0.75,
+        "height_margin": 0.005,
+        "max_iterations": 20,
+        "method": "balanced_cluster",
+        "table_z": 0.0
+      }
+    },
     "execute": 4,
     "flow_steps": 8,
     "heads": 8,
@@ -25,11 +68,11 @@
     "max_conditioning_frames": 1300,
     "max_execution_frames": 2600,
     "max_text_bytes": 256,
-    "points": 1024,
+    "points": 2048,
     "router_width": 128,
     "solver": "euler",
     "text_layers": 2,
-    "visual_tokens": 32,
+    "visual_tokens": 256,
     "width": 256
   },
   "parameters": {
@@ -41,21 +84,36 @@
     "Shared visual encoder": 200194,
     "Source clock projection": 768
   },
+  "point_sampling": {
+    "cell_size": 0.1,
+    "foreground_fraction": 0.75,
+    "height_margin": 0.005,
+    "sampling": "balanced",
+    "table_z": 0.0
+  },
+  "point_sampling_version": "above_table_xy_balanced_v2",
+  "prepared_subdir": "prepared_balanced_v2",
   "source_sha256": {
-    "configs/base.yaml": "36313037d6e12a1fb151c3f7e02e61852c5977528787e1e89d8f7567f029df2d",
-    "configs/teacher.yaml": "8e8c17ed37e8c77821e6ddd5f3d37aaa7217dabc7fc5c0a3e4fc0b4821715a5a",
-    "src/stmem/config.py": "4d7f5440589b00d23dffea475ea12e15236870d06c1693b4032bee39109ca4f5",
+    "configs/base.yaml": "345db458552ecdd0fc03475fb723199b74565654261cf665eeb02b3a51e41651",
+    "configs/teacher.yaml": "f79a9b13d6fe8edb0a0921ece6cf2d6a0d0a789c8890fc8f99adf3630953a310",
+    "src/stmem/config.py": "b70bb808dbc10baae2d923441623b59d05e3d0c774d43f9ffd4851f760e2df34",
+    "src/stmem/data/canonical.py": "3f8bd860bd2daddbd1fd05f1148fca7b5bc5b2923108cc9b83cbc0bdc8ef7dfd",
+    "src/stmem/data/center_sampling.py": "829973de64ed8909a3386627ae1e4575f3b3b294685b1df4af5062a07b976cdc",
+    "src/stmem/data/dataset.py": "4410f877cf65c35c9ea5dde8bb298e60932b36f1e26f8d1dd76dcfaabad0a011",
+    "src/stmem/data/pointcloud.py": "0407bf549395014dd8016bc0478d82a06912af721d3045841164a995fa63ee56",
+    "src/stmem/data/prepare.py": "883cc6bcc039bed9739f8fc84f99b8883d9d3d1fb5633cdde6cef361293a21d3",
+    "src/stmem/evaluation/robomme_adapter.py": "33648a71430dbee9bcf153b07b5bc0d522ce126abcfe2c1aa90ca1128211e76c",
     "src/stmem/models/action_flow.py": "0f4e91469f7ff1726e2835ae5d370eee7a4fc75b7c76b3683c5c37df0976db6e",
-    "src/stmem/models/batched_policy.py": "45062d77f9a12995b7a9917d372d5242123d54d8e88b69766e014ed9f244157c",
-    "src/stmem/models/batched_spacetime.py": "67f2cfdf080228593b73e1edc0c6ee772cd5d44c6b7cbd1ca27721cef2144d12",
+    "src/stmem/models/batched_policy.py": "407ab8933d2d3e4a65eda7ca08528021e413dd6ce5a5de991c7036180b5b91a4",
+    "src/stmem/models/batched_spacetime.py": "98b4d77a1b94a4e2ed737f26c9e1b4a00b8e84c13e99a4495bc0f49f6a1ba985",
     "src/stmem/models/event_encoder.py": "bd8935c9a46149645cdf6ec1647c03bbaebbb1b8830f09ce470b62a156e25112",
     "src/stmem/models/metadata_adapter.py": "e396f64ea28c7a2700dfb52b5f735cc680f6e8ab66c74c5a4a8a3fa148aca30b",
     "src/stmem/models/policy.py": "e5aac4ff3f9449740412bb00bb1da03b354d03de316f9d67d2c7121b6faef2c0",
-    "src/stmem/models/spacetime_encoder.py": "a45843130f2cf1c969a05da4827f91a641560d21c034aa2c5057f7bb6121d4df",
+    "src/stmem/models/spacetime_encoder.py": "92594e95a57fbb2e95b9cecf83931935a97bc4c0625d711a876f39aa422ded3f",
     "src/stmem/models/text_encoder.py": "84fafb56b901b9883e0f6ef548574a885f77f35d5960dfb2d6df5290b4a5e503",
     "src/stmem/train.py": "1acda73606542b072ba696b547f19f51544f6bccf9150d99ab349c1ae48a8366",
-    "src/stmem/training/data.py": "1ad9a15d264cfc05840da0a1ca0ebf506f2b703754a46cca41f463fd91fc350d",
-    "src/stmem/training/loader.py": "f83cdd3ea6a31e24650aa2915a271fa28e5889a23d5e6f574671344e452b7df4"
+    "src/stmem/training/data.py": "a5b22a0d3242de69e83e52122fc588f2a1b989bb10ecc1c84941160856431799",
+    "src/stmem/training/loader.py": "5d8908bb07cc2c5daaa6df62ad1f243077674a649be16e43f5a23a1558f4af33"
   },
   "total_parameters": 6098698,
   "trainable_parameters": 6098698,
@@ -71,7 +129,7 @@
       "tree": 0.45,
       "uniform": 0.05
     },
-    "effective_batch": 128,
+    "effective_batch": 256,
     "encoder_block_batch_size": 128,
     "grad_clip": 1.0,
     "intermediate_probability": 0.5,

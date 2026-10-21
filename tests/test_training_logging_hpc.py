@@ -100,11 +100,16 @@ def test_teacher_plan_matches_training_budget_and_isolates_site_run_root(plannin
     cfg = planner.resolved_config(cfg_path)
     validate_config(cfg)
     assert cfg["training"]["steps"] == 100000
-    assert cfg["training"]["effective_batch"] == 128
+    assert cfg["training"]["effective_batch"] == 256
     assert cfg["training"]["microbatch"] == 64
     assert cfg["training"]["encoder_block_batch_size"] == 128
     assert cfg["paths"]["run_root"] == str(run_root)
-    assert cfg["training"]["effective_batch"] // job["gpus"] == 32
+    assert cfg["training"]["effective_batch"] // job["gpus"] == 64
+    assert cfg["data"]["prepared_subdir"] == "prepared_balanced_v2"
+    assert cfg["model"]["points"] == 2048
+    assert cfg["model"]["visual_tokens"] // cfg["model"]["block_size"] == 32
+    assert cfg["model"]["current_tokens"] == 32
+    assert cfg["model"]["encoder_options"]["center_sampling"]["method"] == "balanced_cluster"
     manifest = yaml.safe_load((repo / "configs" / f"experiment_{plan_name}.yaml").read_text())
     candidates = manifest["teacher_candidates"]
     assert candidates == cfg["training"]["checkpoint_steps"] == [50000, 100000]
@@ -329,7 +334,7 @@ def test_teacher_lr_variant_changes_only_peak_lr_and_isolates_all_run_paths(plan
     assert cfg["training"] == {**baseline_config["training"], "lr": 0.01}
     assert cfg["training"]["warmup_steps"] == 1000
     assert cfg["training"]["steps"] == 100000
-    assert cfg["training"]["effective_batch"] == 128
+    assert cfg["training"]["effective_batch"] == 256
     assert cfg["training"]["microbatch"] == 64
     assert cfg["training"]["encoder_block_batch_size"] == 128
     assert cfg["paths"] == {**baseline_config["paths"], "run_root": str(variant_root)}

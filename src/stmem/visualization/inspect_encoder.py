@@ -170,7 +170,7 @@ def inspect_encoder(
         if prepared is not None
         else (
             Path(config["paths"]["data_root"])
-            / config["data"].get("prepared_subdir", "prepared")
+            / config["data"].get("prepared_subdir", "prepared_balanced_v2")
             / f"{task}.h5"
         )
     )

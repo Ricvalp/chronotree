@@ -1,19 +1,24 @@
 # Implementation and verification status
 
-As of **20 October 2026**, the project installs and its complete bounded local
+As of **21 October 2026**, the project installs and its complete bounded local
 pipeline runs. The research comparison has **not yet run**. There is no remaining
 known local installation, action-alignment, calibration or simulator blocker.
 
-**Known representation problem found during manual HTML inspection:** in the
+**Representation correction after manual HTML inspection:** in the original
 exported VideoUnmask episode 0 at decision 20, all 344 historical visual leaves
 pool only tabletop points (support height at most 1.84 mm). Four FPS centers per
 frame select tabletop corners; the hard 0.3 m neighborhoods exclude the elevated
 objects. The current-frame 64-center path does cover the elevated observations.
-This requires a scientifically documented coverage correction before relying on
-the core historical encoder for substantive training. Passing implementation
-tests does not establish useful scene coverage. No encoder/configuration change
-has been made in response to this finding. Measurements and their single-episode
-scope are in [evidence/encoder_coverage_inspection.json](evidence/encoder_coverage_inspection.json).
+The approved correction now uses 2,048 points, above-table spatially balanced
+sampling, and 32 clustered observed-point centers per frame for current and
+history. Preparation stores center indices once; training reuses them. Core
+outputs use `prepared_balanced_v2/`; old files remain separate and cannot satisfy
+the new configuration. The original measurements and their single-episode scope
+are in [evidence/encoder_coverage_inspection.json](evidence/encoder_coverage_inspection.json).
+Matched previews improved geometric and table coverage but did not improve every
+pooling measurement: one PickXtimes history block retained 1,365/1,403 cube-point
+observations with clustering versus 1,403/1,403 with FPS, both covering all eight
+frames. No new trained-policy success result or full-data throughput is claimed.
 
 **Sampling-cycle correction:** a read-only W&B snapshot of real run
 `1919882fa3ac237d` identified synchronized 16-update duration/loss cycles caused
@@ -39,8 +44,9 @@ fresh run. The original diagnosis is recorded in
   diagnostics, one refresh, Perceiver adaptation and current-only diagnostic.
 - True padded policy batches, vectorized local history-block encoders, masked
   text/current/history attention and equal per-example action losses. The current
-  teacher configuration uses global batch 128, microbatch cap 64 and 128 encoder
-  blocks per chunk; four GPUs process 32 decisions each per update. Compact and
+  teacher configuration uses global batch 256, microbatch cap 64 and 128 encoder
+  blocks per chunk; four GPUs process 64 decisions each per update. These batch
+  settings need a fresh memory measurement with 32 centers per frame. Compact and
   Perceiver defaults remain batch 64, microbatch 16 and 32 encoder blocks.
   Teacher training constructs tensor leaf banks directly; exact trees remain
   available for compact selection, caching and evaluation.
@@ -92,7 +98,8 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 
 | Check | Measured outcome |
 |---|---|
-| Core test suite | **452 passed** in 79.06 s; subsequent 30-case profiler/launcher run includes five new failure cases (**457 distinct tests** across commands) |
+| Core test suite | **503 passed, 1 skipped** in 88.64 s on 21 October; optional new-format debug prepared subset absent. Earlier transient worker-shutdown failure and successful isolated repeats are recorded in decision 27. |
+| Balanced geometry integration | Reviewed real preview parity; four real RGB-D records match online/offline points and centers exactly. BF16 CUDA forward/backward on two eight-frame 2,048-point/32-center blocks passes; no full-history H200 capacity claim. |
 | Package lock/install | `uv lock --check`, `uv pip check`, imports and lint pass |
 | Real data | One 1,251,608,544-byte VideoUnmask archive; SHA verified; two episodes prepared |
 | Expert replay | Both complete sampled training episodes reached official success; exact nonterminal post-command qpos match |
@@ -366,9 +373,10 @@ Evidence and scope are in
 
 ## Not yet run / user-supplied prerequisites
 
-- Full 16-task data is user-reported prepared on the cluster, but is not present
-  in this workspace. The local two-episode subset cannot be substituted for core
-  1,024-point all-task training.
+- Full 16-task data with the original preparation is user-reported available on
+  the cluster, but is not present in this workspace. The new 2,048-point balanced
+  preparation has not been run on the full dataset. The local two-episode subset
+  cannot be substituted for core all-task training.
 - Useful teacher/compact/router/Perceiver training, official checkpoint selection,
   full validation, frozen evaluation on 50 test seeds per task, or final replication.
 - Agent-executed A5000/H200/B200 checks, multi-GPU NCCL, cluster rendering and

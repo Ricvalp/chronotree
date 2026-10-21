@@ -13,13 +13,16 @@ import numpy as np
 import pytest
 
 from stmem.data.preparation_state import preparation_lock, verify_prepared
+from stmem.data.prepare import FORMAT_VERSION
+from stmem.data.pointcloud import POINT_SAMPLING_VERSION, resolve_point_sampling
+from stmem.data.center_sampling import CENTER_SAMPLING_VERSION, resolve_center_sampling
 
 
 @pytest.fixture
 def prepared(tmp_path):
     output = tmp_path / "VideoUnmask.h5"
     expected = {
-        "format": "canonical_v1",
+        "format": FORMAT_VERSION,
         "task": "VideoUnmask",
         "dataset_revision": "revision-a",
         "raw_sha256": "a" * 64,
@@ -29,6 +32,11 @@ def prepared(tmp_path):
         "voxel_size": 0.005,
         "max_depth_m": 4.0,
         "calibration": "cv_world_to_camera_mm_v1",
+        "point_sampling_version": POINT_SAMPLING_VERSION,
+        "point_sampling": resolve_point_sampling(),
+        "center_sampling_version": CENTER_SAMPLING_VERSION,
+        "center_sampling": resolve_center_sampling(),
+        "center_counts": [32],
         "clock": "source_local_recorded_frame",
         "physical_continuity_verified": False,
         "nominal_control_hz": 20,
@@ -64,6 +72,7 @@ def prepared(tmp_path):
         group.create_dataset("completed", data=np.asarray([False, False, False, True]))
         group.create_dataset("raw_index", data=np.asarray([0, 1, 2, 4], dtype=np.int64))
         group.create_dataset("source_index", data=np.asarray([0, 1, 0, 1], dtype=np.int64))
+        group.create_group("center_indices").create_dataset("32", data=np.full((4, 32), -1, dtype=np.int64))
     return output, expected, {"episode_0": 4}
 
 
@@ -103,6 +112,11 @@ def test_matching_file_reusable_after_relocation_without_sidecar_or_payload_read
         ("physical_continuity_verified", True),
         ("nominal_control_hz", 30),
         ("alignment", "post_action_v1"),
+        ("point_sampling_version", "another_sampler"),
+        ("center_sampling_version", "another_selector"),
+        ("center_counts", [16]),
+        ("point_sampling", {"sampling": "uniform"}),
+        ("center_sampling", {"method": "fps"}),
     ],
 )
 def test_changed_identity_cannot_reuse_diagnostic_file(prepared, key, value):
@@ -131,6 +145,7 @@ def test_exact_episode_subset_and_frame_counts_are_required(prepared, layout):
         "completed",
         "raw_index",
         "source_index",
+        "center_indices",
     ],
 )
 def test_missing_required_dataset_rebuilds(prepared, missing):

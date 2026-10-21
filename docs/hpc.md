@@ -229,6 +229,45 @@ training stop-file wrapper is not used. Logs go to
 `hpc/logs/stmem_prepare_JOBID.out` and `.err`. It prepares 100 episodes per task
 with `configs/teacher.yaml` and enables `--skip-existing`.
 
+The approved balanced preparation writes
+`$STMEM_DATA_ROOT/prepared_balanced_v2/<task>.h5`, selected by
+`data.prepared_subdir` in `configs/base.yaml`. Existing `prepared/` files are
+retained; no re-download is required. The 2,048-point sampler reserves 75% for
+geometry above z=5 mm, balancing those points across 10 cm XY cells. Preparation
+also stores the 32 spatially balanced center indices per frame, avoiding repeated
+clustering during training. These settings and implementation versions enter the
+prepared manifest; stale files cannot satisfy the new training configuration.
+Changing prepared format requires a different output directory, even when an old
+configuration or `--prepared-subdir` points at an existing file.
+
+After pushing the code and pulling it on the HPC, the full migration can be run
+without creating another site file:
+
+```bash
+# In the repository root, load the existing site paths and Python executable.
+export STMEM_SITE_FILE="$PWD/hpc/site.env"
+source hpc/jobs/common.sh
+mkdir -p hpc/logs
+# Reserve one GPU because this site has a GPU-only queue; conversion uses CPUs.
+# At most 16 workers are useful because there are 16 independent task files.
+STMEM_PREP_WORKERS=16 sbatch --cpus-per-task=16 --mem=64G --time=24:00:00 \
+  hpc/jobs/prepare.sbatch --config configs/teacher.yaml
+```
+
+If shared-storage throughput is worse with 16 workers, use eight; 64 allocated
+cores do not create more than 16 task workers. This CPU implementation uses one
+thread per worker. The runtime ETA now includes clustering as well as RGB-D
+conversion. An assignment to `STMEM_PREP_WORKERS` in the site file takes
+precedence over the submission environment.
+
+Wait for `preparation_complete` and 16 finalized `.h5` files before launching
+the teacher. The raw dataset and alignment convention are unchanged, so the
+existing verified revision-level `alignment.json` remains applicable. Use a
+fresh run root and regenerate training jobs with `hpc/plan.py` afterwards;
+existing generated YAML snapshots retain their previous settings. The much
+larger leaf count needs a new memory measurement before reusing the previous
+microbatch size. No new full-data training throughput is claimed.
+
 `STMEM_PREP_WORKERS` overrides the worker count, subject to the allocated CPU count
 and the 16-task maximum. Set it in `hpc/site.env` or the submission environment;
 an assignment in the site file takes precedence. Without an override, the default
@@ -278,7 +317,7 @@ that task restarts from the beginning. With `--skip-existing`, completed files a
 reused only after checking a fresh raw-file hash, the preprocessing configuration,
 the exact episode count and the prepared layout. Merely finding an output file is
 insufficient. The 256-point/two-episode debug subset therefore does not satisfy a
-1,024-point/100-episode request. Keep interrupted-task files out of training until
+2,048-point/100-episode request. Keep interrupted-task files out of training until
 preparation completes, and do not run independent writers on the same task output.
 
 Every task freshly hashes the raw file, even when checking a completed output.
@@ -302,7 +341,7 @@ Frame records include `frames_done`, `frames_total`, `frames_per_second` and
 from its average rate so far; it excludes hashing and queued tasks and is not a
 whole-run estimate. Episode lengths and shared filesystem load vary, so early
 estimates can change substantially. Use these records and each task's final
-`prepared/<task>.manifest.json` to assess throughput. The final
+`prepared_balanced_v2/<task>.manifest.json` to assess throughput. The final
 `preparation_complete` record reports total elapsed time and the number of
 verified files skipped; no measured full-data preparation ETA is claimed.
 

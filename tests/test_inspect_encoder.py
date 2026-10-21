@@ -14,7 +14,14 @@ import torch
 import yaml
 
 from stmem.config import load_config
-from stmem.data.pointcloud import CALIBRATION_VERSION
+from stmem.data.center_sampling import (
+    CENTER_SAMPLING_VERSION,
+    center_counts,
+    center_sampler_settings,
+    prepare_center_indices,
+)
+from stmem.data.pointcloud import CALIBRATION_VERSION, POINT_SAMPLING_VERSION, point_sampler_settings
+from stmem.data.prepare import FORMAT_VERSION
 from stmem.training.checkpoints import file_sha256
 from stmem.visualization import inspect_encoder as inspector
 
@@ -24,13 +31,16 @@ def inspect_data(tmp_path, monkeypatch):
     for name in ("STMEM_DATA_ROOT", "STMEM_RUN_ROOT", "STMEM_CACHE_ROOT"):
         monkeypatch.delenv(name, raising=False)
     root = tmp_path / "data"
-    prepared = root / "prepared/VideoUnmask.h5"
-    prepared.parent.mkdir(parents=True)
     cfg = load_config("configs/debug/teacher.yaml")
     cfg["paths"]["data_root"] = str(root)
     cfg["data"].update(synthetic=False, tasks=["VideoUnmask"], episodes_per_task=2)
     cfg["model"].update(points=4, width=16, current_tokens=4)
+    prepared = root / cfg["data"]["prepared_subdir"] / "VideoUnmask.h5"
+    prepared.parent.mkdir(parents=True)
+    quotas = center_counts(cfg)
+    center_settings = center_sampler_settings(cfg)
     manifest = {
+        "format": FORMAT_VERSION,
         "task": "VideoUnmask",
         "dataset_revision": "fixture-revision",
         "raw_sha256": "a" * 64,
@@ -39,6 +49,11 @@ def inspect_data(tmp_path, monkeypatch):
         "voxel_size": cfg["geometry"]["voxel_size"],
         "max_depth_m": cfg["geometry"]["max_depth"],
         "calibration": CALIBRATION_VERSION,
+        "point_sampling_version": POINT_SAMPLING_VERSION,
+        "point_sampling": point_sampler_settings(cfg),
+        "center_sampling_version": CENTER_SAMPLING_VERSION,
+        "center_sampling": center_settings,
+        "center_counts": quotas,
         "diagnostic_fixture": True,
     }
     with h5py.File(prepared, "w") as file:
@@ -52,6 +67,15 @@ def inspect_data(tmp_path, monkeypatch):
             cloud[:, :, 0] += np.arange(8, dtype=np.float32)[:, None] / 100
             group["points"] = cloud
             group["valid"] = np.ones((8, 4), dtype=bool)
+            centers = group.create_group("center_indices")
+            prepared_centers = [
+                prepare_center_indices(
+                    torch.from_numpy(frame), torch.ones(4, dtype=torch.bool), quotas, center_settings
+                )
+                for frame in cloud
+            ]
+            for quota in quotas:
+                centers[str(quota)] = torch.stack([frame[quota] for frame in prepared_centers]).numpy()
             proprio = np.zeros((8, 15), dtype=np.float32)
             proprio[:, 10] = 1
             group["proprio"] = proprio

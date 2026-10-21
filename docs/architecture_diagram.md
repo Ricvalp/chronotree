@@ -23,7 +23,7 @@ contains explanatory cards; hiding it leaves the main architecture visible.
 | Page | What it shows |
 |---|---|
 | Overview | How one causal decision becomes historical/current evidence and then a predicted action chunk. |
-| Encoders | Point and edge MLPs, FPS and Gaussian pooling, historical event branches, and the byte-level text Transformer. |
+| Encoders | Prepared point sampling and center indices, point and edge MLPs, Gaussian pooling, historical event branches, and the byte-level text Transformer. |
 | Action decoder | Query projections, each residual attention/FFN sublayer, and the distinction between training flow matching and inference Euler integration. |
 | Context & size | The shared metadata adapter, current auxiliary branches, valid versus allocated context lengths, parameter counts, and core batching settings. |
 
@@ -40,7 +40,8 @@ does not cap teacher history. Stacking decoder blocks does not imply stacking
 graph-convolution layers: the visual encoder uses one local
 edge-MLP and Gaussian pooling stage, while the decoder applies attention between
 action queries and the resulting context. Spatial centers are samples of observed
-points, not semantic robot keypoints.
+points, not semantic robot keypoints. Their deterministic selection is separate
+from learned visual features and Gaussian pooling.
 
 `B` denotes examples in a device's current pass; `Hc` and `He` count available
 conditioning and strictly past execution frames. Padding is masked throughout.
@@ -49,10 +50,48 @@ excludes potentially large history activations, temporary workspaces and CUDA.
 Training settings describe core repository defaults, not a live HPC run or an
 arbitrarily overridden generated job configuration.
 
-The core teacher runs for 100,000 optimizer updates with effective batch 128.
-Its microbatch setting of 64 is a per-device maximum: four GPUs use 32 decisions
-each in one pass per update, while one GPU accumulates two passes of 64.
+The core teacher runs for 100,000 optimizer updates with effective batch 256.
+Its microbatch setting of 64 is a per-device maximum: four GPUs use 64 decisions
+each in one pass per update, while one GPU accumulates four passes of 64.
 Historical encoder blocks are processed in batches of up to 128.
+
+## Prepared geometry and token counts
+
+The revised preparation writes `prepared_balanced_v2/`, preserving the previous
+`prepared/` files. It backprojects the two RGB-D views, applies the calibrated
+workspace crop and 5 mm voxel sampling, and retains up to **2,048 points per
+frame**. A nominal 75% quota prioritizes points above world `z = 0.005 m`, balanced
+over 10 cm XY cells; the remaining quota covers the broader scene. This is a
+geometric height distinction, not an object or table segmentation mask.
+
+Each frame receives **up to 32 observed-point centers**: a nominal 24 elevated plus
+eight broad-scene anchors. Deterministic stratified FPS initializes spatially
+balanced centroid refinement. Occupied 10 cm XYZ cells receive equal total
+weight; updated centers snap to observed member points. The elevated stage runs
+first, then its centers remain fixed during the broad-scene stage. Each stage
+has a maximum of 20 iterations. This geometry uses no learned weights or
+simulator object labels.
+
+Preparation stores the frame-local indices in `center_indices/32`. Both current
+and historical paths reuse those indices; CPU loader workers pack them with the
+points. Live observations use the same shared selector once per acquired frame.
+The teacher still computes learned point/edge features and Gaussian pooling on
+every training pass. Clustering assignments do not become pooling edges: those
+edges follow the encoder's fixed radius, temporal bound, and nearest-neighbor cap.
+
+| Quantity | Core shape or limit |
+|---|---:|
+| Point input per frame | `[2048, 6]` XYZRGB plus validity mask |
+| Current visual tokens | 32 |
+| Historical visual tokens per eight-frame block | 256 |
+| Historical robot-event tokens per full block | 8 |
+| Total fine leaves per full block | 264 |
+| Valid teacher context | At most `33 × (Hc + He) + 35` tokens |
+
+The current observation stays outside history. Conditioning and execution use
+separate blocks, and an incomplete execution block contains only its observed
+prefix. TREE and FLAT subsequently consume the exact same frozen fine leaves;
+the revised geometry does not relax causal alignment or leaf coverage.
 
 ## Keeping it current
 
@@ -88,7 +127,17 @@ generation, the artifact freshness/structure check,
 and Ruff checks passed. This validates the diagram and viewer, not training
 throughput or learned model quality.
 
-After updating the core teacher to 100k steps, effective batch 128, microbatch
+An earlier update set the core teacher to 100k steps, effective batch 128, microbatch
 cap 64 and encoder block batch 128, all three artifacts were regenerated.
 The revised **Context & size** page was opened in Chromium and its batching
 labels inspected; the text fits its shapes and the browser reported no errors.
+
+On 2026-10-21, the geometry update regenerated all three artifacts with 2,048
+points, 32 prepared centers per frame, 256 historical visual tokens per full
+block, and the current effective batch of 256. Chromium rendered all four pages;
+the updated encoder and context layouts, page navigation, internal links, zoom,
+fit, dragging, source tooltips, and layer dialog were checked. The browser
+reported no errors, and text bounds fit their shapes on every page. The artifact
+freshness/structure check and Ruff check passed. The model still has 6,098,698
+trainable parameters: the added geometry is deterministic and adds tokens, not
+learned parameters. These checks do not measure training memory or throughput.

@@ -85,6 +85,10 @@ def validate_policy_config(checkpoint_cfg: dict, cfg: dict) -> None:
     decoder semantics and primitive control cadence must match, including debug
     runs. Shorter diagnostic environment limits are deliberately allowed.
     """
+    from stmem.config import require_sampling_contract
+
+    require_sampling_contract(checkpoint_cfg)
+    require_sampling_contract(cfg)
     model_fields = (
         "encoder",
         "points",

@@ -12,7 +12,12 @@ from functools import wraps
 import numpy as np
 import torch
 from stmem.data.canonical import Frame
-from stmem.data.pointcloud import DEFAULT_CROP, rgbd_to_points, proprioception
+from stmem.data.pointcloud import DEFAULT_CROP, rgbd_to_points, proprioception, resolve_point_sampling
+from stmem.data.center_sampling import (
+    resolve_center_sampling,
+    center_sampling_signature,
+    prepare_center_indices,
+)
 
 JOINT_LOW = np.array([-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973], dtype=np.float32)
 JOINT_HIGH = np.array([2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973], dtype=np.float32)
@@ -95,12 +100,15 @@ class RoboMMEAdapter:
         task,
         episode_idx=0,
         split="val",
-        points=1024,
+        points=2048,
         max_steps=1300,
         crop=DEFAULT_CROP,
         voxel_size=0.005,
         env=None,
         max_depth_m=4.0,
+        point_sampling=None,
+        center_sampling=None,
+        center_counts=(32,),
     ):
         if split not in ("train", "val", "test"):
             raise ValueError("Unknown official split")
@@ -111,6 +119,10 @@ class RoboMMEAdapter:
         self.crop = crop
         self.voxel_size = voxel_size
         self.max_depth_m = max_depth_m
+        self.point_sampling = resolve_point_sampling(point_sampling)
+        self.center_sampling = resolve_center_sampling(center_sampling)
+        self.center_counts = tuple(center_counts)
+        self.center_sampling_signature = center_sampling_signature(self.center_sampling)
         self.requested_max_steps = max_steps
         self.env = env
         self.metadata = {}
@@ -201,6 +213,7 @@ class RoboMMEAdapter:
                 crop=self.crop,
                 voxel_size=self.voxel_size,
                 max_depth_m=self.max_depth_m,
+                **self.point_sampling,
             )
             action_known = not reset and command is not None and n == 1
             previous = (
@@ -218,6 +231,10 @@ class RoboMMEAdapter:
                     source,
                     f"{event_id}/{i}",
                     index,
+                    center_indices=prepare_center_indices(
+                        points, mask, self.center_counts, self.center_sampling
+                    ),
+                    center_sampling_signature=self.center_sampling_signature,
                 )
             )
             self._clock[source] += 1

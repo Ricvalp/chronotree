@@ -1,0 +1,153 @@
+{
+  "date": "2026-10-21",
+  "scope": "Bounded implementation diagnostics; no policy training, full dataset preparation or new success result.",
+  "source_sha256": {
+    "configs/base.yaml": "345db458552ecdd0fc03475fb723199b74565654261cf665eeb02b3a51e41651",
+    "src/stmem/data/pointcloud.py": "0407bf549395014dd8016bc0478d82a06912af721d3045841164a995fa63ee56",
+    "src/stmem/data/center_sampling.py": "829973de64ed8909a3386627ae1e4575f3b3b294685b1df4af5062a07b976cdc",
+    "src/stmem/data/prepare.py": "883cc6bcc039bed9739f8fc84f99b8883d9d3d1fb5633cdde6cef361293a21d3",
+    "src/stmem/models/spacetime_encoder.py": "92594e95a57fbb2e95b9cecf83931935a97bc4c0625d711a876f39aa422ded3f",
+    "src/stmem/models/batched_spacetime.py": "98b4d77a1b94a4e2ed737f26c9e1b4a00b8e84c13e99a4495bc0f49f6a1ba985",
+    "src/stmem/models/batched_policy.py": "407ab8933d2d3e4a65eda7ca08528021e413dd6ce5a5de991c7036180b5b91a4"
+  },
+  "real_rgbd_integration": {
+    "kind": "bounded_truncated_real_rgbd_geometry_diagnostic_not_training_or_alignment_evidence",
+    "simulator_used": false,
+    "gpu_used": false,
+    "full_raw_dataset_hashed": false,
+    "alignment_record_created": false,
+    "parameters": {
+      "points": 2048,
+      "center_counts": [
+        32
+      ],
+      "point_sampling": {
+        "sampling": "balanced",
+        "foreground_fraction": 0.75,
+        "table_z": 0.0,
+        "height_margin": 0.005,
+        "cell_size": 0.1
+      },
+      "center_sampling": {
+        "method": "balanced_cluster",
+        "foreground_fraction": 0.75,
+        "table_z": 0.0,
+        "height_margin": 0.005,
+        "cell_size": 0.1,
+        "max_iterations": 20
+      }
+    },
+    "capture_checks": [
+      {
+        "task": "PickXtimes",
+        "capture": "PickXtimes_val0/frame_040.npz",
+        "points_exact": true,
+        "center_indices_exact": true,
+        "anchors_exact": true,
+        "center_sampling_signature": "ca227267e27beba19388026943ab9b8e7292426db3a0d2f7dc8d3bb8ac4624c7"
+      },
+      {
+        "task": "PickXtimes",
+        "capture": "PickXtimes_val0/frame_080.npz",
+        "points_exact": true,
+        "center_indices_exact": true,
+        "anchors_exact": true,
+        "center_sampling_signature": "ca227267e27beba19388026943ab9b8e7292426db3a0d2f7dc8d3bb8ac4624c7"
+      },
+      {
+        "task": "VideoUnmask",
+        "capture": "VideoUnmask_ep0/execution_024.npz",
+        "points_exact": true,
+        "center_indices_exact": true,
+        "anchors_exact": true,
+        "center_sampling_signature": "ca227267e27beba19388026943ab9b8e7292426db3a0d2f7dc8d3bb8ac4624c7"
+      },
+      {
+        "task": "VideoUnmask",
+        "capture": "VideoUnmask_ep0/execution_064.npz",
+        "points_exact": true,
+        "center_indices_exact": true,
+        "anchors_exact": true,
+        "center_sampling_signature": "ca227267e27beba19388026943ab9b8e7292426db3a0d2f7dc8d3bb8ac4624c7"
+      }
+    ],
+    "truncated_hdf5_check": {
+      "source": "/home/rvalperga/chronotree/data/raw/record_dataset_VideoUnmask.h5",
+      "raw_indices": [
+        56,
+        57,
+        90,
+        91
+      ],
+      "subset_file": "/home/rvalperga/chronotree/runs/balanced_v2_check/raw4.h5",
+      "subset_bytes": 2676008,
+      "subset_sha256": "5548cce6e49175db474fd290a4e36c03204fcc2d71fd5de6875a629dbdf27091",
+      "output": "/home/rvalperga/chronotree/runs/balanced_v2_check/prepared_balanced_v2/VideoUnmask.h5",
+      "frames": [
+        {
+          "original_raw_index": 56,
+          "source": "conditioning",
+          "diagnostic_source_index": 0,
+          "points_exact": true,
+          "center_indices_exact": true,
+          "proprio_exact": true
+        },
+        {
+          "original_raw_index": 57,
+          "source": "conditioning",
+          "diagnostic_source_index": 1,
+          "points_exact": true,
+          "center_indices_exact": true,
+          "proprio_exact": true
+        },
+        {
+          "original_raw_index": 90,
+          "source": "execution",
+          "diagnostic_source_index": 0,
+          "points_exact": true,
+          "center_indices_exact": true,
+          "proprio_exact": true
+        },
+        {
+          "original_raw_index": 91,
+          "source": "execution",
+          "diagnostic_source_index": 1,
+          "points_exact": true,
+          "center_indices_exact": true,
+          "proprio_exact": true
+        }
+      ],
+      "alignment": "unresolved",
+      "supervised_decisions_blocked": true,
+      "note": "Copied four original RGB-D/action/metadata records; no physical rollout continuity or training-supervision claim. Only the tiny subset was hashed."
+    },
+    "status": "passed",
+    "elapsed_seconds": 0.9599786717444658
+  },
+  "encoder_device_check": {
+    "kind": "bounded encoder device diagnostic; no optimizer updates; not a training throughput or capacity estimate",
+    "device": "NVIDIA RTX 5000 Ada Generation",
+    "torch": "2.9.1+cu128",
+    "cuda_runtime": "12.8",
+    "geometry": "two real PickXtimes replay blocks, observed xyzrgb only; fresh random feature weights",
+    "shape": {
+      "blocks": 2,
+      "frames_per_block": 8,
+      "points_per_frame": 2048,
+      "centers_per_frame": 32,
+      "width": 256,
+      "neighbor_cap": 128
+    },
+    "center_indices_match_reviewed_preview": true,
+    "bf16_forward_backward_finite": true,
+    "cpu_selector_forbidden_during_cuda_forward_backward": true,
+    "valid_visual_leaves": 512,
+    "seconds_including_first_use": 0.3385142758488655,
+    "peak_allocated_bytes": 349537280,
+    "peak_reserved_bytes": 505413632,
+    "small_fp32_cpu_cuda_values_and_gradients_match": true,
+    "small_fp32_output_max_abs_error": 5.960464477539063e-08,
+    "status": "passed"
+  },
+  "hpc": "Local dry-run with relocated site paths succeeded. No Slurm submission. Full-data throughput and full-history H200 memory are unmeasured."
+}

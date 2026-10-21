@@ -13,7 +13,9 @@ import torch
 
 from stmem.config import load_config
 from stmem.data.dataset import EpisodeDataset
-from stmem.data.pointcloud import CALIBRATION_VERSION
+from stmem.data.pointcloud import CALIBRATION_VERSION, POINT_SAMPLING_VERSION, point_sampler_settings
+from stmem.data.center_sampling import CENTER_SAMPLING_VERSION, center_sampler_settings, center_counts
+from stmem.data.prepare import FORMAT_VERSION
 from stmem.models.action_flow import ActionNormalizer
 from stmem.training.data import TrainingData
 
@@ -28,6 +30,7 @@ def _fixture_config(tmp_path, *, alignment="post_action_v1", tasks=None):
         fraction=0.5,
         decision_stride=1,
         alignment_path=str(tmp_path / "alignment.json"),
+        prepared_subdir="prepared",
     )
     cfg["model"].update(points=4, horizon=4)
     evidence = {
@@ -41,7 +44,7 @@ def _fixture_config(tmp_path, *, alignment="post_action_v1", tasks=None):
     prepared.mkdir()
     for ti, task in enumerate(cfg["data"]["tasks"]):
         manifest = {
-            "format": "canonical_v1",
+            "format": FORMAT_VERSION,
             "task": task,
             "dataset_revision": evidence["dataset_revision"],
             "raw_sha256": evidence["raw_sha256"][task],
@@ -50,6 +53,11 @@ def _fixture_config(tmp_path, *, alignment="post_action_v1", tasks=None):
             "voxel_size": cfg["geometry"]["voxel_size"],
             "max_depth_m": cfg["geometry"]["max_depth"],
             "calibration": CALIBRATION_VERSION,
+            "point_sampling_version": POINT_SAMPLING_VERSION,
+            "point_sampling": point_sampler_settings(cfg),
+            "center_sampling_version": CENTER_SAMPLING_VERSION,
+            "center_sampling": center_sampler_settings(cfg),
+            "center_counts": center_counts(cfg),
             "synthetic_diagnostic_fixture": True,
         }
         with h5py.File(prepared / f"{task}.h5", "w") as f:
@@ -80,6 +88,11 @@ def _fixture_config(tmp_path, *, alignment="post_action_v1", tasks=None):
                 g.create_dataset("points", data=np.zeros((n, 4, 6), dtype="f4"))
                 g.create_dataset("valid", data=np.ones((n, 4), dtype=bool))
                 g.create_dataset("proprio", data=np.zeros((n, 15), dtype="f4"))
+                anchors = g.create_group("center_indices")
+                for count in center_counts(cfg):
+                    indices = np.full((n, count), -1, dtype=np.int64)
+                    indices[:, : min(count, 4)] = np.arange(min(count, 4))
+                    anchors.create_dataset(str(count), data=indices)
     return cfg
 
 
@@ -134,7 +147,10 @@ def _forbid_visual_loading(monkeypatch):
         original = getattr(h5py.Dataset, method)
 
         def guarded(dataset, *args, _original=original, **kwargs):
-            if dataset.name.rsplit("/", 1)[-1] in {"points", "valid", "proprio"}:
+            if (
+                dataset.name.rsplit("/", 1)[-1] in {"points", "valid", "proprio"}
+                or "/center_indices/" in dataset.name
+            ):
                 pytest.fail(f"Startup read visual payload {dataset.name}")
             return _original(dataset, *args, **kwargs)
 

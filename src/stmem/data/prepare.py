@@ -13,11 +13,27 @@ import time
 import h5py
 import numpy as np
 from .download import TASKS, REVISION, sha256
-from .pointcloud import DEFAULT_CROP, CALIBRATION_VERSION, rgbd_to_points, proprioception
+from .pointcloud import (
+    DEFAULT_CROP,
+    CALIBRATION_VERSION,
+    POINT_SAMPLING_VERSION,
+    rgbd_to_points,
+    proprioception,
+    point_sampler_settings,
+    resolve_point_sampling,
+)
+from .center_sampling import (
+    CENTER_SAMPLING_VERSION,
+    center_sampler_settings,
+    resolve_center_sampling,
+    center_counts as configured_center_counts,
+    prepare_center_indices,
+)
 from .preparation_state import preparation_lock, verify_prepared
 from stmem.training.checkpoints import atomic_json
 
-FORMAT_VERSION = "canonical_v1"
+FORMAT_VERSION = "canonical_balanced_v2"
+PREPARED_SUBDIR = "prepared_balanced_v2"
 
 
 def _print_progress(record):
@@ -55,10 +71,13 @@ def prepare_task(
     task: str,
     episodes: int | None,
     *,
-    points=1024,
+    points=2048,
     crop=DEFAULT_CROP,
     voxel_size=0.005,
     max_depth_m=4.0,
+    point_sampling=None,
+    center_sampling=None,
+    center_counts=(32,),
     dataset_revision=REVISION,
     expected_raw_sha256=None,
     skip_existing=False,
@@ -70,6 +89,13 @@ def prepare_task(
     and its previous completed file survives any failure before atomic replace.
     """
     raw_path, output = Path(raw_path), Path(output)
+    point_sampling = resolve_point_sampling(point_sampling)
+    center_sampling = resolve_center_sampling(center_sampling)
+    if not center_counts or any(
+        isinstance(c, bool) or not isinstance(c, int) or c < 1 for c in center_counts
+    ):
+        raise ValueError("center_counts must contain positive integer quotas")
+    center_counts = sorted(set(center_counts))
     started = time.monotonic()
     progress = progress or _print_progress
 
@@ -111,6 +137,11 @@ def prepare_task(
         "voxel_size": voxel_size,
         "max_depth_m": max_depth_m,
         "calibration": CALIBRATION_VERSION,
+        "point_sampling_version": POINT_SAMPLING_VERSION,
+        "point_sampling": point_sampling,
+        "center_sampling_version": CENTER_SAMPLING_VERSION,
+        "center_sampling": center_sampling,
+        "center_counts": center_counts,
         "clock": "source_local_recorded_frame",
         "physical_continuity_verified": False,
         "nominal_control_hz": 20,
@@ -118,6 +149,17 @@ def prepare_task(
         "episodes": [],
     }
     with preparation_lock(output), h5py.File(raw_path, "r") as src:
+        if output.exists():
+            try:
+                with h5py.File(output, "r") as existing_file:
+                    previous_format = json.loads(existing_file.attrs["manifest"]).get("format")
+            except (OSError, KeyError, ValueError, AttributeError):
+                previous_format = None
+            if previous_format is not None and previous_format != FORMAT_VERSION:
+                raise ValueError(
+                    f"Refusing to overwrite prepared format {previous_format} at {output}. "
+                    f"Use data.prepared_subdir: {PREPARED_SUBDIR} or a new --prepared-subdir."
+                )
         keys = numeric_keys(src, "episode_")
         if episodes is not None:
             if len(keys) < episodes:
@@ -207,6 +249,16 @@ def _write_prepared(src, output, keys, report, layout, started, emit):
             group.create_dataset("source", data=np.asarray(demos, dtype=bool))
             group.create_dataset("completed", data=np.asarray(completed, dtype=bool))
             group.create_dataset("raw_index", data=[int(k[9:]) for k in steps])
+            centers = group.create_group("center_indices")
+            for count in report["center_counts"]:
+                centers.create_dataset(
+                    str(count),
+                    shape=(n, count),
+                    dtype="i8",
+                    compression="gzip",
+                    compression_opts=1,
+                    chunks=(1, count),
+                )
             seen_complete = False
             source_index = {"conditioning": 0, "execution": 0}
             source_indices = []
@@ -227,10 +279,21 @@ def _write_prepared(src, output, keys, report, layout, started, emit):
                     )
                 }
                 cloud, valid = rgbd_to_points(
-                    obs, calib, count=points, crop=crop, voxel_size=voxel_size, max_depth_m=max_depth_m
+                    obs,
+                    calib,
+                    count=points,
+                    crop=crop,
+                    voxel_size=voxel_size,
+                    max_depth_m=max_depth_m,
+                    **report["point_sampling"],
                 )
                 group["points"][i] = cloud.numpy()
                 group["valid"][i] = valid.numpy()
+                selected = prepare_center_indices(
+                    cloud, valid, report["center_counts"], report["center_sampling"]
+                )
+                for count, indices in selected.items():
+                    centers[str(count)][i] = indices.numpy()
                 group["proprio"][i] = proprioception(obs).numpy()
                 action = np.zeros(8, dtype=np.float32)
                 mask = np.zeros(8, dtype=bool)
@@ -515,6 +578,9 @@ def main(argv=None):
         help="Read only this many episodes per task (archive download is still whole-task)",
     )
     p.add_argument("--data-root", default=os.getenv("STMEM_DATA_ROOT", "data"))
+    p.add_argument(
+        "--prepared-subdir", help="Versioned output directory beneath data-root (overrides config)"
+    )
     p.add_argument("--points", type=int)
     p.add_argument("--voxel-size", type=float)
     p.add_argument(
@@ -535,9 +601,10 @@ def main(argv=None):
         p.error("--workers and --threads-per-worker must be positive")
     config = {}
     if args.config:
-        from stmem.config import load_config
+        from stmem.config import load_config, require_sampling_contract
 
         config = load_config(args.config)
+        require_sampling_contract(config)
         args.data_root = config["paths"]["data_root"]
         args.tasks = args.tasks or config["data"]["tasks"]
         if args.episodes is None:
@@ -551,9 +618,18 @@ def main(argv=None):
     if args.episodes is not None and args.episodes < 1:
         p.error("--episodes/config episodes_per_task must be positive")
     geometry = config.get("geometry", {})
-    points = args.points if args.points is not None else config.get("model", {}).get("points", 1024)
+    points = args.points if args.points is not None else config.get("model", {}).get("points", 2048)
     voxel_size = args.voxel_size if args.voxel_size is not None else geometry.get("voxel_size", 0.005)
     root = Path(args.data_root)
+    subdir = args.prepared_subdir or config.get("data", {}).get("prepared_subdir", PREPARED_SUBDIR)
+    relative_output = Path(subdir)
+    if relative_output.is_absolute() or ".." in relative_output.parts or relative_output == Path("."):
+        p.error(
+            "--prepared-subdir/data.prepared_subdir must be a nonempty relative directory below data-root"
+        )
+    point_sampling = point_sampler_settings(config)
+    center_sampling = center_sampler_settings(config)
+    center_counts = configured_center_counts(config)
     if points < 1:
         p.error("--points must be positive")
     jobs = []
@@ -584,13 +660,16 @@ def main(argv=None):
         jobs.append(
             dict(
                 raw_path=candidates[0],
-                output=root / "prepared" / f"{task}.h5",
+                output=root / relative_output / f"{task}.h5",
                 task=task,
                 episodes=args.episodes,
                 points=points,
                 voxel_size=voxel_size,
                 crop=geometry.get("crop", DEFAULT_CROP),
                 max_depth_m=geometry.get("max_depth", 4.0),
+                point_sampling=point_sampling,
+                center_sampling=center_sampling,
+                center_counts=center_counts,
                 dataset_revision=revision,
                 expected_raw_sha256=expected_raw_sha256.lower() if expected_raw_sha256 is not None else None,
                 skip_existing=args.skip_existing,

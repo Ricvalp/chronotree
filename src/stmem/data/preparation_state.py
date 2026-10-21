@@ -34,6 +34,11 @@ IDENTITY_FIELDS = frozenset(
         "physical_continuity_verified",
         "nominal_control_hz",
         "alignment",
+        "point_sampling_version",
+        "point_sampling",
+        "center_sampling_version",
+        "center_sampling",
+        "center_counts",
     }
 )
 _REPORT_FIELDS = frozenset({"raw_path", "episodes", "elapsed_seconds", "prepared_bytes", "output"})
@@ -83,7 +88,7 @@ def _layout_matches(group, name, shape, dtype):
     return isinstance(dataset, h5py.Dataset) and dataset.shape == shape and dataset.dtype == np.dtype(dtype)
 
 
-def _episode_matches(group, key, frames, points, task, report):
+def _episode_matches(group, key, frames, points, task, report, center_counts):
     if not isinstance(group, h5py.Group):
         return False
     if (
@@ -104,6 +109,13 @@ def _episode_matches(group, key, frames, points, task, report):
         "source_index": ((frames,), "i8"),
     }
     if not all(_layout_matches(group, name, *layout) for name, layout in layouts.items()):
+        return False
+    if not isinstance(group.get("center_indices", getlink=True), h5py.HardLink):
+        return False
+    centers = group.get("center_indices")
+    if not isinstance(centers, h5py.Group) or set(centers) != {str(c) for c in center_counts}:
+        return False
+    if not all(_layout_matches(centers, str(c), (frames, c), "i8") for c in center_counts):
         return False
     if not isinstance(report, dict) or report.get("episode_id") != key:
         return False
@@ -167,6 +179,13 @@ def verify_prepared(output: Path, expected_manifest: dict, episode_layout: dict[
     points = expected_manifest["points"]
     if not _integer(points) or points < 1:
         raise ValueError("Expected point count must be a positive integer")
+    center_counts = expected_manifest["center_counts"]
+    if (
+        not isinstance(center_counts, list)
+        or not center_counts
+        or any(not _integer(c) or c < 1 for c in center_counts)
+    ):
+        raise ValueError("Expected center_counts must be positive integer quotas")
     try:
         with h5py.File(Path(output), "r") as prepared:
             report = json.loads(prepared.attrs["manifest"])
@@ -193,7 +212,7 @@ def verify_prepared(output: Path, expected_manifest: dict, episode_layout: dict[
                 if not isinstance(prepared.get(key, getlink=True), h5py.HardLink):
                     return None
                 if not _episode_matches(
-                    prepared[key], key, frames, points, report["task"], episode_reports[key]
+                    prepared[key], key, frames, points, report["task"], episode_reports[key], center_counts
                 ):
                     return None
             return report
