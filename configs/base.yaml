@@ -102,7 +102,7 @@ evaluation:
   selection_episode_count: 2
   seed: 1701
   max_steps: 1300
-  video_cap: 2
+  video_cap: 10
   timeout_seconds: 1800
   methods: [FULL, TREE, FLAT, UNIFORM, PERCEIVER, CURRENT]
   test_frozen_manifest: null
