@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from stmem.tracking import RunTracker
+from stmem.config import digest
 
 
 @pytest.fixture
@@ -86,7 +87,7 @@ def test_sdk_init_finish_preserve_training_rng(fake_wandb, tmp_path):
     assert fake_wandb[0].kwargs["settings"]["console"] == "off"
 
 
-@pytest.mark.parametrize("job_type", ["teacher", "compact", "perceiver", "router", "evaluate"])
+@pytest.mark.parametrize("job_type", ["teacher", "compact", "perceiver", "router", "evaluation"])
 @pytest.mark.parametrize("system_stats", [True, False])
 def test_system_stats_setting_across_job_types(fake_wandb, tmp_path, job_type, system_stats):
     cfg = config(tmp_path)
@@ -96,6 +97,15 @@ def test_system_stats_setting_across_job_types(fake_wandb, tmp_path, job_type, s
     settings = fake_wandb[0].kwargs["settings"]
     assert settings["x_disable_stats"] is (not system_stats)
     assert settings["x_disable_meta"] is (not system_stats)
+    definitions = {args[0]: options for args, options in fake_wandb[0].metrics}
+    assert definitions["progress/step"]["hidden"] is (job_type == "evaluation")
+    if job_type == "evaluation":
+        assert definitions["tracking/attempt"]["hidden"] is True
+    base_group = f"{tmp_path.name}-{digest(str(tmp_path.resolve()))[:8]}-seed7"
+    expected_group = f"evaluation-{base_group}" if job_type == "evaluation" else base_group
+    assert fake_wandb[0].kwargs["group"] == expected_group
+    assert fake_wandb[0].kwargs["project"] == "chronotree"
+    assert fake_wandb[0].kwargs["job_type"] == job_type
 
 
 def test_resume_keeps_id_and_monotonic_history_with_rewound_optimizer(fake_wandb, tmp_path):
@@ -232,24 +242,33 @@ def read_offline(path):
     return records
 
 
-def test_real_sdk_offline_files_contain_metrics_and_resumed_progress(monkeypatch, tmp_path):
+@pytest.mark.parametrize("job_type", ["teacher", "evaluation"])
+def test_real_sdk_offline_files_contain_metrics_and_resumed_progress(monkeypatch, tmp_path, job_type):
     monkeypatch.setenv("WANDB_MODE", "offline")
     for key in ("WANDB_PROJECT", "WANDB_ENTITY", "WANDB_DIR"):
         monkeypatch.delenv(key, raising=False)
     cfg = config(tmp_path)
     directory = tmp_path / "run"
+    metric = "evaluation/success_rate_so_far_percent" if job_type == "evaluation" else "train/loss"
     for attempt, step in enumerate([5, 3]):
-        with RunTracker(cfg, directory, job_type="teacher", resume=bool(attempt)) as tracker:
-            tracker.log({"train/loss": 1.0 / (attempt + 1)}, step=step)
+        with RunTracker(cfg, directory, job_type=job_type, resume=bool(attempt)) as tracker:
+            tracker.log({metric: 1.0 / (attempt + 1)}, step=step)
             tracker.summary({"completed": True})
     files = sorted(directory.glob("wandb/offline-run-*/*.wandb"))
     assert len(files) == 2
     histories = []
     ids = []
+    groups = set()
+    projects = set()
+    hidden = set()
     for path in files:
         records = read_offline(path)
         ids += [r.run.run_id for r in records if r.HasField("run")]
+        groups.update(r.run.run_group for r in records if r.HasField("run"))
+        projects.update(r.run.project for r in records if r.HasField("run"))
         for record in records:
+            if record.HasField("metric") and record.metric.options.hidden:
+                hidden.add(record.metric.name)
             if record.HasField("history"):
                 histories.append(
                     {
@@ -258,6 +277,10 @@ def test_real_sdk_offline_files_contain_metrics_and_resumed_progress(monkeypatch
                     }
                 )
     assert len(set(ids)) == 1
+    base_group = f"{tmp_path.name}-{digest(str(tmp_path.resolve()))[:8]}-seed7"
+    assert groups == {f"evaluation-{base_group}" if job_type == "evaluation" else base_group}
+    assert projects == {"chronotree"}
     assert [h["progress/step"] for h in histories] == [5, 3]
     assert [h["_step"] for h in histories] == [0, 1]
-    assert [h["train/loss"] for h in histories] == [1.0, 0.5]
+    assert [h[metric] for h in histories] == [1.0, 0.5]
+    assert hidden == ({"progress/step", "tracking/attempt"} if job_type == "evaluation" else set())

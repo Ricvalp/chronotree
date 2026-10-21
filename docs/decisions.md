@@ -438,3 +438,46 @@
     variant verified four GPUs and unchanged warmup/batching/checkpoints; shell
     syntax, Ruff and the unchanged architecture diagram check passed. No training
     or real Slurm submission was performed.
+
+25. **Compact live evaluation dashboard.** Evaluation now publishes only running
+    success percentage and episode progress percentage, rather than recursively
+    expanding every task, outcome, latency distribution and memory measurement
+    into W&B history. The running success denominator includes every recorded
+    failure, error and timeout. It is explicitly a monitoring statistic, distinct
+    from the fixed-plan task-macro score in the scientific `summary.json`.
+    An unrun evaluation has no success estimate. Counts, last outcome and errors
+    remain in W&B summary metadata, with no per-episode metric namespace.
+
+    Detailed aggregates are retained locally in `diagnostics.json`; per-episode
+    decisions, actions, errors and measurements are unchanged. Aggregate reports
+    retain the full diagnostics. Logging happens initially and after durable
+    episode writes, outside measured inference. Resume progress includes all
+    saved outcomes even across gaps, and video selection follows the fixed
+    episode positions. Evaluation bookkeeping axes are hidden from automatic
+    charts; system monitoring remains enabled. Existing run history/panels and
+    running processes are not rewritten, and the source-hash resume guard is
+    preserved.
+
+    Sixty-six targeted CPU-safe tracking, evaluation protocol and infrastructure
+    tests passed, including real offline W&B serialization/hidden metrics, all
+    16 task names without extra chart keys, failure/timeout denominators, empty
+    shards and resume across missing episodes. Ruff and diff whitespace checks
+    passed. No simulator rollout, training, online W&B upload or Slurm submission
+    was performed. The required diagram check reports a pre-existing mismatch:
+    committed `configs/teacher.yaml` has effective batch 256, while the committed
+    diagram snapshot displays 128. Only that config hash differs from the diagram
+    snapshot; this logging change touches none of its fingerprinted sources.
+
+26. **Separate evaluation groups within the existing W&B project.** New
+    `job_type=evaluation` runs prefix their existing experiment/path-hash/seed
+    group with `evaluation-`. Training and auxiliary-stage groups, project,
+    logical run IDs, job types and tags are preserved. Historical or running
+    remote runs are not edited; their existing evaluation job type can be used
+    for filtering. The video cap remains two per shard, with the existing fixed
+    episode selection and local storage.
+
+    Thirty-two tracking/evaluation tests passed, including checks of group names,
+    unchanged projects and stable IDs/groups across real offline W&B restart
+    segments. Ruff and whitespace checks passed. No online metadata was changed
+    and no Slurm job was submitted. The pre-existing diagram mismatch described
+    above is unaffected by this tracking-only change.

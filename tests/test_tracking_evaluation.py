@@ -37,10 +37,10 @@ class FakeTracker:
     def log(self, values, step=None):
         # Mirrors the actual tracker contract: no tensors or non-JSON payloads.
         json.dumps(values, allow_nan=False)
-        if "episode/index" in values:
-            task = self.cfg["data"]["tasks"][0]
-            path = self.directory / "episodes" / f"{task}_{values['episode/index']:03d}.json"
-            assert path.exists(), "Episode telemetry must follow durable result persistence"
+        if "evaluation/progress_percent" in values:
+            assert len(list((self.directory / "episodes").glob("*.json"))) == step, (
+                "Episode telemetry must follow durable result persistence"
+            )
         self.logs.append((copy.deepcopy(values), step))
 
     def summary(self, values):
@@ -198,18 +198,23 @@ def test_evaluation_logging_and_resume_do_not_change_results(evaluation_cli, mon
     assert first.cfg == fixture.cfg
     assert first.exited and first.error is None
     assert all(adapter.closed for adapter in fixture.adapters)
-    assert len([row for row, _ in first.logs if "episode/index" in row]) == 2
-    episode_rows = [row for row, _ in first.logs if "episode/index" in row]
-    assert episode_rows[0]["episode/task"] == "VideoUnmask"
-    assert episode_rows[0]["episode/status"] == "success"
-    assert episode_rows[1]["episode/status"] == "infrastructure_error"
-    assert episode_rows[1]["episode/error_message"] == "RuntimeError: Mock simulator startup failure"
+    assert first.logs == [
+        ({"evaluation/success_rate_so_far_percent": None, "evaluation/progress_percent": 0.0}, 0),
+        ({"evaluation/success_rate_so_far_percent": 100.0, "evaluation/progress_percent": 50.0}, 1),
+        ({"evaluation/success_rate_so_far_percent": 50.0, "evaluation/progress_percent": 100.0}, 2),
+    ]
+    last = first.summaries["evaluation/last_episode"]
+    assert last["task"] == "VideoUnmask" and last["episode_idx"] == 1
+    assert last["status"] == "infrastructure_error"
+    assert last["error"] == "RuntimeError: Mock simulator startup failure"
     summary = json.loads((fixture.output / "summary.json").read_text())
     assert summary["overall"]["planned"] == summary["overall"]["recorded"] == 2
     assert summary["overall"]["successes"] == summary["overall"]["errors"] == 1
-    assert first.summaries["evaluation/macro_success"] == 0.5
-    assert first.summaries["evaluation/decisions/complete_online_seconds/total"] == 0.45
-    assert first.summaries["evaluation/episodes/runtime_seconds/total"] == 12.3
+    diagnostics = json.loads((fixture.output / "diagnostics.json").read_text())
+    assert diagnostics["evaluation/macro_success"] == 0.5
+    assert diagnostics["evaluation/decisions/complete_online_seconds/total"] == 0.45
+    assert diagnostics["evaluation/episodes/runtime_seconds/total"] == 12.3
+    assert not any("/decisions/" in key or "/tasks/" in key for key in first.summaries)
     snapshots = {path: path.read_bytes() for path in fixture.output.rglob("*.json")}
     fixture.cfg["tracking"]["mode"] = "disabled"
     fixture.source.update(git_commit="new-commit-same-source", dirty=True)
@@ -221,13 +226,85 @@ def test_evaluation_logging_and_resume_do_not_change_results(evaluation_cli, mon
     evaluate.main()
     resumed = FakeTracker.instances[1]
     assert resumed.options["resume"] is True
-    assert not any("episode/index" in row for row, _ in resumed.logs)
-    assert resumed.summaries["evaluation/new_episodes"] == 0
-    assert resumed.summaries["evaluation/reused_episodes"] == 2
-    assert resumed.summaries["evaluation/overall/errors"] == 1
-    assert resumed.summaries["evaluation/macro_success"] == 0.5
+    assert resumed.logs == [first.logs[-1]]
+    progress = resumed.summaries["evaluation/progress"]
+    assert progress["new_episodes"] == 0
+    assert progress["reused_episodes"] == progress["episodes_recorded"] == progress["episodes_planned"] == 2
+    assert progress["errors"] == 1
     for path, contents in snapshots.items():
         assert path.read_bytes() == contents
+
+
+def test_evaluation_resume_progress_includes_saved_episodes_after_a_gap(evaluation_cli, monkeypatch):
+    fixture = evaluation_cli
+    fixture.cfg["evaluation"]["video_cap"] = 1
+
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(evaluate, "run_episode", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        evaluate.main()
+    saved_path = fixture.output / "episodes/VideoUnmask_001.json"
+    atomic_json({"task": "VideoUnmask", "episode_idx": 1, "status": "timeout"}, saved_path)
+    saved_bytes = saved_path.read_bytes()
+
+    def run_episode(*args, **kwargs):
+        assert kwargs["episode_idx"] == 0
+        assert kwargs["video_path"] == fixture.output / "videos/VideoUnmask_000.mp4"
+        # Progress already includes the later durable timeout before doing more work.
+        assert FakeTracker.instances[-1].logs == [
+            ({"evaluation/success_rate_so_far_percent": 0.0, "evaluation/progress_percent": 50.0}, 1)
+        ]
+        return {"task": kwargs["task"], "episode_idx": 0, "status": "success"}
+
+    monkeypatch.setattr(evaluate, "run_episode", run_episode)
+    evaluate.main()
+    tracker = FakeTracker.instances[-1]
+    assert tracker.logs[-1] == (
+        {"evaluation/success_rate_so_far_percent": 50.0, "evaluation/progress_percent": 100.0},
+        2,
+    )
+    assert tracker.summaries["evaluation/progress"]["new_episodes"] == 1
+    assert tracker.summaries["evaluation/progress"]["reused_episodes"] == 1
+    assert saved_path.read_bytes() == saved_bytes
+
+
+def test_evaluation_dashboard_stays_two_metrics_across_all_tasks(evaluation_cli, monkeypatch):
+    fixture = evaluation_cli
+    fixture.cfg["data"]["tasks"] = load_config("configs/base.yaml")["data"]["tasks"]
+    monkeypatch.setattr(
+        evaluate,
+        "run_episode",
+        lambda *args, **kw: {
+            "task": kw["task"],
+            "episode_idx": kw["episode_idx"],
+            "status": "success" if kw["episode_idx"] == 0 else "policy_error",
+            "decisions": [{"component_seconds": {"encoding": 0.1}, "archive_payload_bytes": 1234}],
+        },
+    )
+    evaluate.main()
+    tracker = FakeTracker.instances[0]
+    assert len(tracker.logs) == 33
+    for row, step in tracker.logs:
+        assert set(row) == {"evaluation/success_rate_so_far_percent", "evaluation/progress_percent"}
+        assert row["evaluation/progress_percent"] == 100 * step / 32
+    assert tracker.logs[-1][0]["evaluation/success_rate_so_far_percent"] == 50.0
+    summary = json.loads((fixture.output / "summary.json").read_text())
+    assert len(summary["tasks"]) == 16 and summary["macro_success"] == 0.5
+    assert summary["overall"]["errors"] == 16
+
+
+def test_empty_evaluation_shard_has_no_success_estimate(evaluation_cli, monkeypatch):
+    monkeypatch.setattr(sys, "argv", [*sys.argv, "--shard-index", "2", "--num-shards", "3"])
+    evaluate.main()
+    assert not evaluation_cli.adapters
+    assert FakeTracker.instances[0].logs == [
+        ({"evaluation/success_rate_so_far_percent": None, "evaluation/progress_percent": 100.0}, 0)
+    ]
+    summary = json.loads((evaluation_cli.output / "summary.json").read_text())
+    assert summary["macro_success"] is None
+    assert summary["overall"]["planned"] == summary["overall"]["recorded"] == 0
 
 
 @pytest.mark.parametrize("failure", [ValueError, KeyboardInterrupt])

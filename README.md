@@ -54,13 +54,19 @@ through the job environment. For direct local CLI runs, export these variables
 in the shell instead. `site.env` is read by the HPC launcher, not local training.
 
 The logger records resolved configuration, source/data/checkpoint provenance,
-training losses, LR, gradient norm, throughput, memory, router diagnostics,
-episode outcomes/errors, planned denominators and evaluation timing/storage.
+training losses, LR, gradient norm, throughput, memory and router diagnostics.
+Evaluation publishes just two chart metrics: `evaluation/success_rate_so_far_percent`
+(successes divided by recorded episodes, including errors and timeouts) and
+`evaluation/progress_percent` (recorded divided by planned episodes). Both use
+0–100 percent. Counts and the last outcome remain in the run summary; full
+per-task results and planned-denominator macro success stay in `summary.json`,
+with latency/storage diagnostics in `diagnostics.json` and `episodes/*.json`.
 Only rank zero logs under DDP. Policy training logs startup milestones and the
 first completed optimizer update of each attempt, then `training.log_every`
-(50 updates in the core config), plus final/stop metrics; evaluation logs after
-each episode. Startup builds the decision index and normalization statistics in
-one pass over source/action arrays, without loading point-cloud observations.
+(50 updates in the core config), plus final/stop metrics; evaluation logs its
+initial progress and after each episode. Training startup builds the decision
+index and normalization statistics in one pass over source/action arrays,
+without loading point-cloud observations.
 No data re-preparation is needed; see [training startup](docs/hpc.md#training-startup).
 For a slow run, pass `--log-every 1 --progress-every-seconds 30` to `hpc/plan.py`
 or policy training. This logs each completed update to W&B, including
@@ -99,6 +105,9 @@ Offline attempts produce separate files with the same ID; sync them in attempt
 order, using `wandb sync --append` for subsequent attempts. Keep each attempt's
 `files/media` directory with its `.wandb` file so point clouds and action tables
 can also be uploaded. Detailed setup and commands are in [docs/hpc.md](docs/hpc.md).
+New closed-loop evaluation runs use an `evaluation-` prefix on their W&B
+experiment/seed group, separating them from training within the same project.
+Existing runs can already be filtered by `job_type=evaluation`.
 
 ## Inspect point clouds and encoder structure
 

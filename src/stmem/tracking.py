@@ -149,6 +149,9 @@ class RunTracker:
                 import wandb
 
                 run_root = str(Path(self.cfg.get("paths", {}).get("run_root", self.directory)).resolve())
+                group = f"{Path(run_root).name}-{digest(run_root)[:8]}-seed{self.cfg.get('seed', 0)}"
+                if self.job_type == "evaluation":
+                    group = f"evaluation-{group}"
                 provenance = {
                     "source": source_revision(),
                     "metadata": _plain(self.metadata),
@@ -166,7 +169,7 @@ class RunTracker:
                     project=self.project,
                     entity=self.entity,
                     name=self.name,
-                    group=f"{Path(run_root).name}-{digest(run_root)[:8]}-seed{self.cfg.get('seed', 0)}",
+                    group=group,
                     job_type=self.job_type,
                     tags=[
                         "synthetic-debug"
@@ -196,8 +199,12 @@ class RunTracker:
                         x_sync_dir_suffix=f"attempt{self.identity['attempt']}",
                     ),
                 )
-                self.run.define_metric("progress/step")
+                self.run.define_metric("progress/step", hidden=self.job_type == "evaluation")
                 self.run.define_metric("*", step_metric="progress/step", step_sync=False)
+                if self.job_type == "evaluation":
+                    # Keep the dashboard focused on success and rollout progress;
+                    # these bookkeeping metrics still exist for axes and restarts.
+                    self.run.define_metric("tracking/attempt", hidden=True)
                 self._history_step = max(self._history_step, self.run.step)
             self.identity.update(
                 status="running",

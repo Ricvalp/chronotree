@@ -49,11 +49,12 @@ def _distribution(values, prefix, *, total=False):
 
 
 def evaluation_tracking_scalars(records, planned=None, *, summary=None, prefix="evaluation"):
-    """Aggregate saved episode measurements outside all online timing regions.
+    """Detailed diagnostics for local artifacts and aggregate research reports.
 
     Missing measurements remain absent. Byte occupancy is summarized as occupancy,
     while per-decision transfer/scoring costs may be summed. Startup and the first
     decision of each episode remain distinguishable from steady-state decisions.
+    These are deliberately not published to the live evaluation dashboard.
     """
     summary = summarize_episodes(records, planned) if summary is None else summary
     scalars = numeric_scalars(summary, prefix)
@@ -115,22 +116,49 @@ def evaluation_tracking_scalars(records, planned=None, *, summary=None, prefix="
     return scalars
 
 
-def _episode_tracking_scalars(record):
-    scalars = evaluation_tracking_scalars([record], prefix="episode")
-    scalars.update(
+def _log_evaluation_progress(tracker, summary, *, new_episodes, reused_episodes, last_episode=None):
+    """Two fixed charts; completed failures/errors stay in the live denominator.
+
+    The running success rate is a monitoring statistic over recorded episodes,
+    not the planned-denominator task macro used for scientific reporting. A run
+    with no recorded outcomes has no success estimate, rather than zero success.
+    """
+    overall = summary["overall"]
+    recorded, planned = overall["recorded"], overall["planned"]
+    tracker.log(
         {
-            "episode/task": str(record["task"]),
-            "episode/status": str(record.get("status", "error")),
-            "episode/index": int(record["episode_idx"]),
-            "episode/success": int(record.get("status") == "success"),
-            "episode/error": int(record.get("status") in {"error", "infrastructure_error", "policy_error"}),
-            "episode/timeout": int(record.get("status") in {"timeout", "truncated"}),
+            "evaluation/success_rate_so_far_percent": 100 * overall["successes"] / recorded
+            if recorded
+            else None,
+            "evaluation/progress_percent": 100 * recorded / planned if planned else 100.0,
+        },
+        step=recorded,
+    )
+    tracker.summary(
+        {
+            "evaluation/status": summary["status"],
+            "evaluation/progress": {
+                "episodes_recorded": recorded,
+                "episodes_planned": planned,
+                "successes": overall["successes"],
+                "errors": overall["errors"],
+                "timeouts": overall["timeouts"],
+                "new_episodes": new_episodes,
+                "reused_episodes": reused_episodes,
+                "scope": "this evaluation shard",
+                "success_rate_denominator": "recorded episodes, including failures, errors and timeouts",
+            },
         }
     )
-    for key in ("error", "close_error"):
-        if record.get(key):
-            scalars[f"episode/{key}_message"] = str(record[key])[:2048]
-    return scalars
+    if last_episode is not None:
+        tracker.summary(
+            {
+                "evaluation/last_episode": {
+                    key: last_episode.get(key)
+                    for key in ("task", "episode_idx", "status", "error", "close_error")
+                }
+            }
+        )
 
 
 def main():
@@ -243,6 +271,23 @@ def main():
 
 
 def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, existing, tracker):
+    # Include all durable outcomes in the initial progress, even when a resumed
+    # shard has gaps. Loading them once also avoids replaying completed episodes.
+    saved = {}
+    for task, episode_idx in planned:
+        path = output / "episodes" / f"{task}_{episode_idx:03d}.json"
+        if path.exists():
+            saved[task, episode_idx] = json.loads(path.read_text())
+    results = list(saved.values())
+    reused = len(results)
+    new_episodes = 0
+    _log_evaluation_progress(
+        tracker,
+        summarize_episodes(results, planned),
+        new_episodes=new_episodes,
+        reused_episodes=reused,
+        last_episode=results[-1] if results else None,
+    )
     device = "cuda" if torch.cuda.is_available() else "cpu"
     started = time.perf_counter()
     policy, checkpoint_state = load_policy(checkpoint, device)
@@ -263,15 +308,10 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
         intervention=args.intervention,
     )
     load_seconds = time.perf_counter() - started
-    results = []
-    reused = 0
-    new_episodes = 0
     tracker.summary({"evaluation/model_load_seconds_this_invocation": load_seconds})
-    for task, episode_idx in planned:
+    for episode_position, (task, episode_idx) in enumerate(planned):
         path = output / "episodes" / f"{task}_{episode_idx:03d}.json"
-        if path.exists():
-            results.append(json.loads(path.read_text()))
-            reused += 1
+        if (task, episode_idx) in saved:
             continue
         adapter = None
         result = None
@@ -289,7 +329,7 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
             seed = cfg["evaluation"]["seed"] + cfg["data"]["tasks"].index(task) * 1000 + episode_idx
             video = (
                 output / "videos" / f"{task}_{episode_idx:03d}.mp4"
-                if len(results) < cfg["evaluation"]["video_cap"]
+                if episode_position < cfg["evaluation"]["video_cap"]
                 else None
             )
             result = run_episode(
@@ -332,21 +372,12 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
         results.append(result)
         new_episodes += 1
         # Logging follows both synchronized episode timing and durable result writes.
-        tracker.log(
-            {
-                **_episode_tracking_scalars(result),
-                **numeric_scalars(summarize_episodes(results, planned), "evaluation"),
-                "evaluation/new_episodes": new_episodes,
-                "evaluation/reused_episodes": reused,
-            },
-            step=len(results),
-        )
-        tracker.summary(
-            {
-                "evaluation/last_episode": {
-                    key: result.get(key) for key in ("task", "episode_idx", "status", "error", "close_error")
-                }
-            }
+        _log_evaluation_progress(
+            tracker,
+            summarize_episodes(results, planned),
+            new_episodes=new_episodes,
+            reused_episodes=reused,
+            last_episode=result,
         )
         print(
             json.dumps(
@@ -356,6 +387,8 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
         )
     summary = summarize_episodes(results, planned)
     atomic_json(summary, output / "summary.json")
+    # Retain full latency/storage/cost measurements without hundreds of W&B panels.
+    atomic_json(evaluation_tracking_scalars(results, planned, summary=summary), output / "diagnostics.json")
     if len(results) == len(planned):
         atomic_json(
             {
@@ -366,16 +399,6 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
             },
             output / "complete.json",
         )
-    scalars = evaluation_tracking_scalars(results, planned, summary=summary)
-    scalars.update({"evaluation/new_episodes": new_episodes, "evaluation/reused_episodes": reused})
-    tracker.log(scalars, step=len(results))
-    tracker.summary(
-        {
-            **scalars,
-            "evaluation/status": summary["status"],
-            "evaluation/denominator_source": summary["denominator_source"],
-        }
-    )
     print(json.dumps(summary))
 
 

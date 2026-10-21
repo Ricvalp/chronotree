@@ -311,7 +311,7 @@ verified files skipped; no measured full-data preparation ETA is claimed.
 Tracking is enabled in `configs/base.yaml`, including the inherited debug configs.
 The default `offline` mode records W&B run data locally without credentials or
 network access. Training logs scalar metrics at the existing configured reporting
-cadence; evaluation logs episode outcomes and summaries. Only rank zero opens the
+cadence; evaluation logs success and progress. Only rank zero opens the
 training run under DDP. W&B system metrics are enabled by default through
 `tracking.system_stats: true`, which sets `x_disable_stats=False` and also enables
 system metadata. The **System** tab shows GPU utilization, allocated memory,
@@ -325,6 +325,33 @@ checkpoints, metrics and per-episode results remain the durable experiment recor
 Model weights, videos and source files are not uploaded automatically. The SDK's
 [settings reference](https://docs.wandb.ai/models/ref/python/experiments/settings)
 documents the collection controls.
+
+Evaluation has two fixed chart metrics, independent of the number of tasks:
+
+- `evaluation/success_rate_so_far_percent`: successes / recorded episodes, in
+  percent. Failures, policy/infrastructure errors and timeouts stay in the
+  denominator. No success estimate is logged before the first outcome.
+- `evaluation/progress_percent`: recorded / planned episodes in this shard,
+  in percent. An empty shard has no work remaining and reports 100% progress,
+  with no success estimate.
+
+The initial update includes all saved episodes on resume. Further updates follow
+each atomic episode-result write, outside inference timing. The run summary
+keeps recorded/planned counts, errors, timeouts and the last episode outcome.
+Bookkeeping axes are hidden from automatic evaluation plots. System monitoring
+remains enabled, and training logging is unchanged.
+
+This running success rate is for monitoring; it uses the completed episode mix,
+which can change while tasks run sequentially. The scientific task-macro score
+with fixed planned denominators, per-task/suite outcomes and missing counts
+remains in `summary.json`. Full latency/storage/cost aggregates are written to
+`diagnostics.json`; raw decisions, commands and errors remain in `episodes/*.json`.
+Aggregate research reports still have access to all these measurements.
+
+The logging change applies when a new Python evaluation process starts. It does
+not remove existing W&B history or panels. Evaluation source hashes remain
+strict: after updating code, use a new `--output` directory for any new rollout
+invocation; an old output directory cannot be resumed under changed source.
 
 `hpc/site.env` accepts these nonsecret settings:
 
@@ -365,6 +392,11 @@ credential store or the site's external credential mechanism.
 
 Teacher, compact, tree-router, flat-router and Perceiver training retain separate
 run identities. Evaluations are separate runs for their method, split and shard.
+Training retains the experiment/seed group `<run-root-name>-<path-hash>-seed<N>`.
+New closed-loop evaluation runs use `evaluation-<run-root-name>-<path-hash>-seed<N>`
+in the same W&B project. The original `job_type=evaluation` field and tag also
+remain available for filtering, including on older runs. This metadata change
+does not reorganize already-running or historical W&B runs or their panels.
 Each output directory has a `tracking.json` record mapping local work to its W&B
 run ID and latest local W&B directory. The ID survives a restart; online runs
 resume with that ID, while each offline invocation writes a separate segment.
@@ -374,6 +406,13 @@ Keep the journal alongside the checkpoints when resuming. An existing run's
 project/entity cannot be changed in place; use a new output directory for a new
 destination. Logging settings do not select checkpoints, change scientific seeds,
 or alter Slurm completion dependencies.
+
+The default `evaluation.video_cap: 2` records at most the first two planned
+episodes **per evaluation shard**, rather than two per task. For the standard
+unsharded two-episodes-per-task run, these are `videos/BinFill_000.mp4` and
+`videos/BinFill_001.mp4` inside the evaluation output directory. Simulator failures
+can leave fewer recordings. Resuming skips saved episodes without recreating
+missing videos or adding another two; recordings are not uploaded automatically.
 
 For nodes without network access, leave `WANDB_MODE=offline`. After the allocation,
 sync a chosen offline directory from a machine with the files and Internet access:
