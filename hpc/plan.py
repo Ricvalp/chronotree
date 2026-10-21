@@ -175,6 +175,7 @@ def build_jobs(
     eval_walltime: str,
     log_every: int | None = None,
     progress_every_seconds: float | None = None,
+    teacher_config: Path | None = None,
 ) -> list[Job]:
     jobs: list[Job] = []
     gpu_count = PROFILES[profile]
@@ -188,7 +189,11 @@ def build_jobs(
             target = generated / "configs" / f"seed{seed}_{name}.yaml"
             target.parent.mkdir(parents=True, exist_ok=True)
             obj = {
-                "extends": str(repo / "configs" / f"{base}.yaml"),
+                "extends": str(
+                    teacher_config
+                    if base == "teacher" and teacher_config
+                    else repo / "configs" / f"{base}.yaml"
+                ),
                 "seed": seed,
                 "profile": profile,
                 "paths": {"run_root": str(run_root)},
@@ -662,7 +667,13 @@ def completed(job: Job) -> bool:
         return False
 
 
-def freeze_protocol(manifest: dict, run_root: Path, destination: Path, repo: Path = REPO) -> None:
+def freeze_protocol(
+    manifest: dict,
+    run_root: Path,
+    destination: Path,
+    repo: Path = REPO,
+    teacher_config: Path | None = None,
+) -> None:
     from stmem.evaluation.protocol import inference_contract
 
     checkpoints = {}
@@ -685,15 +696,18 @@ def freeze_protocol(manifest: dict, run_root: Path, destination: Path, repo: Pat
         checkpoint_roles[str(seed)] = roles
     configs = {}
     inference_contracts = {}
+    teacher_config = (teacher_config or repo / "configs/teacher.yaml").resolve()
     for name in ("teacher", "compact", "router_tree", "router_flat", "perceiver"):
-        configs.update(config_hashes(repo / "configs" / f"{name}.yaml"))
+        path = teacher_config if name == "teacher" else repo / "configs" / f"{name}.yaml"
+        configs.update(config_hashes(path))
         if name in ("teacher", "compact", "perceiver"):
-            cfg = resolved_config(repo / "configs" / f"{name}.yaml")
+            cfg = resolved_config(path)
             inference_contracts[name] = inference_contract(cfg)
     save_json(
         destination,
         {
             "protocol": manifest,
+            "teacher_config": str(teacher_config),
             "checkpoints": checkpoints,
             "configuration_hashes": configs,
             "inference_contracts": inference_contracts,
@@ -712,6 +726,16 @@ def main() -> None:
     action.add_argument("--submit", action="store_true")
     parser.add_argument("--site", type=Path, default=REPO / "hpc/site.env")
     parser.add_argument("--profile", choices=PROFILES)
+    parser.add_argument(
+        "--teacher-config",
+        type=Path,
+        help="Teacher source YAML, relative to the site repository; default: configs/teacher.yaml",
+    )
+    parser.add_argument(
+        "--run-root",
+        type=Path,
+        help="Override STMEM_RUN_ROOT for this plan; relative paths use the site repository",
+    )
     parser.add_argument("--phase", choices=("validation", "test"), default="validation")
     parser.add_argument("--freeze-protocol", type=Path)
     parser.add_argument("--freeze-manifest", type=Path)
@@ -735,13 +759,42 @@ def main() -> None:
     repo = Path(site.get("STMEM_REPO_ROOT", str(REPO))).resolve()
     run_root = Path(site.get("STMEM_RUN_ROOT", str(repo / "runs"))).resolve()
     manifest = yaml.safe_load((repo / "configs" / f"experiment_{args.plan}.yaml").read_text())
+    if args.run_root is not None:
+        run_root = (repo / args.run_root.expanduser()).resolve()
+        # Runtime configuration and stage markers also read the exported site root.
+        site["STMEM_RUN_ROOT"] = str(run_root)
+    teacher_config = (repo / (args.teacher_config or Path("configs/teacher.yaml")).expanduser()).resolve()
+    if args.teacher_config is not None:
+        from stmem.config import validate_config
+
+        try:
+            config_hashes(teacher_config)  # Check the complete inheritance chain before writing anything.
+            teacher = resolved_config(teacher_config)
+            validate_config(teacher)
+            if (
+                teacher.get("stage") != "teacher"
+                or teacher.get("debug", False)
+                or teacher["data"].get("synthetic", False)
+                or teacher["data"].get("split") != "train"
+            ):
+                raise ValueError("--teacher-config must describe real-data teacher training")
+            if teacher["data"]["tasks"] != manifest["tasks"]:
+                raise ValueError("--teacher-config tasks must match the experiment manifest")
+            training = teacher["training"]
+            if any(
+                step not in training["checkpoint_steps"] or not 1 <= step <= training["steps"]
+                for step in manifest["teacher_candidates"]
+            ):
+                raise ValueError("--teacher-config must produce every planned teacher candidate checkpoint")
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError) as error:
+            parser.error(str(error))
     profile = args.profile or site.get("STMEM_PROFILE", manifest["profile"])
     if profile == "a5000_debug":
         parser.error(
             "a5000_debug is a local shape profile; use configs/debug/*.yaml directly, not core submission"
         )
     if args.freeze_protocol:
-        freeze_protocol(manifest, run_root, args.freeze_protocol, repo)
+        freeze_protocol(manifest, run_root, args.freeze_protocol, repo, teacher_config)
         print(f"Frozen checkpoint hashes and protocol: {args.freeze_protocol}")
         return
     if args.phase == "test":
@@ -750,6 +803,8 @@ def main() -> None:
                 "--phase test requires --freeze-manifest, created with --freeze-protocol after validation"
             )
         frozen = json.loads(args.freeze_manifest.read_text())
+        if frozen.get("teacher_config", str(repo / "configs/teacher.yaml")) != str(teacher_config):
+            parser.error("Teacher configuration differs from the frozen test protocol")
         if frozen["protocol"] != manifest:
             parser.error("Frozen protocol differs from current manifest")
         if frozen.get("source_sha256") != source_hash(repo):
@@ -778,6 +833,7 @@ def main() -> None:
         eval_walltime=site.get("STMEM_EVAL_WALLTIME", "06:00:00"),
         log_every=args.log_every,
         progress_every_seconds=args.progress_every_seconds,
+        teacher_config=teacher_config,
     )
     # Configuration provenance contains bounded label totals explicitly.
     for seed in manifest["seeds"]:
@@ -849,6 +905,8 @@ def main() -> None:
         "plan": args.plan,
         "phase": args.phase,
         "profile": profile,
+        "teacher_config": str(teacher_config),
+        "run_root": str(run_root),
         "seeds": manifest["seeds"],
         "tasks": manifest["tasks"],
         "jobs": [asdict(job) for job in selected],

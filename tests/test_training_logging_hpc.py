@@ -294,3 +294,162 @@ def test_signature_normalization_removes_only_valid_exact_training_pairs(plannin
     assert planner.scientific_training_command(command + scientific) == command + scientific
     other = [sys.executable, "-m", "stmem.evaluate", *runtime]
     assert planner.scientific_training_command(other) == other
+
+
+def test_teacher_lr_variant_changes_only_peak_lr_and_isolates_all_run_paths(planning, monkeypatch, tmp_path):
+    planner, invoke, repo, run_root, generated = planning
+    variant = repo / "configs/teacher_lr001.yaml"
+    original_variant = variant.read_bytes()
+    original_teacher = (repo / "configs/teacher.yaml").read_bytes()
+    site = tmp_path / "site.env"
+    original_site = site.read_bytes()
+    options = ["--profile", "h200_4gpu", "--only", "seed0_teacher"]
+    baseline = invoke(*options)
+    baseline_job = baseline["jobs"][0]
+    baseline_config = planner.resolved_config(Path(option(baseline_job["commands"][0], "--config")))
+    old_checkpoint = run_root / "seed0/teacher/last.pt"
+    old_checkpoint.parent.mkdir(parents=True)
+    old_checkpoint.write_bytes(b"Existing low-learning-rate run")
+    monkeypatch.chdir(tmp_path)
+
+    # Relative overrides resolve from the site repository, not the caller's cwd.
+    variant_root = repo / "runs/teacher lr001"
+    changed = invoke(
+        *options,
+        "--teacher-config",
+        "configs/teacher_lr001.yaml",
+        "--run-root",
+        "runs/teacher lr001",
+    )
+    job = changed["jobs"][0]
+    cfg = planner.resolved_config(Path(option(job["commands"][0], "--config")))
+    validate_config(cfg)
+    assert changed["teacher_config"] == str(variant)
+    assert changed["run_root"] == str(variant_root)
+    assert cfg["training"] == {**baseline_config["training"], "lr": 0.01}
+    assert cfg["training"]["warmup_steps"] == 1000
+    assert cfg["training"]["steps"] == 100000
+    assert cfg["training"]["effective_batch"] == 128
+    assert cfg["training"]["microbatch"] == 64
+    assert cfg["training"]["encoder_block_batch_size"] == 128
+    assert cfg["paths"] == {**baseline_config["paths"], "run_root": str(variant_root)}
+    for key in baseline_config.keys() - {"training", "paths"}:
+        assert cfg[key] == baseline_config[key]
+    assert job["gpus"] == 4
+    assert job["signature"] != baseline_job["signature"]
+    assert job["outputs"] == [
+        str(variant_root / "seed0/teacher/step_00050000.pt"),
+        str(variant_root / "seed0/teacher/step_00100000.pt"),
+    ]
+    assert job["marker"] == str(variant_root / "seed0/.stages/seed0_teacher.json")
+    script = Path(job["script"]).read_text()
+    assert f"export STMEM_RUN_ROOT={shlex.quote(str(variant_root))}" in script
+    assert "--nproc-per-node=4" in script
+    subprocess.run(["bash", "-n", job["script"]], check=True)
+    assert variant.read_bytes() == original_variant
+    assert (repo / "configs/teacher.yaml").read_bytes() == original_teacher
+    assert site.read_bytes() == original_site
+    assert old_checkpoint.read_bytes() == b"Existing low-learning-rate run"
+    assert not variant_root.exists() and not (generated / "submitted.json").exists()
+
+
+def test_teacher_override_reaches_validation_and_cache_without_changing_compact(planning, tmp_path):
+    planner, invoke, repo, _, _ = planning
+    root = tmp_path / "lr001 outputs"
+    plan = invoke(
+        "--teacher-config",
+        str(repo / "configs/teacher_lr001.yaml"),
+        "--run-root",
+        str(root),
+    )
+    jobs = {job["name"]: job for job in plan["jobs"]}
+    teacher_cfg = option(jobs["seed0_teacher"]["commands"][0], "--config")
+    for name in ("seed0_teacher_val_50000", "seed0_teacher_val_100000", "seed0_cache"):
+        assert option(jobs[name]["commands"][0], "--config") == teacher_cfg
+    compact_cfg = Path(option(jobs["seed0_compact"]["commands"][0], "--config"))
+    compact = planner.resolved_config(compact_cfg)
+    assert yaml.safe_load(compact_cfg.read_text())["extends"] == str(repo / "configs/compact.yaml")
+    assert compact["training"] == planner.resolved_config(repo / "configs/compact.yaml")["training"]
+    assert compact["paths"]["run_root"] == str(root)
+    assert jobs["seed0_cache"]["deps"] == ["seed0_select_teacher"]
+    assert all(job["marker"].startswith(str(root) + "/") for job in jobs.values())
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"stage": "compact"},
+        {"data": {"synthetic": True}},
+        {"data": {"split": "val"}},
+        {"training": {"checkpoint_steps": [50000]}},
+        {"training": {"steps": 50000}},
+    ],
+)
+def test_incompatible_teacher_override_is_rejected_before_plan_writes(planning, changes):
+    _, invoke, repo, run_root, generated = planning
+    variant = repo / "configs/invalid_teacher.yaml"
+    variant.write_text(yaml.safe_dump({"extends": "teacher.yaml", **changes}))
+    with pytest.raises(SystemExit) as error:
+        invoke("--teacher-config", str(variant))
+    assert error.value.code == 2
+    assert not generated.exists() and not run_root.exists() and not (repo / "hpc/logs").exists()
+
+
+def test_frozen_protocol_records_teacher_override_and_refuses_different_variant(planning, tmp_path):
+    planner, invoke, repo, run_root, generated = planning
+    variant = repo / "configs/teacher_lr001.yaml"
+    manifest = yaml.safe_load((repo / "configs/experiment_core_seed0.yaml").read_text())
+    for stage, filename in (
+        ("teacher", "selected.pt"),
+        ("compact", "selected.pt"),
+        ("router_tree", "last.pt"),
+        ("router_flat", "last.pt"),
+        ("perceiver", "last.pt"),
+    ):
+        checkpoint = run_root / "seed0" / stage / filename
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.write_bytes(b"Hash-only frozen-protocol fixture; never loaded")
+    destination = tmp_path / "frozen.json"
+    planner.freeze_protocol(manifest, run_root, destination, repo, teacher_config=variant)
+    frozen = json.loads(destination.read_text())
+    assert frozen["teacher_config"] == str(variant)
+    for path in (variant, repo / "configs/teacher.yaml", repo / "configs/base.yaml"):
+        assert frozen["configuration_hashes"][str(path)] == planner.sha256(path)
+
+    # Even a byte-identical alternate path is a different declared variant.
+    other_variant = repo / "configs/other_teacher.yaml"
+    other_variant.write_bytes(variant.read_bytes())
+    for extra in ([], ["--teacher-config", str(other_variant)]):
+        with pytest.raises(SystemExit) as error:
+            invoke("--phase", "test", "--freeze-manifest", str(destination), *extra)
+        assert error.value.code == 2
+        assert not generated.exists() and not (repo / "hpc/logs").exists()
+
+    plan = invoke(
+        "--phase",
+        "test",
+        "--freeze-manifest",
+        str(destination),
+        "--teacher-config",
+        str(variant),
+    )
+    assert plan["phase"] == "test" and plan["teacher_config"] == str(variant)
+    teacher_cfg = planner.resolved_config(generated / "configs/seed0_teacher.yaml")
+    assert teacher_cfg["training"]["lr"] == 0.01
+    assert teacher_cfg["evaluation"]["test_frozen_manifest"] == str(destination)
+
+    variant.write_text(variant.read_text() + "\n# Changed after the protocol was frozen.\n")
+    stale_output = tmp_path / "stale protocol output"
+    with pytest.raises(SystemExit) as error:
+        invoke(
+            "--phase",
+            "test",
+            "--freeze-manifest",
+            str(destination),
+            "--teacher-config",
+            str(variant),
+            "--output-dir",
+            str(stale_output),
+        )
+    assert error.value.code == 2
+    assert not stale_output.exists()

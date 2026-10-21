@@ -1,0 +1,3 @@
+extends: teacher.yaml
+training:
+  lr: 0.01

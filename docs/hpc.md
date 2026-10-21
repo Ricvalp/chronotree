@@ -162,6 +162,41 @@ files when they start, so source configuration edits also affect queued jobs
 that extend those files. No interactive-shell export of `STMEM_PYTHON` is needed:
 the planner reads the site file directly.
 
+### Teacher learning-rate comparison
+
+`configs/teacher_lr001.yaml` extends `teacher.yaml` and overrides only
+`training.lr: 0.01`. It retains the 1,000-update warmup and the same cosine
+multiplier over the 100,000-update schedule. The maximum is 0.01 and the final
+learning rate is 0.001 (10% of the maximum). Batch sizes, checkpoint intervals,
+model and data settings are inherited unchanged.
+
+Select the variant through the same planner and override its run root explicitly:
+
+```bash
+.venv/bin/python hpc/plan.py \
+  --site hpc/site_4gpu.env --plan core_seed0 --profile h200_4gpu \
+  --teacher-config configs/teacher_lr001.yaml \
+  --run-root runs/teacher_lr001 \
+  --only seed0_teacher \
+  --output-dir hpc/generated/core_seed0_validation_h200_4gpu_lr001 \
+  --log-every 1 --progress-every-seconds 30 \
+  --dry-run
+```
+
+Inspect the rendered plan, then repeat the same arguments with `--submit`.
+`--teacher-config` selects the teacher source YAML; `--run-root` overrides the
+site's output root for this invocation, including exported job variables and
+stage markers. Relative values for both flags resolve against `STMEM_REPO_ROOT`.
+This writes to `runs/teacher_lr001/seed0/teacher/`, giving the comparison separate
+checkpoints and W&B identity. The baseline source configuration, site file and
+previous generated plan are not edited.
+
+Keep the same `--teacher-config`, `--run-root` and `--output-dir` on subsequent
+resume or downstream-stage commands for this experiment. Teacher validation and
+cache jobs use the selected YAML; compact/router/Perceiver training settings
+remain their own. Protocol freeze records the selected teacher source and its
+inheritance hashes; official-test planning rejects a different teacher source.
+
 ## Parallel data preparation
 
 Run full preparation in a compute allocation. It uses CPU point-cloud geometry,

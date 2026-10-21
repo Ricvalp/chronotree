@@ -415,3 +415,26 @@
     Chromium. No training or real submission ran locally; the user will submit
     on the HPC. These checks do not establish the larger batch's memory peak or
     throughput.
+
+24. **Teacher learning-rate variant through the existing planner.** The requested
+    higher-maximum comparison lives in `configs/teacher_lr001.yaml`, inheriting
+    `teacher.yaml` and changing only `training.lr` from 0.0001 to 0.01. The
+    schedule multiplier is unchanged: 1,000-update warmup, the same cosine decay
+    over 100,000 updates and a final rate of 10% of the maximum (0.001).
+    Existing teacher batching, data, model and checkpoint candidates are retained.
+
+    `hpc/plan.py` now accepts `--teacher-config` and `--run-root`. The former
+    selects the teacher YAML for training, its evaluations and cache generation;
+    the latter consistently overrides generated configuration, job environment,
+    stage markers and output paths. The existing `--output-dir` separates plan
+    and submission records. No additional launcher or site file is introduced,
+    and compact/router/Perceiver source settings are unchanged. Teacher candidate
+    compatibility is checked before rendering; protocol freeze records and checks
+    the selected teacher source and its inherited hashes.
+
+    Sixty-eight configuration, planner, W&B and infrastructure tests passed,
+    including variant inheritance, relative paths, output isolation, downstream
+    config selection and frozen-protocol checks. A local dry-run of the actual
+    variant verified four GPUs and unchanged warmup/batching/checkpoints; shell
+    syntax, Ruff and the unchanged architecture diagram check passed. No training
+    or real Slurm submission was performed.
