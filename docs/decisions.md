@@ -586,3 +586,26 @@
     balanced dataset. Generated batch syntax, lint and whitespace checks pass.
     No Slurm submission, GPU benchmark or training was run; B200 memory fit,
     throughput, scheduler acceptance and full-data execution remain unmeasured.
+
+29. **Smaller B200 retry after reported OOM (22 October 2026).** The user reported
+    that the 64-example / 128-encoder-block B200 job exhausted memory and asked
+    to reduce it. Added `configs/teacher_b200.yaml`, extending the teacher with
+    microbatch 16 and encoder block batch 32. Effective batch 256, all causal
+    history, geometry, learning rate, checkpoint schedule and 100k updates remain
+    unchanged. Four GPUs accumulate four passes of 16 decisions per update.
+    Smaller encoder chunks reduce temporary tensors; saved activations across
+    chunks still remain until backward because activation checkpointing is off.
+
+    The B200 site now chooses a fresh `m16_blocks32` run root; documented launch
+    commands select the new YAML and a fresh generated directory without resume.
+    They set `PYTHONPATH` to the current checkout's `src`, avoiding the older
+    evaluation worktree exported by the intervening legacy-evaluation recipe.
+    The default `teacher.yaml` and its architecture diagram remain unchanged;
+    the diagram source/settings review and snapshot check pass.
+
+    Fifty-six config/planner tests passed. A relocated-site dry-run verified
+    `aiq` / `gpu:b200:4`, the requested retry sizes, four accumulation passes,
+    unchanged model/data configuration and generated batch syntax. No job was
+    submitted or training run locally. The failure traceback was not supplied;
+    CUDA versus host-memory exhaustion is unconfirmed. Fit and throughput of
+    the smaller configuration still require measurement on the cluster.

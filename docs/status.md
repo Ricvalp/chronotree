@@ -64,10 +64,11 @@ fresh run. The original diagnosis is recorded in
 - Bounded memory/budget/routing diagnostics, checkpoint selection, exact resume,
   DDP launch, Slurm dependency/resume planner and frozen official-test protocol.
 - Explicit `b200_4gpu` training/profiling with a separate tracked site file using
-  user-confirmed `aiq` / `gpu:b200:4`, a fresh run root and the existing teacher
-  global batch 256, microbatch 64, encoder block batch 128 and 100k updates.
-  Forty-three planner/profiler tests and a relocated-site dry-run pass; actual
-  B200 allocation, memory fit and throughput remain unmeasured.
+  user-confirmed `aiq` / `gpu:b200:4`. After a user-reported OOM at microbatch 64
+  and encoder block batch 128, `configs/teacher_b200.yaml` reduces these to 16
+  and 32, preserving global batch 256 and 100k updates with a fresh retry root.
+  Fifty-six config/planner tests and the retry dry-run pass. The traceback has
+  not been inspected; smaller-run memory fit and throughput remain unmeasured.
 - The current teacher schedule is 100,000 updates with selection candidates at
   50k and 100k, configured consistently in both the core and replication plans.
   It uses the established `hpc/plan.py` workflow and a fresh run root in
