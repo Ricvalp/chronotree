@@ -69,9 +69,13 @@ fresh run. The original diagnosis is recorded in
   to 8/16, preserving global batch 256 and 100k updates with a fresh retry root.
   The subsequently supplied traceback fails with `cudaErrorDevicesUnavailable`
   at device selection, before model/data initialization; that attempt is not
-  evidence of a batch-size OOM. GPU availability is unresolved, and smaller-run
-  memory fit and throughput remain unmeasured. The 8/16 retry passes 30 configuration tests and a relocated
-  planner dry-run; previous 16/32 validation included 56 config/planner tests.
+  evidence of a batch-size OOM. A user-run standalone four-worker tensor probe
+  reproduces the error on `ainode01`, despite four visible GPUs appearing empty
+  in Default compute mode; only rank 3's failure is confirmed before the others
+  are terminated. GPU availability is unresolved, and smaller-run memory fit
+  and throughput remain unmeasured. The 8/16 retry passes 30 configuration tests
+  and a relocated planner dry-run; previous 16/32 validation included 56
+  config/planner tests.
 - The current teacher schedule is 100,000 updates with selection candidates at
   50k and 100k, configured consistently in both the core and replication plans.
   It uses the established `hpc/plan.py` workflow and a fresh run root in

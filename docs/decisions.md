@@ -649,3 +649,17 @@
     are required before further tuning. No speculative binding changes, driver
     changes, checkpointing changes or batch-size reversal were made. The 8/16
     variant remains available but cannot fix a device-selection failure.
+
+    The user's subsequent four-worker standalone probe reproduces the same
+    failure on `ainode01` with Torch 2.9.1+cu128, driver 580.126.20 and four
+    visible B200s. All workers report `CUDA_VISIBLE_DEVICES=0,1,2,3` and device
+    count four. The pre-launch `nvidia-smi` snapshot shows 0 MiB used, Default
+    compute mode, disabled MIG and no running processes for all four devices.
+    Rank 3 is the first reported failure at `set_device`; torchrun terminates
+    ranks 0–2 before any success message, so their usability is undetermined.
+    This probe imports no Chronotree modules, creates no model, and initializes
+    neither W&B nor an NCCL process group. The issue reproduces independently of
+    the training implementation. Fresh sequential Python processes within a
+    four-B200 allocation are the next diagnostic, followed by a node comparison
+    if needed. Driver/device access and fabric readiness remain hypotheses,
+    not established diagnoses. No further batch or launcher changes were made.
