@@ -174,10 +174,14 @@ The profile controls the worker count; the partition and typed GRES select the
 hardware. CPU and host-memory requests remain 64 cores and 128 GB. The inherited
 48-hour limit has not been checked against this partition's scheduling policy.
 
-The user reported an OOM with microbatch 64 and encoder block batch 128. Use
+The user initially reported OOMs at microbatch/encoder-block sizes 64/128 and
+16/32. The later supplied traceback instead shows `cudaErrorDevicesUnavailable`
+at `torch.cuda.set_device(local)`, before model/data initialization. That attempt
+does not establish a batch-size memory limit; GPU availability must be diagnosed
+before further memory tuning. The smaller retry settings remain available. Use
 `configs/teacher_b200.yaml` for the retry: it extends `teacher.yaml` with
-microbatch 16 and encoder block batch 32, retaining effective batch 256 and
-100,000 updates. Each GPU accumulates four passes of 16 decisions per update.
+microbatch 8 and encoder block batch 16, retaining effective batch 256 and
+100,000 updates. Each GPU accumulates eight passes of 8 decisions per update.
 This reduces per-pass activations and temporary encoder tensors; without
 activation checkpointing, saved activations across encoder chunks still remain
 until backward. Prepared geometry remains `prepared_balanced_v2/`, 2,048 points
@@ -193,7 +197,7 @@ export PYTHONPATH="$PWD/src"
   --site hpc/site_b200_4gpu.env --profile b200_4gpu \
   --teacher-config configs/teacher_b200.yaml \
   --plan core_seed0 --only seed0_teacher \
-  --output-dir hpc/generated/teacher_balanced_v2_b200_b256_m16_blocks32_100k \
+  --output-dir hpc/generated/teacher_balanced_v2_b200_b256_m8_blocks16_100k \
   --log-every 1 --progress-every-seconds 30 \
   --dry-run
 ```
@@ -201,13 +205,16 @@ export PYTHONPATH="$PWD/src"
 Inspect `plan.json` and `jobs/seed0_teacher.sbatch` in the generated directory,
 then repeat exactly the same command with `--submit` instead of `--dry-run`.
 The new site file chooses a fresh root:
-`runs/teacher_balanced_v2_b200_b256_m16_blocks32_100k/seed0/teacher/`.
+`runs/teacher_balanced_v2_b200_b256_m8_blocks16_100k/seed0/teacher/`.
 The existing H200 site file and run roots remain separate. W&B is online in the
-same `chronotree` project, including system metrics. The failed 64/128 run's
-artifacts stay in its previous directory. No resume is requested for the retry.
-The OOM traceback has not been inspected, so CUDA versus host-memory exhaustion
-has not been established. The smaller configuration's memory fit and throughput
-remain unmeasured; no automatic OOM microbatch reduction is implemented.
+same `chronotree` project, including system metrics. The failed 64/128 and 16/32
+runs' artifacts stay in their previous directories. No resume is requested for the retry.
+The supplied failure occurs during device selection, so reducing these batch
+settings cannot resolve it. Inspect the failed allocation with `sacct`, then
+check GPU visibility, compute mode/processes and a tiny CUDA initialization in a
+short B200 allocation. Preserve Slurm's `CUDA_VISIBLE_DEVICES`; no binding or
+driver workaround is established. Earlier attempts' logs have not been compared.
+Memory fit and throughput remain unmeasured; no automatic OOM reduction exists.
 
 ### Teacher learning-rate comparison
 

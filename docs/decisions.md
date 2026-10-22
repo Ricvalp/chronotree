@@ -609,3 +609,43 @@
     submitted or training run locally. The failure traceback was not supplied;
     CUDA versus host-memory exhaustion is unconfirmed. Fit and throughput of
     the smaller configuration still require measurement on the cluster.
+
+30. **Further B200 reduction after a second OOM (22 October 2026).** The user
+    reported another OOM at 16 examples / 32 encoder blocks. The same B200
+    variant now uses microbatch 8 and encoder block batch 16, with a fresh
+    `m8_blocks16` run root and generated directory. Effective batch 256 is
+    retained through eight passes per rank on four GPUs. No history, geometry,
+    schedule, activation-checkpointing or loader-worker setting was changed.
+
+    A read-only accumulation audit found backward runs after each microbatch
+    and loss logging detaches its value; training does not retain all eight
+    microbatch graphs. Encoder chunk activations still accumulate within each
+    microbatch, so the smaller microbatch is the main retained-activation
+    reduction. The error log was requested to distinguish CUDA from host RAM
+    exhaustion; neither the failure phase nor memory fit has been measured.
+
+    Thirty configuration tests passed, together with a relocated-site planner
+    dry-run verifying four typed B200s, eight accumulation passes, unchanged
+    model/data/budget, separate output paths and generated batch syntax. The
+    default-teacher architecture diagram remains unchanged and its snapshot
+    check passes. No Slurm submission or training was performed locally.
+
+31. **Traceback corrects the B200 failure diagnosis (22 October 2026).** The user
+    subsequently supplied `torch.AcceleratorError: CUDA-capable device(s) is/are
+    busy or unavailable`, identified as `cudaErrorDevicesUnavailable`, from
+    `distributed_setup()` at `torch.cuda.set_device(local)`. This happens before
+    the data loader, policy, optimizer or training batch is constructed. The
+    supplied trace is not evidence that the requested microbatch exhausted
+    device memory. Entries 29/30 describe changes based on the user's initial
+    OOM report; earlier allocations' logs have not been compared.
+
+    Read-only review confirms the intended single Slurm task / one torchrun
+    agent / four LOCAL_RANK workers, with Slurm's CUDA visibility preserved. No
+    definite launcher defect or premature repository-level CUDA context creation
+    was found. NVIDIA documents unavailable devices as potentially caused by
+    prohibited/exclusive compute mode or already-active device work; the exact
+    site cause remains unknown. Allocation accounting, GPU visibility/mode and
+    process diagnostics, and a small CUDA initialization test on the B200 node
+    are required before further tuning. No speculative binding changes, driver
+    changes, checkpointing changes or batch-size reversal were made. The 8/16
+    variant remains available but cannot fix a device-selection failure.

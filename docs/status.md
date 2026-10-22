@@ -64,11 +64,14 @@ fresh run. The original diagnosis is recorded in
 - Bounded memory/budget/routing diagnostics, checkpoint selection, exact resume,
   DDP launch, Slurm dependency/resume planner and frozen official-test protocol.
 - Explicit `b200_4gpu` training/profiling with a separate tracked site file using
-  user-confirmed `aiq` / `gpu:b200:4`. After a user-reported OOM at microbatch 64
-  and encoder block batch 128, `configs/teacher_b200.yaml` reduces these to 16
-  and 32, preserving global batch 256 and 100k updates with a fresh retry root.
-  Fifty-six config/planner tests and the retry dry-run pass. The traceback has
-  not been inspected; smaller-run memory fit and throughput remain unmeasured.
+  user-confirmed `aiq` / `gpu:b200:4`. After user-reported OOMs at microbatch /
+  encoder block batch 64/128 and 16/32, `configs/teacher_b200.yaml` reduces these
+  to 8/16, preserving global batch 256 and 100k updates with a fresh retry root.
+  The subsequently supplied traceback fails with `cudaErrorDevicesUnavailable`
+  at device selection, before model/data initialization; that attempt is not
+  evidence of a batch-size OOM. GPU availability is unresolved, and smaller-run
+  memory fit and throughput remain unmeasured. The 8/16 retry passes 30 configuration tests and a relocated
+  planner dry-run; previous 16/32 validation included 56 config/planner tests.
 - The current teacher schedule is 100,000 updates with selection candidates at
   50k and 100k, configured consistently in both the core and replication plans.
   It uses the established `hpc/plan.py` workflow and a fresh run root in

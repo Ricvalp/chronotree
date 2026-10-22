@@ -1,6 +1,6 @@
 extends: teacher.yaml
-# Retry after the user-reported B200 OOM at microbatch 64 / 128 encoder blocks.
-# Four GPUs accumulate four passes of 16 to retain effective batch 256.
+# Retry after user-reported B200 OOMs at 64/128 and 16/32.
+# Four GPUs accumulate eight passes of 8 to retain effective batch 256.
 training:
-  microbatch: 16
-  encoder_block_batch_size: 32
+  microbatch: 8
+  encoder_block_batch_size: 16
