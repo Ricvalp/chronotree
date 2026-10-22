@@ -558,3 +558,31 @@
     blanket object-coverage or success-rate improvement is claimed. The diagram,
     data contract and HPC preparation instructions are updated; no full-data
     preparation, long training or real Slurm submission was performed locally.
+
+28. **Explicit four-B200 launch (22 October 2026).** The user requested four
+    B200s, microbatch 64 per GPU and 128 encoder blocks per call. Added
+    `b200_4gpu` to the shared planner/profiler profile table. The new tracked
+    `hpc/site_b200_4gpu.env` uses partition `aiq` and typed GRES `b200`, both
+    confirmed by the user's `sinfo -o '%P %G %f'` output. A teacher allocation
+    requests `gpu:b200:4` on one node; one Slurm task launches one torchrun agent
+    with four workers. GPU type selection remains a site setting, not inferred
+    from the profile label. The existing H200 site is unchanged.
+
+    The launch explicitly selects `configs/teacher.yaml`, which already has
+    effective batch 256, microbatch 64, encoder block batch 128 and 100,000
+    updates. No model, data recipe, learning rate or schedule was changed.
+    A fresh B200 run root and generated-plan directory isolate checkpoints,
+    tracking identity and submission state. The site retains 64 CPU cores,
+    128 GB host memory, a 48-hour requested limit and online W&B. The limit's
+    acceptance by `aiq` remains unverified; the supplied node listing does not
+    report partition limits. The architecture diagram was reviewed and its
+    snapshot check passes; displayed batching and architecture are unchanged.
+
+    Forty-three focused planner/profiler tests passed, including typed GRES,
+    one-agent/four-worker launches, fake-srun execution, configuration inheritance
+    and artifact isolation. A dry-run using the actual new site with only local
+    filesystem/Python paths substituted produced one teacher job with
+    `--partition=aiq --gres=gpu:b200:4`, the requested batch sizes and the new
+    balanced dataset. Generated batch syntax, lint and whitespace checks pass.
+    No Slurm submission, GPU benchmark or training was run; B200 memory fit,
+    throughput, scheduler acceptance and full-data execution remain unmeasured.

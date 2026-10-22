@@ -1,6 +1,6 @@
 # Implementation and verification status
 
-As of **21 October 2026**, the project installs and its complete bounded local
+As of **22 October 2026**, the project installs and its complete bounded local
 pipeline runs. The research comparison has **not yet run**. There is no remaining
 known local installation, action-alignment, calibration or simulator blocker.
 
@@ -63,6 +63,11 @@ fresh run. The original diagnosis is recorded in
   per-episode atomic results, videos, timing/storage/transfer counters and reports.
 - Bounded memory/budget/routing diagnostics, checkpoint selection, exact resume,
   DDP launch, Slurm dependency/resume planner and frozen official-test protocol.
+- Explicit `b200_4gpu` training/profiling with a separate tracked site file using
+  user-confirmed `aiq` / `gpu:b200:4`, a fresh run root and the existing teacher
+  global batch 256, microbatch 64, encoder block batch 128 and 100k updates.
+  Forty-three planner/profiler tests and a relocated-site dry-run pass; actual
+  B200 allocation, memory fit and throughput remain unmeasured.
 - The current teacher schedule is 100,000 updates with selection candidates at
   50k and 100k, configured consistently in both the core and replication plans.
   It uses the established `hpc/plan.py` workflow and a fresh run root in

@@ -58,7 +58,10 @@ def profile_launcher(monkeypatch, tmp_path):
     return launcher, invoke, repo, run_root, site
 
 
-@pytest.mark.parametrize("profile, gpus", [("h200_1gpu", 1), ("h200_4gpu", 4), ("b200_8gpu", 8)])
+@pytest.mark.parametrize(
+    "profile, gpus",
+    [("h200_1gpu", 1), ("h200_4gpu", 4), ("b200_4gpu", 4), ("b200_8gpu", 8)],
+)
 def test_dry_run_isolated_paths_config_and_single_agent(profile_launcher, monkeypatch, profile, gpus):
     launcher, invoke, repo, run_root, _ = profile_launcher
     with monkeypatch.context() as scoped:
@@ -91,13 +94,18 @@ def test_dry_run_isolated_paths_config_and_single_agent(profile_launcher, monkey
     subprocess.run(["bash", "-n", plan["script"]], check=True)
 
 
+@pytest.mark.parametrize("profile", ("h200_4gpu", "b200_4gpu"))
 def test_generated_script_preserves_arguments_with_spaces_and_launches_one_agent(
     profile_launcher,
     monkeypatch,
     tmp_path,
+    profile,
 ):
     _, invoke, repo, _, _ = profile_launcher
-    plan = invoke("--warmup-steps", "5", "--steps", "7", "--trace-steps", "0", "--scenario", "long-history")
+    plan = invoke(
+        "--profile", profile, "--warmup-steps", "5", "--steps", "7", "--trace-steps", "0",
+        "--scenario", "long-history",
+    )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_srun = fake_bin / "srun"

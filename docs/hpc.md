@@ -42,14 +42,16 @@ Submitted job IDs are persisted after every successful `sbatch --parsable` call.
 Keep manually maintained cluster settings directly under `hpc/`. The default is
 `hpc/site.env`; optional local variants such as `hpc/site_4gpu.env` are selected
 with `--site`. The default file and new `hpc/site_*.env` variants are ignored by
-Git; the explicitly tracked `hpc/site_4gpu.env` contains this cluster's four-GPU
-settings. `hpc/site.env.example` remains the portable template.
+Git; the explicitly tracked `hpc/site_4gpu.env` and `hpc/site_b200_4gpu.env`
+contain this cluster's H200 and B200 four-GPU settings respectively.
+`hpc/site.env.example` remains the portable template.
 
 ```text
 hpc/
   site.env.example              tracked settings template
   site.env                      local default settings
-  site_4gpu.env                  tracked four-GPU cluster settings
+  site_4gpu.env                  tracked four-H200 cluster settings
+  site_b200_4gpu.env             tracked four-B200 cluster settings
   plan.py                       planner
   jobs/                         maintained job templates
   generated/
@@ -93,16 +95,16 @@ cluster resources and output paths in `hpc/site_4gpu.env`. The teacher uses:
 | Setting | Value |
 |---|---|
 | Optimizer updates | 100,000 |
-| Global effective batch | 128 decisions |
+| Global effective batch | 256 decisions |
 | Configured microbatch cap | 64 decisions per GPU |
-| Actual microbatch on four GPUs | 32 decisions per GPU |
+| Actual microbatch on four GPUs | 64 decisions per GPU |
 | Forward/backward passes per GPU per update | 1 |
 | Encoder blocks per call | 128 |
 | Immutable checkpoint steps | 50,000 and 100,000 |
 
 The actual microbatch is `min(microbatch, effective_batch / GPU_count)`.
-Four GPUs therefore process `4 × 32 = 128` decisions per optimizer update.
-This is 12.8 million sampled decisions over the full run, four times the exposure
+Four GPUs therefore process `4 × 64 = 256` decisions per optimizer update.
+This is 25.6 million sampled decisions over the full run, eight times the exposure
 of the previous 50,000-update/global-64 configuration. The inherited learning rate is
 unchanged; the decay schedule uses the new 100,000-update budget. All 16 tasks,
 full causal histories, verified alignment checks, prepared data and eight loading
@@ -161,6 +163,45 @@ jobs keep their separate artifacts. Queued jobs still read their configuration
 files when they start, so source configuration edits also affect queued jobs
 that extend those files. No interactive-shell export of `STMEM_PYTHON` is needed:
 the planner reads the site file directly.
+
+### Four B200s with the balanced dataset
+
+The user confirmed on 22 October 2026 that the cluster advertises
+`aiq gpu:b200:7/8`. `hpc/site_b200_4gpu.env` therefore selects partition `aiq`
+and GPU type `b200`, with profile `b200_4gpu`. The rendered teacher requests
+`--gres=gpu:b200:4`, one node, one Slurm task and four torchrun workers.
+The profile controls the worker count; the partition and typed GRES select the
+hardware. CPU and host-memory requests remain 64 cores and 128 GB. The inherited
+48-hour limit has not been checked against this partition's scheduling policy.
+
+Use `configs/teacher.yaml` explicitly: it already specifies microbatch 64,
+encoder block batch 128, effective batch 256 and 100,000 updates. A previously
+created `teacher_balanced_v2.yaml` with smaller microbatches is not selected by
+these commands. All four GPUs process 64 decisions per update without additional
+accumulation. Prepared geometry remains `prepared_balanced_v2/`, 2,048 points and
+32 centers per frame; no new preparation is needed for this GPU change.
+
+After pushing and pulling these changes, render the job:
+
+```bash
+.venv/bin/python hpc/plan.py \
+  --site hpc/site_b200_4gpu.env --profile b200_4gpu \
+  --teacher-config configs/teacher.yaml \
+  --plan core_seed0 --only seed0_teacher \
+  --output-dir hpc/generated/teacher_balanced_v2_b200_b256_m64_blocks128_100k \
+  --log-every 1 --progress-every-seconds 30 \
+  --dry-run
+```
+
+Inspect `plan.json` and `jobs/seed0_teacher.sbatch` in the generated directory,
+then repeat exactly the same command with `--submit` instead of `--dry-run`.
+The new site file chooses a fresh root:
+`runs/teacher_balanced_v2_b200_b256_m64_blocks128_100k/seed0/teacher/`.
+The existing H200 site file and run roots remain separate. W&B is online in the
+same `chronotree` project, including system metrics. B200 memory fit and
+throughput with the larger geometry remain unmeasured; no automatic OOM
+microbatch reduction is implemented. Resource syntax and dry-run correctness do
+not establish scheduler acceptance, queue wait time or actual B200 execution.
 
 ### Teacher learning-rate comparison
 
@@ -675,6 +716,7 @@ or training change is part of the export.
 | `h200_1gpu` | 1 | Default experimental profile |
 | `h200_4gpu` | 4 | Optional measured-throughput comparison |
 | `b200_1gpu` | 1 | Explicit opt-in |
+| `b200_4gpu` | 4 | Explicit opt-in; tracked B200 site selects `aiq`, `gpu:b200:4` |
 | `b200_8gpu` | 8 | Explicit opt-in |
 
 Choose `--profile h200_4gpu` to render DDP training. One Slurm task runs **one**

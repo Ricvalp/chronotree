@@ -76,11 +76,15 @@ def option(command, name):
 
 
 @pytest.mark.parametrize("plan_name", ("core_seed0", "central_3seed"))
-def test_teacher_plan_matches_training_budget_and_isolates_site_run_root(planning, tmp_path, plan_name):
+@pytest.mark.parametrize("profile, gpu_type", (("h200_4gpu", ""), ("b200_4gpu", "customgpu")))
+def test_teacher_plan_matches_training_budget_and_isolates_site_run_root(
+    planning, tmp_path, plan_name, profile, gpu_type,
+):
     planner, invoke, repo, run_root, generated = planning
     site_path = tmp_path / "site.env"
     site_path.write_text(
-        site_path.read_text() + "STMEM_CPUS=64\nWANDB_MODE=online\nWANDB_PROJECT=chronotree\n"
+        site_path.read_text()
+        + f"STMEM_CPUS=64\nSTMEM_GPU_TYPE={gpu_type}\nWANDB_MODE=online\nWANDB_PROJECT=chronotree\n"
     )
     old_run = tmp_path / "previous experiment/seed0/teacher/last.pt"
     old_run.parent.mkdir(parents=True)
@@ -88,7 +92,7 @@ def test_teacher_plan_matches_training_budget_and_isolates_site_run_root(plannin
     original_config = (repo / "configs/teacher.yaml").read_bytes()
     original_site = site_path.read_bytes()
     plan = invoke(
-        "--plan", plan_name, "--profile", "h200_4gpu", "--only", "seed0_teacher", "--log-every", "1"
+        "--plan", plan_name, "--profile", profile, "--only", "seed0_teacher", "--log-every", "1"
     )
     assert plan["job_count"] == plan["maximum_concurrent_allocations"] == 1
     assert plan["remaining_stage_work"] == ["seed0_teacher"]
@@ -103,6 +107,7 @@ def test_teacher_plan_matches_training_budget_and_isolates_site_run_root(plannin
     assert cfg["training"]["effective_batch"] == 256
     assert cfg["training"]["microbatch"] == 64
     assert cfg["training"]["encoder_block_batch_size"] == 128
+    assert cfg["profile"] == profile
     assert cfg["paths"]["run_root"] == str(run_root)
     assert cfg["training"]["effective_batch"] // job["gpus"] == 64
     assert cfg["data"]["prepared_subdir"] == "prepared_balanced_v2"
@@ -118,8 +123,10 @@ def test_teacher_plan_matches_training_budget_and_isolates_site_run_root(plannin
     assert job["outputs"] == expected_outputs
     script = Path(job["script"]).read_text()
     assert Path(job["script"]) == generated / "jobs/seed0_teacher.sbatch"
-    assert "#SBATCH --gres=gpu:4" in script and "#SBATCH --cpus-per-task=64" in script
-    assert "--nproc-per-node=4" in script and "stmem.train --stage teacher" in script
+    gres = f"gpu:{gpu_type + ':' if gpu_type else ''}4"
+    assert f"#SBATCH --gres={gres}" in script and "#SBATCH --cpus-per-task=64" in script
+    assert "#SBATCH --ntasks=1" in script and "srun --ntasks=1" in script
+    assert script.count("--nproc-per-node=4") == 1 and "stmem.train --stage teacher" in script
     assert f"export STMEM_RUN_ROOT={shlex.quote(str(run_root))}" in script
     assert "export WANDB_MODE=online" in script and "export WANDB_PROJECT=chronotree" in script
     assert "B:USR1@180" in script and "--stop-file" in script and "--log-every 1" in script
@@ -131,7 +138,7 @@ def test_teacher_plan_matches_training_budget_and_isolates_site_run_root(plannin
 
     # Every seed's selection stage must evaluate precisely the checkpoints its
     # teacher will actually produce; downstream cache use still requires selection.
-    full_plan = invoke("--plan", plan_name, "--profile", "h200_4gpu")
+    full_plan = invoke("--plan", plan_name, "--profile", profile)
     jobs = {item["name"]: item for item in full_plan["jobs"]}
     for seed in manifest["seeds"]:
         teacher = jobs[f"seed{seed}_teacher"]

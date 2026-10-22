@@ -18,7 +18,14 @@ from typing import Any
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
-PROFILES = {"a5000_debug": 1, "h200_1gpu": 1, "h200_4gpu": 4, "b200_1gpu": 1, "b200_8gpu": 8}
+PROFILES = {
+    "a5000_debug": 1,
+    "h200_1gpu": 1,
+    "h200_4gpu": 4,
+    "b200_1gpu": 1,
+    "b200_4gpu": 4,
+    "b200_8gpu": 8,
+}
 # Only nonsecret W&B settings belong in rendered scripts or site.env. Credentials
 # remain in the account's W&B login store or its external runtime environment.
 WANDB_SITE_VARIABLES = frozenset({"WANDB_MODE", "WANDB_PROJECT", "WANDB_ENTITY", "WANDB_DIR"})
