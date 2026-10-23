@@ -72,8 +72,12 @@ fresh run. The original diagnosis is recorded in
   evidence of a batch-size OOM. A user-run standalone four-worker tensor probe
   reproduces the error on `ainode01`, despite four visible GPUs appearing empty
   in Default compute mode; only rank 3's failure is confirmed before the others
-  are terminated. GPU availability is unresolved, and smaller-run memory fit
-  and throughput remain unmeasured. The 8/16 retry passes 30 configuration tests
+  are terminated. A later user-run training job reached roughly 600 updates on
+  `ainode04`, then genuinely exhausted GPU memory in the decoder K/V projection
+  (162.76 GiB actively allocated by PyTorch). The batched encoder now avoids
+  retaining dense candidate distances for bandwidth gradients. Full-history
+  B200 memory fit and throughput after that fix remain unmeasured. The 8/16 retry
+  passes 30 configuration tests
   and a relocated planner dry-run; previous 16/32 validation included 56
   config/planner tests.
 - The current teacher schedule is 100,000 updates with selection candidates at
@@ -111,8 +115,9 @@ and matmul forward/backward checks pass. Vulkan/RGB-D reset/step works.
 
 | Check | Measured outcome |
 |---|---|
-| Core test suite | **503 passed, 1 skipped** in 88.64 s on 21 October; optional new-format debug prepared subset absent. Earlier transient worker-shutdown failure and successful isolated repeats are recorded in decision 27. |
+| Core test suite | **510 passed, 1 skipped** in 90.99 s on 23 October; optional new-format debug prepared subset absent. Earlier transient worker-shutdown failure and successful isolated repeats are recorded in decision 27. |
 | Balanced geometry integration | Reviewed real preview parity; four real RGB-D records match online/offline points and centers exactly. BF16 CUDA forward/backward on two eight-frame 2,048-point/32-center blocks passes; no full-history H200 capacity claim. |
+| Saved encoder geometry | Synthetic BF16, four eight-frame blocks at 2,048 points/32 centers: peak additional encoder forward/backward memory 677,018,624 → 487,831,040 bytes (27.9% lower). All outputs bit-identical; maximum parameter-gradient difference 1.49e-8. CPU regression checks dense saved geometry is absent; no full-policy/B200 capacity claim. See [evidence](evidence/encoder_distance_memory.json). |
 | Package lock/install | `uv lock --check`, `uv pip check`, imports and lint pass |
 | Real data | One 1,251,608,544-byte VideoUnmask archive; SHA verified; two episodes prepared |
 | Expert replay | Both complete sampled training episodes reached official success; exact nonterminal post-command qpos match |

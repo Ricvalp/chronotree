@@ -174,11 +174,21 @@ The profile controls the worker count; the partition and typed GRES select the
 hardware. CPU and host-memory requests remain 64 cores and 128 GB. The inherited
 48-hour limit has not been checked against this partition's scheduling policy.
 
-The user initially reported OOMs at microbatch/encoder-block sizes 64/128 and
-16/32. The later supplied traceback instead shows `cudaErrorDevicesUnavailable`
-at `torch.cuda.set_device(local)`, before model/data initialization. That attempt
-does not establish a batch-size memory limit; GPU availability must be diagnosed
-before further memory tuning. The smaller retry settings remain available. Use
+The first supplied failure traceback showed `cudaErrorDevicesUnavailable` at
+`torch.cuda.set_device(local)`, before model/data initialization, and a standalone
+probe reproduced it on `ainode01`. A subsequent training retry reached roughly
+600 updates on `ainode04` before a genuine GPU OOM in the decoder's K/V projection:
+162.76 GiB allocated by PyTorch, 13.32 GiB reserved but unused, and a failed
+702 MiB request. The earlier device-access failure and this training OOM are
+separate problems. The latter run followed the 16/32 retry instructions; its exact
+resolved config and per-update memory trace were not supplied.
+
+The batched visual encoder now ranks candidate neighbors without autograd and
+computes differentiable Gaussian distances only for the selected neighbors. This
+removes dense candidate-distance tensors retained solely for bandwidth gradients,
+without changing points, centers, neighborhoods, history coverage or the objective.
+The measured local reduction and its scope are recorded in `docs/status.md`.
+Long histories and other saved encoder activations still require headroom. Use
 `configs/teacher_b200.yaml` for the retry: it extends `teacher.yaml` with
 microbatch 8 and encoder block batch 16, retaining effective batch 256 and
 100,000 updates. Each GPU accumulates eight passes of 8 decisions per update.
@@ -193,28 +203,33 @@ After pushing and pulling these changes, render the job:
 cd /hpc/home/phi/rvalperga/chronotree
 # Select current code, even if this shell previously evaluated an old checkout.
 export PYTHONPATH="$PWD/src"
+# Optional fragmentation mitigation for variable history lengths; not a memory-fit guarantee.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 .venv/bin/python hpc/plan.py \
   --site hpc/site_b200_4gpu.env --profile b200_4gpu \
   --teacher-config configs/teacher_b200.yaml \
   --plan core_seed0 --only seed0_teacher \
-  --output-dir hpc/generated/teacher_balanced_v2_b200_b256_m8_blocks16_100k \
+  --run-root runs/teacher_balanced_v2_b200_b256_m8_blocks16_memoryfix_100k \
+  --output-dir hpc/generated/teacher_balanced_v2_b200_b256_m8_blocks16_memoryfix_100k \
   --log-every 1 --progress-every-seconds 30 \
   --dry-run
 ```
 
 Inspect `plan.json` and `jobs/seed0_teacher.sbatch` in the generated directory,
 then repeat exactly the same command with `--submit` instead of `--dry-run`.
-The new site file chooses a fresh root:
-`runs/teacher_balanced_v2_b200_b256_m8_blocks16_100k/seed0/teacher/`.
+The explicit run-root override chooses a fresh directory:
+`runs/teacher_balanced_v2_b200_b256_m8_blocks16_memoryfix_100k/seed0/teacher/`.
 The existing H200 site file and run roots remain separate. W&B is online in the
 same `chronotree` project, including system metrics. The failed 64/128 and 16/32
 runs' artifacts stay in their previous directories. No resume is requested for the retry.
-The supplied failure occurs during device selection, so reducing these batch
-settings cannot resolve it. Inspect the failed allocation with `sacct`, then
-check GPU visibility, compute mode/processes and a tiny CUDA initialization in a
-short B200 allocation. Preserve Slurm's `CUDA_VISIBLE_DEVICES`; no binding or
-driver workaround is established. Earlier attempts' logs have not been compared.
-Memory fit and throughput remain unmeasured; no automatic OOM reduction exists.
+If device initialization fails again, inspect GPU visibility and the node before
+tuning batch sizes. Preserve Slurm's `CUDA_VISIBLE_DEVICES`; no binding or driver
+workaround is established. The smaller batch and encoder fix have not been
+benchmarked on full-history B200 training; no automatic OOM reduction exists.
+The default rolling checkpoint interval is 1,000 updates, so a failure near 600
+may have no `last.pt` to resume. Check for that file before requesting resume.
+The existing peak-memory metrics are cumulative high-water marks, not memory
+still held after each update; a rising peak alone does not establish a leak.
 
 ### Teacher learning-rate comparison
 

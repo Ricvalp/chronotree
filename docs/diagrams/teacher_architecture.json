@@ -105,7 +105,7 @@
     "src/stmem/evaluation/robomme_adapter.py": "33648a71430dbee9bcf153b07b5bc0d522ce126abcfe2c1aa90ca1128211e76c",
     "src/stmem/models/action_flow.py": "0f4e91469f7ff1726e2835ae5d370eee7a4fc75b7c76b3683c5c37df0976db6e",
     "src/stmem/models/batched_policy.py": "407ab8933d2d3e4a65eda7ca08528021e413dd6ce5a5de991c7036180b5b91a4",
-    "src/stmem/models/batched_spacetime.py": "98b4d77a1b94a4e2ed737f26c9e1b4a00b8e84c13e99a4495bc0f49f6a1ba985",
+    "src/stmem/models/batched_spacetime.py": "1604c2fd2f98362c83f4769fd1f8e4358833e5ae5ee4c36731ab5440839ad04e",
     "src/stmem/models/event_encoder.py": "bd8935c9a46149645cdf6ec1647c03bbaebbb1b8830f09ce470b62a156e25112",
     "src/stmem/models/metadata_adapter.py": "e396f64ea28c7a2700dfb52b5f735cc680f6e8ab66c74c5a4a8a3fa148aca30b",
     "src/stmem/models/policy.py": "e5aac4ff3f9449740412bb00bb1da03b354d03de316f9d67d2c7121b6faef2c0",

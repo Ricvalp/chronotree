@@ -1,0 +1,47 @@
+{
+  "scope": "synthetic four independent eight-frame encoder blocks; no policy/DDP/loader or B200",
+  "device": "NVIDIA RTX 5000 Ada Generation",
+  "torch": "2.9.1+cu128",
+  "precision": "bf16",
+  "points_shape": [
+    4,
+    8,
+    2048,
+    6
+  ],
+  "centers_per_frame": 32,
+  "neighbor_cap": 128,
+  "width": 256,
+  "activation_checkpointing": false,
+  "measurements": {
+    "before": {
+      "forward_live_extra_bytes": 613761024,
+      "forward_backward_peak_extra_bytes": 677018624,
+      "loss": 1.0766059160232544
+    },
+    "after": {
+      "forward_live_extra_bytes": 412368896,
+      "forward_backward_peak_extra_bytes": 487831040,
+      "loss": 1.0766059160232544
+    }
+  },
+  "output_parity": "bit-identical all EncodedLeaves fields",
+  "max_parameter_gradient_absolute_difference": 1.4901161193847656e-08,
+  "gradient_tolerance": {
+    "rtol": 3e-05,
+    "atol": 3e-06
+  },
+  "recorded_date": "2026-10-23",
+  "baseline_git": "4cbe63603c3c6e6e1884a181acb7f947fbdcc937",
+  "optimized_source_sha256": "1604c2fd2f98362c83f4769fd1f8e4358833e5ae5ee4c36731ab5440839ad04e",
+  "synthetic_input": {
+    "seed": 917,
+    "distribution": "uniform RGB in [0,1); XYZ in [0,0.2)",
+    "times": "0..7 source-local frames",
+    "prepared_centers": "observed indices 0,64,...,1984 per frame",
+    "point_mask": "all valid",
+    "input_gradients": false
+  },
+  "measurement_method": "One no-grad warmup per implementation, synchronize, clear unused CUDA cache, reset peak stats; one encoder forward and backward of content.square().mean() + 0.01*occupancy.mean(). Memory excludes allocations live before the measured forward. Both implementations use identical weights and inputs.",
+  "capacity_claim": "No full-policy/full-history/DDP/B200 or throughput result; point/center quotas and mathematical model unchanged."
+}

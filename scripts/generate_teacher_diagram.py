@@ -537,7 +537,9 @@ def encoders(file, cfg, policy):
         "indices choose anchors; the encoder constructs exact bounded Gaussian neighborhoods "
         "from the currently available block or prefix. Pooling neighbors are not clustering "
         "assignments. Temporal distance uses source-local recorded frames, not seconds. "
-        "Centers are geometric samples, not semantic object or robot keypoints.",
+        "Centers are geometric samples, not semantic object or robot keypoints. "
+        "Batched neighbor ranking runs without autograd; selected-neighbor distances "
+        "are then evaluated with gradients for the learned bandwidths and observed inputs.",
     )
     gather = p.card(
         820,

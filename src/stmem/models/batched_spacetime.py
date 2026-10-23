@@ -160,11 +160,20 @@ def forward_batched(
         allowed = allowed & center_valid[:, start:end, None] & point_valid[:, None, :]
         if encoder.framewise:
             allowed = allowed & (point_frame[None, None, :] == frame_index[None, start:end, None])
-        distance = spatial / encoder.tau_x + temporal / encoder.tau_t
-        nearest = canonical_nearest(distance, allowed, encoder.neighbor_cap)
+        # Neighbor selection is discrete. Retaining differentiable distances to
+        # every candidate point would save dense tensors for the bandwidth
+        # gradients across every history block until the policy's backward.
+        # Keep the same ranking, then differentiate only the selected distances.
+        with torch.no_grad():
+            distance = spatial / encoder.tau_x + temporal / encoder.tau_t
+            nearest = canonical_nearest(distance, allowed, encoder.neighbor_cap)
+        del distance
         mask = allowed.gather(-1, nearest)
         row_valid = mask.any(-1)
-        selected_distance = distance.gather(-1, nearest)
+        selected_distance = (
+            spatial.gather(-1, nearest) / encoder.tau_x + temporal.gather(-1, nearest) / encoder.tau_t
+        )
+        del spatial, temporal, allowed
         logits = (-selected_distance).masked_fill(~mask, -torch.inf)
         logits = torch.where(row_valid[..., None], logits, torch.zeros_like(logits))
         weights = torch.softmax(logits, dim=-1) * mask.float()
@@ -172,6 +181,7 @@ def forward_batched(
             [dx.gather(2, nearest[..., None].expand(*nearest.shape, 3)), dt.gather(-1, nearest)[..., None]],
             dim=-1,
         )
+        del dx, dt
         edge = encoder.edge_mlp(torch.cat([features[batch_index, nearest], relative], dim=-1)).float()
         contents.append((weights[..., None] * edge).sum(2, dtype=torch.float32))
         neighbors = cloud[batch_index, nearest, :3]

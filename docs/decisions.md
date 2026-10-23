@@ -663,3 +663,55 @@
     four-B200 allocation are the next diagnostic, followed by a node comparison
     if needed. Driver/device access and fabric readiness remain hypotheses,
     not established diagnoses. No further batch or launcher changes were made.
+
+32. **Remove saved dense geometry after a real B200 OOM (23 October 2026).**
+    The user reports a four-GPU job failing after roughly 600 updates. The log
+    identifies `ainode04`, a rank-zero decoder K/V allocation failure requesting
+    702 MiB, 162.76 GiB actively allocated by PyTorch, and 13.32 GiB reserved but
+    unused on a 178.35 GiB device. This is a genuine training OOM, distinct from
+    the earlier device-initialization failure. The job followed the 16/32 retry
+    instructions, but its resolved configuration and memory timeline were not
+    supplied. Variable history lengths, padded decoder contexts and fragmentation
+    can raise the peak; the traceback alone does not establish a growing leak.
+
+    Auditing the trainer found backward after every microbatch, detached metric
+    accumulation and bounded CPU-only prefetch. Encoder outputs from every chunk
+    of one microbatch remain differentiable until that backward. Consequently,
+    lowering encoder chunk size alone does not bound all retained activations.
+    In particular, dense point-to-center Gaussian distances retained candidate
+    tensors for the two learned bandwidth derivatives even though only the
+    selected neighbors contribute. Batched pooling now performs the unchanged
+    discrete ranking without autograd, gathers spatial/temporal distances, and
+    differentiates their weighted distance only for the selected neighbors.
+    Dense temporaries are released before edge feature processing. No points,
+    centers, history frames, masks, causal boundaries, supervision, precision,
+    model parameters or activation-checkpointing defaults are changed.
+
+    The unchanged scalar encoder supplies an independent dense reference. New
+    synthetic CPU checks cover content and occupancy, all output fields, learned
+    bandwidth and MLP gradients, input-point/time gradients, equal-distance ties,
+    invalid points, absent centers, empty blocks and framewise/joint neighborhoods.
+    A saved-tensor regression fails against the previous implementation and
+    passes after the fix: the small fixture's dense saved geometry falls from
+    14,688 bytes to zero. The architecture diagram's neighborhood tooltip and
+    source fingerprints are regenerated with the same mathematical layers,
+    tensor shapes and causal boundaries.
+
+    On the available RTX 5000 Ada, the actual-device doctor passes FP32, BF16 and
+    FP16. A bounded synthetic BF16 encoder comparison uses four independent
+    eight-frame blocks, 2,048 points/frame, 32 observed-point centers/frame,
+    128 neighbors/center and width 256, without activation checkpointing. All
+    output fields are bit-identical; maximum parameter-gradient difference is
+    1.49e-8. Additional live memory at the end of forward falls from 613,761,024
+    to 412,368,896 bytes; forward/backward peak above the pre-forward baseline
+    falls from 677,018,624 to 487,831,040 bytes (27.9%). This is an encoder-only
+    diagnostic, not a full-policy, long-history, DDP or B200 capacity claim.
+    See `docs/evidence/encoder_distance_memory.json`. No data preparation,
+    cluster submission or long training was performed. The existing 8/16 B200
+    variant remains the conservative retry with effective batch 256; memory fit
+    over all real histories still requires the user's cluster run.
+
+    The complete CPU-safe invariant suite passes: 510 passed, 1 skipped in
+    90.99 seconds; the optional real small prepared subset is absent. The diagram
+    generator's snapshot and XML validation pass after regeneration, and the
+    generated HTML was opened in headless Firefox and visually inspected.
