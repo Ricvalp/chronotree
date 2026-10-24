@@ -1,0 +1,3 @@
+extends: ${STMEM_RUN_ROOT}/seed0/teacher/config.json
+evaluation:
+  video_cap: 32

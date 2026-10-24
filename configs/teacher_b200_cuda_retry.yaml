@@ -1,0 +1,4 @@
+extends: teacher.yaml
+training:
+  microbatch: 16
+  encoder_block_batch_size: 32

@@ -1,0 +1,8 @@
+extends: teacher_b200.yaml
+model:
+  checkpoint_blocks: false
+training:
+  effective_batch: 128
+  microbatch: 8
+  encoder_block_batch_size: 32
+  lr: 0.0001
