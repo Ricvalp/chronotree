@@ -16,6 +16,7 @@ from stmem.models.policy import MemoryPolicy, choose_records
 from stmem.models.action_flow import flow_sample, masked_mse
 from stmem.training.data import TrainingData, rank_positions
 from stmem.training.loader import PolicyBatchLoader
+from stmem.training.forks import COMMAND_FLAG, load_fork_checkpoint, schedule_steps, validate_teacher_fork
 from stmem.training.logging_options import positive_log_every, positive_progress_seconds, resolve_logging
 from stmem.training.progress import TrainingProgress, print_json
 from stmem.training.runtime import (
@@ -54,11 +55,35 @@ def context_sample(policy, evidence, cfg, position):
     return choose_records(evidence, method, budget, rng=rng).records
 
 
-def train_policy(cfg, stage, *, resume=None, stop_file=None, log_every=None, progress_every_seconds=None):
+def train_policy(
+    cfg,
+    stage,
+    *,
+    resume=None,
+    fork_from=None,
+    fork_sha256=None,
+    stop_file=None,
+    log_every=None,
+    progress_every_seconds=None,
+):
     validate_config(cfg)
+    if resume and fork_from:
+        raise ValueError("Choose either resume or fork_from, not both")
+    if fork_sha256 and not fork_from:
+        raise ValueError("fork_sha256 requires fork_from")
+    if fork_from and stage != "teacher":
+        raise ValueError("Only teacher checkpoints support matched continuations")
     logging = resolve_logging(cfg, log_every, progress_every_seconds)
     rank = int(os.environ.get("RANK", "0"))
     directory = run_dir(cfg, stage)
+    if fork_from:
+        if rank == 0 and directory.exists() and any(directory.iterdir()):
+            raise FileExistsError(f"Teacher fork needs a new empty run directory: {directory}")
+        # All ranks verify the same immutable input before model construction.
+        actual_hash = file_sha256(fork_from)
+        if fork_sha256 is not None and fork_sha256 != actual_hash:
+            raise ValueError("Teacher fork checkpoint SHA256 mismatch")
+        fork_sha256 = actual_hash
     if rank == 0 and not resume and (directory / "last.pt").exists():
         raise FileExistsError(f"Existing run: {directory}; use --resume explicitly")
     with RunTracker(
@@ -67,7 +92,12 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None, log_every=None, pro
         job_type=stage,
         rank=rank,
         resume=bool(resume),
-        metadata={"resume_checkpoint": str(resume) if resume else None, "logging": logging},
+        metadata={
+            "resume_checkpoint": str(resume) if resume else None,
+            "fork_checkpoint": str(fork_from) if fork_from else None,
+            "fork_sha256": fork_sha256,
+            "logging": logging,
+        },
     ) as tracker:
         with TrainingProgress(directory, logging["progress_every_seconds"], rank=rank) as progress:
             progress.update("device_setup", stage=stage, run_attempt=tracker.identity.get("attempt"))
@@ -76,6 +106,8 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None, log_every=None, pro
                     cfg,
                     stage,
                     resume=resume,
+                    fork_from=fork_from,
+                    fork_sha256=fork_sha256,
                     stop_file=stop_file,
                     tracker=tracker,
                     logging=logging,
@@ -87,7 +119,19 @@ def train_policy(cfg, stage, *, resume=None, stop_file=None, log_every=None, pro
         return result
 
 
-def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, progress, resources):
+def _train_policy(
+    cfg,
+    stage,
+    *,
+    resume=None,
+    fork_from=None,
+    fork_sha256=None,
+    stop_file=None,
+    tracker,
+    logging,
+    progress,
+    resources,
+):
     from stmem.doctor import choose_precision
     from stmem.data.cache import FrozenCache
 
@@ -165,11 +209,15 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
         weight_decay=cfg["training"]["weight_decay"],
     )
     steps = cfg["training"]["steps"]
+    decay_steps = schedule_steps(cfg["training"])
     warmup = cfg["training"]["warmup_steps"]
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
         lambda s: min((s + 1) / max(warmup, 1), 1.0)
-        * (0.1 + 0.9 * (1 + math.cos(math.pi * min(max(s - warmup, 0) / max(steps - warmup, 1), 1))) / 2),
+        * (
+            0.1
+            + 0.9 * (1 + math.cos(math.pi * min(max(s - warmup, 0) / max(decay_steps - warmup, 1), 1))) / 2
+        ),
     )
     start = 0
     provenance = {
@@ -184,11 +232,30 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
         "sampler": data.sampler_version,
         "rank_assignment": "rotating_rank_v1",
     }
-    if resume:
-        startup_progress("resume_loading")
-        saved = load_checkpoint(resume)
-        if saved["stage"] != stage or saved["provenance"] != provenance:
-            raise ValueError("Resume stage/data/config/dependencies/world size mismatch")
+    fork = None
+    if resume or fork_from:
+        startup_progress("fork_loading" if fork_from else "resume_loading")
+        saved = load_fork_checkpoint(fork_from, fork_sha256) if fork_from else load_checkpoint(resume)
+        if fork_from:
+            validate_teacher_fork(saved, cfg, provenance)
+            fork = {
+                "source_checkpoint": str(Path(fork_from).resolve()),
+                "source_sha256": fork_sha256,
+                "source_step": saved["step"],
+                "source_tracking_id": saved.get("tracking", {}).get("id"),
+                "changes": {
+                    COMMAND_FLAG: {
+                        "before": saved["config"]["model"].get(COMMAND_FLAG, True),
+                        "after": cfg["model"].get(COMMAND_FLAG, True),
+                    }
+                },
+                "schedule_steps": decay_steps,
+                "intended_final_step": steps,
+            }
+        else:
+            if saved["stage"] != stage or saved["provenance"] != provenance:
+                raise ValueError("Resume stage/data/config/dependencies/world size mismatch")
+            fork = saved.get("fork")
         policy.load_state_dict(saved["model"])
         optimizer.load_state_dict(saved["optimizer"])
         scheduler.load_state_dict(saved["scheduler"])
@@ -214,6 +281,7 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
                 "environment": environment_manifest(),
                 "synthetic": data.synthetic,
                 "logging": logging,
+                "fork": fork,
             },
             directory / "manifest.json",
         )
@@ -230,6 +298,8 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
         {
             "training/start_step": start,
             "training/intended_steps": steps,
+            "training/schedule_steps": decay_steps,
+            "fork": fork,
             "training/world_size": world,
             "training/precision": precision,
             "training/microbatch_size_rank": microbatch,
@@ -316,6 +386,7 @@ def _train_policy(cfg, stage, *, resume=None, stop_file=None, tracker, logging, 
                 "environment": environment_manifest(),
                 "tracking": dict(tracker.identity),
                 "logging": logging,
+                "fork": fork,
             }
             atomic_save(payload, directory / "last.pt")
             tracker.checkpoint(directory / "last.pt", step)
@@ -559,7 +630,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     parser.add_argument("--stage", choices=["teacher", "compact", "router", "perceiver"])
-    parser.add_argument("--resume")
+    initialization = parser.add_mutually_exclusive_group()
+    initialization.add_argument("--resume")
+    initialization.add_argument(
+        "--fork-from", help="Start a separate matched teacher continuation from this complete training state"
+    )
+    parser.add_argument("--fork-sha256", help="Expected SHA256 of the immutable fork source checkpoint")
     parser.add_argument("--stop-file", default=os.environ.get("STMEM_STOP_FILE"))
     parser.add_argument(
         "--log-every",
@@ -575,6 +651,8 @@ def main():
     cfg = load_config(args.config)
     stage = args.stage or cfg["stage"]
     cfg["stage"] = stage
+    if (args.fork_from or args.fork_sha256) and stage != "teacher":
+        parser.error("--fork-from and --fork-sha256 apply only to teacher training")
     if stage == "router":
         from stmem.training.routers import train_router
 
@@ -586,6 +664,8 @@ def main():
             cfg,
             stage,
             resume=args.resume,
+            fork_from=args.fork_from,
+            fork_sha256=args.fork_sha256,
             stop_file=args.stop_file,
             log_every=args.log_every,
             progress_every_seconds=args.progress_every_seconds,

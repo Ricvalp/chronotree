@@ -989,3 +989,52 @@ for preparation and evaluation. H200 and B200 requested-profile totals remain
 separate; no credit conversion is invented. Verify the actual GPU model in the
 run's doctor artifact because a profile name cannot constrain unspecified site
 resources.
+
+## Matched teacher continuations
+
+Use `hpc/continue_teacher.py` to compare additional training with previous joint
+commands against removing those seven input channels. Both branches start from
+the same immutable copy of a teacher training checkpoint, retaining model,
+optimizer, scheduler, scaler, normalization, RNG and sample position. Measured
+joint positions and the previous gripper command remain inputs in both branches.
+The source checkpoint must use the same GPU count as the new jobs.
+
+After pushing the implementation and pulling it on the HPC:
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+.venv/bin/python hpc/continue_teacher.py \
+  --site hpc/site_b200_4gpu.env \
+  --profile b200_4gpu \
+  --checkpoint runs/teacher_b200_b128_m8_blocks32/seed0/teacher/last.pt \
+  --additional-steps 10000 \
+  --run-root runs/teacher_joint_command_continuations_50k \
+  --output-dir hpc/generated/teacher_joint_command_continuations_50k \
+  --dry-run
+```
+
+Inspect `source_step`, `end_step`, `schedule_steps`, resources and both jobs in the
+printed plan. `last.pt` means its actual saved step; use `step_00050000.pt` if an
+exact 50k snapshot exists and is the intended starting point. A 49,978-step source
+produces checkpoints at 54,978 and 59,978. The original 100k LR schedule is kept;
+the continuation is not a new warmup or a shortened cosine-decay schedule.
+
+Rerun the same command with `--submit` replacing `--dry-run` to submit both jobs.
+The reviewed snapshot remains fixed if the source `last.pt` subsequently advances.
+Each job uses four GPUs on `aiq` with untyped `--gres=gpu:4`, 64 CPUs, 128G RAM and
+48 hours with the current B200 site file. They can run independently and request
+eight GPUs total if scheduled together. No new site file or data preparation is
+needed. Training artifacts go to:
+
+```text
+runs/teacher_joint_command_continuations_50k/control/seed0/teacher/
+runs/teacher_joint_command_continuations_50k/no_previous_joint_commands/seed0/teacher/
+```
+
+Both create new W&B runs in the existing project. The original run and the fresh
+from-scratch ablation use their own directories. The paired launcher is for fresh
+branches and refuses duplicate submissions; do not rerun it to resume an existing
+branch. A continuation interrupted before its declared endpoint remains resumable
+with `stmem.train --resume <branch>/seed0/teacher/last.pt` and that branch's generated
+configuration, without `--fork-from` or `--fork-sha256`. A completed 10k continuation
+has its own completion marker; it does not mark the original 100k run complete.

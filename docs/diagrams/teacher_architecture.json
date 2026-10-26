@@ -97,7 +97,7 @@
   "source_sha256": {
     "configs/base.yaml": "d43ab789fc05d99e89502781cd080a4ab23d0b1e12decebffb3ef1761e02b859",
     "configs/teacher.yaml": "f79a9b13d6fe8edb0a0921ece6cf2d6a0d0a789c8890fc8f99adf3630953a310",
-    "src/stmem/config.py": "5fdee2a32271d449b949e4fd850a073589a796afb3f32260e372bf7ce99bc66b",
+    "src/stmem/config.py": "b0b331bb5b89f8713f391ad203556c7cd6062cf22ba5223af6f2d2490dc81eeb",
     "src/stmem/data/canonical.py": "3f8bd860bd2daddbd1fd05f1148fca7b5bc5b2923108cc9b83cbc0bdc8ef7dfd",
     "src/stmem/data/center_sampling.py": "829973de64ed8909a3386627ae1e4575f3b3b294685b1df4af5062a07b976cdc",
     "src/stmem/data/dataset.py": "4410f877cf65c35c9ea5dde8bb298e60932b36f1e26f8d1dd76dcfaabad0a011",
@@ -112,7 +112,7 @@
     "src/stmem/models/policy.py": "9815775b5d7dd14f520c1782094282062f152e87070889138e4cd34eafd1834b",
     "src/stmem/models/spacetime_encoder.py": "41e5b4dfa42950f0d87e393fdce140621fd37b3bc856875da4748a186dd2aab9",
     "src/stmem/models/text_encoder.py": "84fafb56b901b9883e0f6ef548574a885f77f35d5960dfb2d6df5290b4a5e503",
-    "src/stmem/train.py": "1acda73606542b072ba696b547f19f51544f6bccf9150d99ab349c1ae48a8366",
+    "src/stmem/train.py": "ff4636b51c576cb33ed18e34baebbb204e1c14d25b4d53a1c6a0a245cca52c75",
     "src/stmem/training/data.py": "a5b22a0d3242de69e83e52122fc588f2a1b989bb10ecc1c84941160856431799",
     "src/stmem/training/loader.py": "5d8908bb07cc2c5daaa6df62ad1f243077674a649be16e43f5a23a1558f4af33"
   },

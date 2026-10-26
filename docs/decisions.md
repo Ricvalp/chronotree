@@ -757,3 +757,45 @@
     checks, not a real-data training or policy-quality result. No Slurm job was
     submitted. One initial existing loader test aborted a worker at teardown;
     rerunning its five-test module passed without loader changes.
+
+34. **Matched continuations from one teacher checkpoint (26 October 2026).**
+    The fresh command-ablation run is additional to the requested control and
+    ablated continuations. `--fork-from` explicitly creates a new teacher run
+    while restoring the parent's model, normalizer, Adam moments, scheduler,
+    scaler, optimizer position and per-rank RNG. Model changes are restricted
+    to `condition_on_previous_joint_commands`; data/geometry/seed, remaining
+    model and training settings, effective batch, world size, sampler version
+    and next sample position must match. Ordinary `--resume` retains its strict
+    provenance check. A fork rejects an occupied destination, records parent
+    checkpoint hash/step/W&B identity in its manifest/checkpoints, and creates a
+    new W&B run. Subsequent ordinary resume preserves that lineage.
+
+    The standalone `hpc/continue_teacher.py` prepares both branches from one
+    immutable snapshot, separate configurations, output roots and Slurm scripts.
+    Neither branch depends on the other. The default budget is 10,000 additional
+    updates, saving immutable checkpoints at +5,000 and +10,000. The newly
+    explicit `training.schedule_steps` retains the parent's cosine horizon;
+    `training.steps` declares the bounded experiment endpoint. Thus a parent at
+    49,978 with a 100k schedule ends both experiments at 59,978 without compressing
+    LR decay into those 10k updates or restarting warmup. Finishing that declared
+    experiment exits successfully; interruption before it still checkpoints and
+    returns 75. This launcher does not run the core 100k teacher-selection DAG.
+    Default planning snapshots/renders only; `--submit` is required for Slurm.
+    Submission receipts and locked output reservations prevent duplicate fresh
+    runs, and both jobs verify the pinned source hash before loading its state.
+
+    Synthetic CPU integration checks establish exact control-fork parity with
+    uninterrupted training at the same step, including parameters, Adam state,
+    scheduler, RNG, sampler and losses. The fixture exercises cosine decay after
+    warmup, not merely the warmup branch. The ablated fork changes learning while
+    keeping normalization and LR schedule. Separate W&B identity, input mismatch
+    rejection, and interrupted-fork resume are checked. The continuation and
+    launcher checks pass (42 tests), including frozen snapshot reuse after a
+    moving `last.pt` advances, source hashing across atomic filename replacement,
+    isolated output paths, and mock-only submissions. A local-path dry-run using
+    the actual 49,978-step lower-LR inspection checkpoint generated two valid
+    shell scripts with a 59,978 endpoint, 100k schedule and the requested B200
+    resources. Existing affected training/configuration/tracking suites pass
+    (91 tests). These checks do not
+    establish B200 throughput or closed-loop success. No real-data training or
+    Slurm submission was performed locally.

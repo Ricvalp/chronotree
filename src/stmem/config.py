@@ -128,6 +128,9 @@ def validate_config(cfg: dict) -> None:
         raise ValueError("Execute horizon must be in [1, action horizon]")
     if t["effective_batch"] < 1 or t["steps"] < 1:
         raise ValueError("Invalid training budget")
+    schedule_steps = t.get("schedule_steps", t["steps"])
+    if not isinstance(schedule_steps, int) or isinstance(schedule_steps, bool) or schedule_steps < t["steps"]:
+        raise ValueError("training.schedule_steps must be an integer at least training.steps")
     for key, default in (
         ("microbatch", 16),
         ("encoder_block_batch_size", 32),
