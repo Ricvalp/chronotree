@@ -6,9 +6,34 @@ import torch
 from torch import Tensor, nn
 
 
+def command_conditioning(previous_action: Tensor, *, include_joint_commands: bool) -> Tensor:
+    """Select command inputs without modifying recorded actions or supervision.
+
+    The joint-command ablation retains the previous gripper command. Measured
+    robot state and command availability are separate fields and stay intact.
+    """
+    if include_joint_commands:
+        return previous_action
+    if previous_action.shape[-1] != 8:
+        raise ValueError("Joint-command ablation requires seven joint targets and one gripper command")
+    return torch.cat([torch.zeros_like(previous_action[..., :7]), previous_action[..., 7:]], dim=-1)
+
+
 class EventEncoder(nn.Module):
-    def __init__(self, width: int = 256, proprio_dim: int = 15, action_dim: int = 8):
+    def __init__(
+        self,
+        width: int = 256,
+        proprio_dim: int = 15,
+        action_dim: int = 8,
+        *,
+        condition_on_previous_joint_commands: bool = True,
+    ):
         super().__init__()
+        if not isinstance(condition_on_previous_joint_commands, bool):
+            raise ValueError("model.condition_on_previous_joint_commands must be boolean")
+        if not condition_on_previous_joint_commands and action_dim != 8:
+            raise ValueError("Joint-command ablation requires seven joint targets and one gripper command")
+        self.condition_on_previous_joint_commands = condition_on_previous_joint_commands
         self.proprio_dim, self.action_dim = proprio_dim, action_dim
         self.state = nn.Sequential(nn.Linear(proprio_dim, width), nn.SiLU(), nn.Linear(width, width))
         self.action = nn.Sequential(nn.Linear(action_dim + 1, width), nn.SiLU(), nn.Linear(width, width))
@@ -21,6 +46,9 @@ class EventEncoder(nn.Module):
         # where, rather than multiplication, also removes NaNs in unavailable fields.
         action = torch.where(
             available[..., None], previous_action.float(), torch.zeros_like(previous_action).float()
+        )
+        action = command_conditioning(
+            action, include_joint_commands=self.condition_on_previous_joint_commands
         )
         if not torch.isfinite(proprio).all() or not torch.isfinite(action).all():
             raise ValueError("Available robot state/command must be finite")

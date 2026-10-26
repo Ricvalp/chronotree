@@ -715,3 +715,45 @@
     90.99 seconds; the optional real small prepared subset is absent. The diagram
     generator's snapshot and XML validation pass after regeneration, and the
     generated HTML was opened in headless Firefox and visually inspected.
+
+33. **Selective previous-joint-command ablation (26 October 2026).**
+    Following command-sensitivity and expert-prefix handoff diagnostics, the user
+    requests a fresh teacher run without previous commanded joint targets.
+    `model.condition_on_previous_joint_commands: false` now zeros the seven joint
+    command channels before the current state MLP, every historical event MLP,
+    and the compact readers' routing query. The eighth command channel (gripper),
+    command availability, all measured proprioception, visual observations,
+    conditioning video and source clocks remain available. This is a targeted
+    input ablation, not removal of execution history or measured joint angles.
+    Current, serial history, packed training, streaming evaluation, checkpoint
+    inspection and cached-feature construction share the setting. Tensor shapes,
+    parameter counts, leaf coverage, causal alignment and eight-dimensional
+    supervision are unchanged. Raw prepared data is unchanged; no preparation
+    rerun is needed. Checkpoint contract validation rejects switching the flag at
+    evaluation, and frozen-cache identity includes it. Missing flags in older
+    checkpoints retain the original enabled behavior.
+
+    `configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands.yaml`
+    inherits the existing low-LR recipe and changes only this flag: 100,000
+    updates, peak LR 0.0001, effective batch 128, per-GPU microbatch cap 8,
+    encoder block batch 32 and checkpointing off. On four GPUs this uses four
+    accumulated microbatches per optimizer update. Use a new run root and omit
+    `--resume` for the requested random initialization. This run tests whether
+    removing command conditioning improves learned visual grounding; the
+    diagnostics do not establish that this change will fix covariate shift.
+    Autocast scopes, geometry, targets, action normalization and flow sampling
+    have not been changed as additional experimental factors.
+
+    The 28 new CPU synthetic diagnostics verify exact prediction invariance to
+    commanded-joint perturbations across serial, batched, worker-packed, cached
+    and checkpoint-reloaded inference paths; retained gripper/state sensitivity;
+    unavailable commands; gradients; routing; inspector parity; and config/cache
+    identity. The affected model, training, configuration, inspector and launcher
+    suites pass (180 tests). A local-path planner dry-run generated one fresh four-GPU job with
+    `--partition=aiq --gres=gpu:4`, 64 CPUs, 128G host RAM and 48-hour walltime;
+    resolved hyperparameters and shell syntax passed. The actual-device doctor
+    passed FP32, BF16 and FP16 on the workstation's RTX 5000 Ada. Architecture
+    artifacts were regenerated and inspected in Chromium. These are correctness
+    checks, not a real-data training or policy-quality result. No Slurm job was
+    submitted. One initial existing loader test aborted a worker at teardown;
+    rerunning its five-test module passed without loader changes.

@@ -281,7 +281,9 @@ def overview(file, cfg, facts):
             "preceding commands",
         ],
         tooltip="Source: training/data.py and batched_policy.py. Conditioning and execution "
-        "are separate source-local histories. Future observations never enter the context.",
+        "are separate source-local histories. Future observations never enter the context. "
+        "model.condition_on_previous_joint_commands=false zeros the seven commanded joints "
+        "in both current and historical inputs; measured state and the previous gripper command remain.",
     )
     enc = p.card(
         440,
@@ -618,11 +620,18 @@ def encoders(file, cfg, policy):
         48,
         1160,
         360,
-        120,
-        "Previous command + available flag",
-        ["8 masked action values + 1 flag", "Conditioning commands are unavailable"],
+        140,
+        "Previous command",
+        [
+            "7 joints + gripper + 1 availability",
+            "Joint fields zeroed when disabled",
+            "Conditioning command unavailable",
+        ],
         tone="event",
         size=18,
+        tooltip="model.condition_on_previous_joint_commands defaults to true. False removes "
+        "only the seven commanded joint targets; the gripper command and availability flag remain. "
+        "Unavailable commands, including conditioning/reset commands, are always zeroed.",
     )
     state_mlp = p.card(
         490, 990, 320, 120, "State branch", [f"Linear 15 → {w} → SiLU", f"Linear {w} → {w}"], tone="event"
@@ -639,7 +648,8 @@ def encoders(file, cfg, policy):
         [f"SiLU → Linear {w} → {w}", "One event token per frame"],
         tone="event",
         tooltip=f"event_encoder.py: EventEncoder. {count(policy.encoder.event):,} parameters. "
-        "Unavailable preceding commands are zeroed before their branch projection.",
+        "Unavailable preceding commands are zeroed before their branch projection. "
+        "The optional joint-command ablation applies before this projection in serial and batched paths.",
     )
     event_out = p.card(
         1370,
@@ -938,6 +948,10 @@ def context(file, cfg, policy, facts):
         "Current auxiliary tokens · three separate branches",
         [
             "State: 15 observed + 8 preceding action + 1 availability = 24",
+            "Previous-joint input: "
+            + ("enabled" if m.get("condition_on_previous_joint_commands", True) else "disabled")
+            + " in the core configuration",
+            "When disabled: zero 7 joints; retain gripper + availability.",
             f"Linear 24 → {w} → SiLU → Linear {w} → {w}  ⇒  1 token",
             "Goal: pooled text encoder output  ⇒  1 token",
             f"Clock: [conditioning, execution] / 100 → Linear 2 → {w}  ⇒  1 token",
@@ -946,6 +960,9 @@ def context(file, cfg, policy, facts):
         ],
         tone="event",
         size=19,
+        tooltip="policy.py and batched_policy.py share the current-state projection. "
+        "model.condition_on_previous_joint_commands controls current and historical command inputs "
+        "together. Observed joint angles, TCP pose, measured gripper state and all prediction targets remain.",
     )
     p.edge(content, adapt, tone="visual")
     p.edge(meta, adapt, tone="visual")

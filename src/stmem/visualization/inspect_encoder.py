@@ -87,6 +87,7 @@ def _encoder(config):
             current_tokens=model["current_tokens"],
             variant=model.get("encoder", "joint"),
             checkpoint_blocks=False,
+            condition_on_previous_joint_commands=model.get("condition_on_previous_joint_commands", True),
             **model.get("encoder_options", {}),
         )
         .cpu()

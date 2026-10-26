@@ -55,6 +55,17 @@ Its microbatch setting of 64 is a per-device maximum: four GPUs use 64 decisions
 each in one pass per update, while one GPU accumulates four passes of 64.
 Historical encoder blocks are processed in batches of up to 128.
 
+The core configuration enables `model.condition_on_previous_joint_commands`.
+Setting it to `false` zeros the seven previous commanded joint targets in both
+the current state MLP and every historical event token. The previous gripper
+command and its availability flag remain, as do measured joint positions, TCP
+pose and measured gripper state. Unavailable commands at reset or in the
+conditioning video are still masked. Serial, packed training and live rollout
+paths use the same setting. The ablation preserves the 24-value current input,
+the nine-value historical command input, token counts and action targets; it
+does not require preparing the geometry again. This is an optional experiment,
+not a change to the core defaults shown by the diagram.
+
 ## Prepared geometry and token counts
 
 The revised preparation writes `prepared_balanced_v2/`, preserving the previous
@@ -141,3 +152,11 @@ reported no errors, and text bounds fit their shapes on every page. The artifact
 freshness/structure check and Ruff check passed. The model still has 6,098,698
 trainable parameters: the added geometry is deterministic and adds tokens, not
 learned parameters. These checks do not measure training memory or throughput.
+
+On 2026-10-26, the optional previous-joint-command ablation was added to the
+historical event and current auxiliary descriptions. All three artifacts were
+regenerated; the core default remains enabled and the parameter count remains
+6,098,698. Chromium rendered all four pages without browser errors or overflowing
+text bounds. The changed encoder and context layouts were visually inspected.
+The artifact freshness/structure check and Ruff check passed. This verifies the
+documentation layout, not the effect of the ablation on policy quality.

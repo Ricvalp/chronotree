@@ -110,6 +110,15 @@ def validate_policy_config(checkpoint_cfg: dict, cfg: dict) -> None:
         "mass_bias",
     )
     mismatches = []
+    # Older checkpoints used all command channels; omission means the original
+    # contract, rather than an unspecified setting that can change at evaluation.
+    key = "condition_on_previous_joint_commands"
+    recorded = checkpoint_cfg.get("model", {}).get(key, True)
+    requested = cfg.get("model", {}).get(key, True)
+    if not isinstance(recorded, bool) or not isinstance(requested, bool):
+        raise ValueError(f"model.{key} must be boolean")
+    if recorded != requested:
+        mismatches.append(f"model.{key}: checkpoint={recorded!r}, requested={requested!r}")
     for key in model_fields:
         recorded = checkpoint_cfg.get("model", {}).get(key)
         requested = cfg.get("model", {}).get(key)

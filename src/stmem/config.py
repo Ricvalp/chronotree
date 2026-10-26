@@ -108,6 +108,8 @@ def validate_config(cfg: dict) -> None:
         if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
             raise ValueError(f"tracking.scenes.{key} must be an integer in [{low}, {high}]")
     m, t = cfg["model"], cfg["training"]
+    if not isinstance(m.get("condition_on_previous_joint_commands", True), bool):
+        raise ValueError("model.condition_on_previous_joint_commands must be boolean")
     from stmem.data.pointcloud import point_sampler_settings
     from stmem.data.center_sampling import center_sampler_settings, center_counts
 

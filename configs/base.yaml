@@ -71,6 +71,8 @@ model:
   max_execution_frames: 2600
   max_conditioning_frames: 1300
   action_space: joint_angle
+  # Ablations can hide commanded joint targets while keeping measured state and gripper command.
+  condition_on_previous_joint_commands: true
   checkpoint_blocks: false
   archive_device: cpu
   encoder_options:

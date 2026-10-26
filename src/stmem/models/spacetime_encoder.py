@@ -421,6 +421,7 @@ class BlockEncoder(nn.Module):
         action_dim: int = 8,
         variant: str = "joint",
         checkpoint_blocks: bool = False,
+        condition_on_previous_joint_commands: bool = True,
         **visual_kwargs: Any,
     ):
         super().__init__()
@@ -437,7 +438,12 @@ class BlockEncoder(nn.Module):
         self.variant = variant
         self.checkpoint_blocks = checkpoint_blocks
         self.visual = SpacetimeEncoder(width, framewise=variant == "framewise", **visual_kwargs)
-        self.event = EventEncoder(width, proprio_dim, action_dim)
+        self.event = EventEncoder(
+            width,
+            proprio_dim,
+            action_dim,
+            condition_on_previous_joint_commands=condition_on_previous_joint_commands,
+        )
 
     def encode_frames(
         self,

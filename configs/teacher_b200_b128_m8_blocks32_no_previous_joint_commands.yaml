@@ -1,0 +1,5 @@
+extends: teacher_b200_b128_m8_blocks32.yaml
+# Fresh 100k-step teacher: remove commanded joint targets from current/history
+# inputs, retaining measured state and the preceding gripper command.
+model:
+  condition_on_previous_joint_commands: false

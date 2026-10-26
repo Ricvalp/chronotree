@@ -23,16 +23,21 @@ def cache_identity(cfg, teacher_path, data_identity):
         "geometry": cfg["geometry"],
         "data": cfg["data"],
         "model_encoder": {
-            k: cfg["model"][k]
-            for k in (
-                "encoder",
-                "points",
-                "block_size",
-                "visual_tokens",
-                "current_tokens",
-                "width",
-                "encoder_options",
-            )
+            **{
+                k: cfg["model"][k]
+                for k in (
+                    "encoder",
+                    "points",
+                    "block_size",
+                    "visual_tokens",
+                    "current_tokens",
+                    "width",
+                    "encoder_options",
+                )
+            },
+            "condition_on_previous_joint_commands": cfg["model"].get(
+                "condition_on_previous_joint_commands", True
+            ),
         },
         "normalization_version": "masked_training_commands_v1",
         "frozen_encoder_precision": "fp32",

@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import torch
 from torch import nn
+from stmem.models.event_encoder import command_conditioning
 from stmem.models.metadata_adapter import metadata, METADATA_DIM
 
 
@@ -127,7 +128,7 @@ class CachedScorer:
         return self.feature_transferred_bytes + self.key_transferred_bytes + self.query_transferred_bytes
 
 
-def query_features(current_mean, text, current, clocks, budget):
+def query_features(current_mean, text, current, clocks, budget, *, condition_on_previous_joint_commands=True):
     """Only allowed observations. No target, noisy action, episode ID, or duration."""
     device = current_mean.device
     extra = torch.tensor(
@@ -144,7 +145,10 @@ def query_features(current_mean, text, current, clocks, budget):
             current_mean,
             text,
             current.proprio.to(device).float(),
-            current.previous_action.to(device).float(),
+            command_conditioning(
+                current.previous_action.to(device).float(),
+                include_joint_commands=condition_on_previous_joint_commands,
+            ),
             extra,
         ]
     )

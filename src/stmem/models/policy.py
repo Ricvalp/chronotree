@@ -7,6 +7,7 @@ import random
 import torch
 from torch import nn
 from stmem.models.action_flow import ActionFlow, ActionNormalizer, RegressionHead
+from stmem.models.event_encoder import command_conditioning
 from stmem.models.metadata_adapter import MetadataAdapter
 from stmem.models.text_encoder import TextEncoder
 from stmem.models.perceiver import Perceiver
@@ -29,6 +30,7 @@ class MemoryPolicy(nn.Module):
 
         m = config["model"]
         self.config = config
+        self.condition_on_previous_joint_commands = m.get("condition_on_previous_joint_commands", True)
         self.encoder = BlockEncoder(
             width=m["width"],
             visual_tokens=m["visual_tokens"],
@@ -36,6 +38,7 @@ class MemoryPolicy(nn.Module):
             current_tokens=m["current_tokens"],
             variant=m.get("encoder", "joint"),
             checkpoint_blocks=m.get("checkpoint_blocks", False),
+            condition_on_previous_joint_commands=self.condition_on_previous_joint_commands,
             **m.get("encoder_options", {}),
         )
         self.text_encoder = TextEncoder(
@@ -96,7 +99,27 @@ class MemoryPolicy(nn.Module):
             mean = torch.stack([r.content.to(self.device) for r in evidence.current_records]).mean(0)
         else:
             mean = torch.zeros(self.config["model"]["width"], device=self.device)
-        return query_features(mean, evidence.text.to(self.device), evidence.current, evidence.clocks, budget)
+        return query_features(
+            mean,
+            evidence.text.to(self.device),
+            evidence.current,
+            evidence.clocks,
+            budget,
+            condition_on_previous_joint_commands=self.condition_on_previous_joint_commands,
+        )
+
+    def encode_current_state(self, state):
+        """Shared current-state input contract for serial and packed policies."""
+        if not self.condition_on_previous_joint_commands:
+            state = torch.cat(
+                [
+                    state[..., :15],
+                    command_conditioning(state[..., 15:23], include_joint_commands=False),
+                    state[..., 23:],
+                ],
+                dim=-1,
+            )
+        return self.proprio(state)
 
     def context(self, evidence, records, *, perceiver=False):
         current = self.adapter(evidence.current_records, evidence.clocks, self.device)
@@ -115,7 +138,7 @@ class MemoryPolicy(nn.Module):
         current = torch.cat(
             [
                 current,
-                self.proprio(state)[None],
+                self.encode_current_state(state)[None],
                 evidence.text.to(self.device)[None],
                 self.clock(clock)[None],
             ],

@@ -671,7 +671,7 @@ def batch_context(
     current_tokens = torch.cat(
         [
             current.adapt(policy.adapter),
-            policy.proprio(states)[:, None],
+            policy.encode_current_state(states)[:, None],
             text[:, None],
             policy.clock(clocks / 100)[:, None],
         ],
