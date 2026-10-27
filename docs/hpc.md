@@ -1032,9 +1032,67 @@ runs/teacher_joint_command_continuations_50k/no_previous_joint_commands/seed0/te
 ```
 
 Both create new W&B runs in the existing project. The original run and the fresh
-from-scratch ablation use their own directories. The paired launcher is for fresh
-branches and refuses duplicate submissions; do not rerun it to resume an existing
-branch. A continuation interrupted before its declared endpoint remains resumable
-with `stmem.train --resume <branch>/seed0/teacher/last.pt` and that branch's generated
-configuration, without `--fork-from` or `--fork-sha256`. A completed 10k continuation
-has its own completion marker; it does not mark the original 100k run complete.
+from-scratch ablation use their own directories. Without `--resume`, the paired
+launcher refuses existing branch directories and duplicate submissions. A completed
+10k continuation has its own completion marker; it does not mark the original
+100k run complete.
+
+### Recover interrupted continuations
+
+Use the same run root and generated directory with `--resume`. For the pair
+originally planned with 15,000 additional updates:
+
+```bash
+.venv/bin/python hpc/continue_teacher.py \
+  --site hpc/site_b200_4gpu.env --profile b200_4gpu \
+  --run-root runs/teacher_joint_command_continuations_50k_plus15k \
+  --output-dir hpc/generated/teacher_joint_command_continuations_50k_plus15k \
+  --resume --dry-run
+```
+
+Inspect the printed checkpoint steps and remaining updates, then replace
+`--dry-run` with `--submit` to submit both branches. Do not pass `--checkpoint`
+or `--additional-steps`: recovery uses each branch's own `seed0/teacher/last.pt`
+and its original endpoint. A pair forked at 49,978 for 15k updates still ends
+at 64,978; a saved step of 54,000 leaves 10,978 updates. The 100k cosine horizon,
+optimizer/RNG state, input-ablation setting and W&B identity remain the same.
+Keep the run directories and their `tracking.json` files in place.
+
+Recovery scripts/configurations are written below the original generated
+directory's `resume/` subdirectory, leaving the initial fork plan intact. The
+launcher checks the checkpoint lineage and original configuration before writing
+recovery jobs. Submission checks the old job IDs against the current user's
+queue and refuses active duplicates or ambiguous submission receipts. Dry-run
+does not contact Slurm. Submission history is retained across retries.
+
+Slurm requeue starts a script again from its beginning. Requeuing an initial
+`--fork-from` script therefore hits the occupied-directory guard after training
+has started. The recovery scripts use `--resume` and the live `last.pt` path,
+so subsequent requeues resume the latest completed checkpoint. Recovery requires
+at least one valid saved checkpoint in each branch.
+
+For the separate from-scratch ablation, use the ordinary planner and the same
+teacher recipe. Keep its model/training/data settings unchanged; the trainer
+rejects checkpoint provenance mismatches. Checkpoint presence is checked explicitly here because
+the general planner also supports starting unfinished stages without checkpoints:
+
+```bash
+RUN=runs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands
+test -s "$RUN/seed0/teacher/last.pt" && \
+test -s "$RUN/seed0/teacher/tracking.json" && \
+.venv/bin/python hpc/plan.py \
+  --site hpc/site_b200_4gpu.env --profile b200_4gpu \
+  --teacher-config configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands.yaml \
+  --plan core_seed0 --only seed0_teacher \
+  --run-root "$RUN" --output-dir "hpc/generated/${RUN##*/}" \
+  --log-every 1 --progress-every-seconds 30 \
+  --resume --dry-run
+```
+
+Again replace `--dry-run` with `--submit` after inspection. This submits one job
+and preserves its 100k endpoint and W&B run. With the current site file each
+recovery allocation requests four GPUs on `aiq` (`--gres=gpu:4`), 64 CPU cores,
+128G RAM and 48 hours. The two commands together submit three independent jobs;
+Slurm decides when resources become available. No new site file, run root or
+dataset preparation is required. Resuming does not resolve an underlying node,
+driver or filesystem failure.

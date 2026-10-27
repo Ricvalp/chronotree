@@ -161,8 +161,11 @@ def test_single_teacher_submission_and_resume_use_established_planner(planning, 
     def fake_scheduler(command, **kwargs):
         calls.append(command)
         if command[0] == "squeue":
-            assert command == ["squeue", "-h", "-j", "12345", "-o", "%T"]
-            return SimpleNamespace(stdout="RUNNING\n")
+            assert command == [
+                "squeue", "--noheader", "--all", "--states=all",
+                "--user", str(os.getuid()), "--format=%A|%T",
+            ]
+            return SimpleNamespace(stdout="12345|RUNNING\n")
         assert command == ["sbatch", "--parsable", job["script"]]
         assert (repo / "hpc/logs").is_dir()
         return SimpleNamespace(stdout="12345;fixture-cluster\n")
@@ -199,6 +202,137 @@ def test_single_teacher_submission_and_resume_use_established_planner(planning, 
     assert option(resumed["commands"][0], "--resume") == str(checkpoint)
     assert resumed["signature"] == job["signature"]
     assert [command[0] for command in calls] == ["sbatch", "squeue"]
+
+
+@pytest.mark.parametrize("queue_output", ["", "99999|RUNNING\n", "60793|FAILED\n"])
+def test_resume_resubmits_expired_job_id_without_querying_that_id(
+    planning, monkeypatch, tmp_path, queue_output,
+):
+    planner, invoke, _, run_root, generated = planning
+    original = invoke("--only", "seed0_teacher")["jobs"][0]
+    receipt = {"seed0_teacher": {"job_id": "60793", "signature": original["signature"]}}
+    (generated / "submitted.json").write_text(json.dumps(receipt))
+    checkpoint = run_root / "seed0/teacher/last.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"Presence-only checkpoint fixture; never loaded")
+    calls = []
+    monkeypatch.setenv("SQUEUE_PARTITION", "unrelated-partition")
+
+    def scheduler(command, **kwargs):
+        calls.append(command)
+        assert kwargs["check"] is True
+        if command[0] == "squeue":
+            assert "60793" not in command and "--user" in command
+            assert "SQUEUE_PARTITION" not in kwargs["env"]
+            return SimpleNamespace(stdout=queue_output)
+        assert command == ["sbatch", "--parsable", original["script"]]
+        return SimpleNamespace(stdout="61234\n")
+
+    monkeypatch.setattr(planner.subprocess, "run", scheduler)
+    monkeypatch.setattr(
+        sys, "argv", [
+            "hpc/plan.py", "--site", str(tmp_path / "site.env"),
+            "--output-dir", str(generated), "--only", "seed0_teacher", "--resume", "--submit",
+        ],
+    )
+    planner.main()
+    assert [command[0] for command in calls] == ["squeue", "sbatch"]
+    updated = json.loads((generated / "submitted.json").read_text())
+    assert updated["seed0_teacher"]["job_id"] == "61234"
+    resumed = json.loads((generated / "plan.json").read_text())["jobs"][0]
+    assert option(resumed["commands"][0], "--resume") == str(checkpoint)
+    assert resumed["signature"] == original["signature"]
+
+
+@pytest.mark.parametrize("failure", ["scheduler_error", "malformed_output"])
+def test_resume_refuses_submission_when_queue_status_cannot_be_verified(
+    planning, monkeypatch, tmp_path, capsys, failure,
+):
+    planner, invoke, _, _, generated = planning
+    invoke("--only", "seed0_teacher")
+    receipt = json.dumps({"seed0_teacher": {"job_id": "60793", "signature": "fixture"}})
+    (generated / "submitted.json").write_text(receipt)
+    calls = []
+
+    def scheduler(command, **kwargs):
+        calls.append(command)
+        assert command[0] == "squeue"
+        if failure == "scheduler_error":
+            raise subprocess.CalledProcessError(1, command, stderr="controller unavailable")
+        return SimpleNamespace(stdout="unexpected controller response\n")
+
+    monkeypatch.setattr(planner.subprocess, "run", scheduler)
+    monkeypatch.setattr(
+        sys, "argv", [
+            "hpc/plan.py", "--site", str(tmp_path / "site.env"),
+            "--output-dir", str(generated), "--only", "seed0_teacher", "--resume", "--submit",
+        ],
+    )
+    with pytest.raises(SystemExit) as error:
+        planner.main()
+    assert error.value.code == 2
+    assert "Cannot verify active jobs; no jobs submitted" in capsys.readouterr().err
+    assert len(calls) == 1
+    assert (generated / "submitted.json").read_text() == receipt
+
+
+def test_resume_checks_all_known_jobs_with_one_queue_query(planning, monkeypatch, tmp_path):
+    planner, invoke, _, _, generated = planning
+    options = ["--plan", "central_3seed", "--only", "seed0_teacher", "seed1_teacher"]
+    jobs = invoke(*options)["jobs"]
+    (generated / "submitted.json").write_text(json.dumps({
+        job["name"]: {"job_id": str(61000 + index), "signature": job["signature"]}
+        for index, job in enumerate(jobs)
+    }))
+    calls = []
+
+    def scheduler(command, **kwargs):
+        calls.append(command)
+        assert command[0] == "squeue"
+        return SimpleNamespace(stdout="61000|SUSPENDED\n61001|REQUEUE_HOLD\n")
+
+    monkeypatch.setattr(planner.subprocess, "run", scheduler)
+    monkeypatch.setattr(
+        sys, "argv", [
+            "hpc/plan.py", "--site", str(tmp_path / "site.env"),
+            "--output-dir", str(generated), *options, "--resume", "--submit",
+        ],
+    )
+    planner.main()
+    assert len(calls) == 1
+
+
+def test_teacher_resume_can_use_frozen_yaml_after_source_defaults_change(planning):
+    planner, invoke, repo, run_root, generated = planning
+    options = [
+        "--profile", "b200_4gpu", "--only", "seed0_teacher", "--teacher-config",
+        "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands.yaml",
+    ]
+    initial = invoke(*options)["jobs"][0]
+    saved = planner.resolved_config(Path(option(initial["commands"][0], "--config")))
+    checkpoint = run_root / "seed0/teacher/last.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"Presence-only checkpoint fixture; never loaded")
+    # Export the checkpoint config as YAML. Feeding a JSON snapshot through the
+    # YAML loader directly can turn JSON scientific-notation floats into strings.
+    snapshot = generated / "inputs/teacher_resume.yaml"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text(yaml.safe_dump(json.loads(json.dumps(saved)), sort_keys=False))
+    source = repo / "configs/teacher_b200_b128_m8_blocks32.yaml"
+    cfg = yaml.safe_load(source.read_text())
+    cfg["training"]["lr"] = 0.123
+    source.write_text(yaml.safe_dump(cfg))
+    resumed = invoke(
+        "--profile", "b200_4gpu", "--only", "seed0_teacher", "--resume",
+        "--teacher-config", str(snapshot),
+    )["jobs"][0]
+    restored = planner.resolved_config(Path(option(resumed["commands"][0], "--config")))
+    assert restored == saved
+    assert restored["training"]["lr"] == 0.0001
+    assert restored["training"]["steps"] == 100000
+    assert restored["model"]["condition_on_previous_joint_commands"] is False
+    assert option(resumed["commands"][0], "--resume") == str(checkpoint)
+    assert resumed["signature"] == initial["signature"]
 
 
 def test_dry_run_forwards_runtime_flags_without_changing_configs_or_signatures(planning):

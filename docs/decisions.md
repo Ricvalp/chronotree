@@ -799,3 +799,44 @@
     (91 tests). These checks do not
     establish B200 throughput or closed-loop success. No real-data training or
     Slurm submission was performed locally.
+
+35. **Recover the three interrupted command-conditioning experiments (27 October 2026).**
+    Slurm accounting supplied by the user confirms node-down requeues for the
+    matched continuations. Their restarted initial fork scripts correctly refuse
+    the occupied run directories. Recovery must use each branch's own saved
+    checkpoint, rather than repeat the fork from the parent. The paired launcher
+    now supports `--resume` with the original run root and generated directory.
+    It validates the original configuration, fork lineage, world size, sampler
+    boundary and W&B identity, then writes recovery artifacts under `resume/`
+    without changing the original fork plan or any checkpoint. It retains the
+    declared 64,978-step endpoint for the 15k experiments and the 100k LR horizon;
+    it does not allocate another 15k updates. Existing tracking files preserve
+    each branch's separate W&B run.
+
+    Both planners query the current user's full Slurm queue instead of asking
+    about expired job IDs individually. Terminal jobs allow recovery; suspended,
+    held, requeued and unfamiliar nonterminal states prevent duplicates. A
+    failed or malformed queue query aborts submission. Paired submissions hold
+    directory locks, retain receipt history and reject ambiguous earlier
+    submission results. Dry-run never contacts Slurm. Recovery commands retain
+    the live `last.pt` path so a subsequent Slurm requeue reloads the latest
+    checkpoint. Paired recovery requires both branches to remain unfinished;
+    it does not implement selective recovery of a single completed/unfinished
+    pair.
+
+    The separate from-scratch ablation uses the ordinary planner's `--resume`
+    and original YAML recipe. Its current model, training, data, geometry, debug
+    and seed settings match the W&B configuration recorded for run
+    `e69369b3b3887b48`. Its endpoint remains 100,000. Documented shell guards
+    require the checkpoint and tracking identity to exist before invoking the
+    general planner, which otherwise permits starting unstarted DAG stages.
+    All three use their existing run roots; no new data preparation, experiment
+    configuration or optimization changes are introduced.
+
+    CPU checks pass: 65 launcher/planner tests, including mocked Slurm states
+    and synthetic checkpoint metadata, plus 72 existing fork, tracking and
+    training-logging checks. The latter include interrupted-continuation resume
+    correctness. Lint, diff checks and the architecture snapshot/XML check pass;
+    no model or diagram changes were needed. No Slurm job was submitted locally,
+    and the HPC checkpoints remain to be loaded on that system. This recovery
+    does not establish the cause of, or fix, the observed GPU/runtime stalls.

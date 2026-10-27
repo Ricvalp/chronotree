@@ -153,6 +153,42 @@ def read_site(path: Path) -> dict[str, str]:
     return values
 
 
+def active_user_job_ids() -> set[str]:
+    """Query the user's queue once, including when old IDs have been purged.
+
+    Asking squeue about a completed job ID may fail after Slurm drops it from
+    controller memory. Listing the queue avoids interpreting that error as an
+    active job or suppressing real scheduler/connection failures.
+    """
+    result = subprocess.run(
+        [
+            "squeue", "--noheader", "--all", "--states=all",
+            "--user", str(os.getuid()), "--format=%A|%T",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        # Inherited queue filters must not hide an already running job.
+        env={key: value for key, value in os.environ.items() if not key.startswith("SQUEUE_")},
+    )
+    # The default squeue filter omits suspended/requeue states. Query all states
+    # and consider unfamiliar states active until proven terminal.
+    terminal = {
+        "BOOT_FAIL", "CANCELLED", "COMPLETED", "DEADLINE", "FAILED", "NODE_FAIL",
+        "OUT_OF_MEMORY", "PREEMPTED", "TIMEOUT",
+    }
+    identifiers = set()
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        fields = [part.strip() for part in line.split("|")]
+        if len(fields) != 2 or not fields[0].isdecimal() or not re.fullmatch(r"[A-Z_]+", fields[1]):
+            raise ValueError("Unrecognized squeue job-ID/state output; cannot verify active jobs")
+        if fields[1] not in terminal:
+            identifiers.add(fields[0])
+    return identifiers
+
+
 @dataclass
 class Job:
     name: str
@@ -934,18 +970,17 @@ def main() -> None:
         parser.error(
             "Submission needs a configured --site file; copy hpc/site.env.example and set site values"
         )
+    active_ids = set()
+    if args.resume and any(job.name in state for job in selected):
+        try:
+            active_ids = active_user_job_ids()
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            parser.error(f"Cannot verify active jobs; no jobs submitted: {error}")
     for job in selected:
         # Existing active IDs are reported, never resubmitted blindly.
-        if args.resume and job.name in state:
-            check = subprocess.run(
-                ["squeue", "-h", "-j", state[job.name]["job_id"], "-o", "%T"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            if check.stdout.strip():
-                print(f"Already active {job.name}: {state[job.name]['job_id']}")
-                continue
+        if args.resume and job.name in state and state[job.name]["job_id"] in active_ids:
+            print(f"Already active {job.name}: {state[job.name]['job_id']}")
+            continue
         dependency_ids = []
         for name in job.deps:
             dependency = all_jobs[name]
