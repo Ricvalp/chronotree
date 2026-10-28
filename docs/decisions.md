@@ -840,3 +840,41 @@
     no model or diagram changes were needed. No Slurm job was submitted locally,
     and the HPC checkpoints remain to be loaded on that system. This recovery
     does not establish the cause of, or fix, the observed GPU/runtime stalls.
+
+36. **Fresh 32-command teacher horizon experiment (28 October 2026).**
+    `configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml`
+    extends the existing from-scratch previous-joint-command ablation and changes
+    only `model.horizon` from 16 to 32. Its parent model, training, data and
+    geometry settings were checked against the locally synced 16,000-step fresh
+    ablation checkpoint. Effective batch 128, microbatch 8 per GPU, encoder block
+    batch 32, eight loader workers per GPU, peak LR 0.0001, 100k optimizer steps,
+    and disabled block checkpointing are unchanged. Observed state and the
+    preceding gripper command remain available; commanded joint targets remain
+    excluded from both current and historical conditioning.
+
+    Targets are the next 32 consecutive commands under the verified alignment,
+    with the existing terminal and discontinuity masks. Execution remains four
+    commands per replan at the native 20 Hz control rate: nominal prediction
+    horizon 1.6 seconds and feedback interval 0.2 seconds. This changes temporal
+    lookahead, not target spacing or observation cadence. Prepared balanced-v2
+    point clouds and frame-local centers are reused without re-preparation.
+    The learned action-position table grows from `[16,256]` to `[32,256]`, adding
+    4,096 parameters (6,102,794 total). This is a fresh run with its own run root
+    and tracking identity, not a strict resume of an H16 checkpoint.
+
+    A local-path dry-run of the existing B200 site recipe renders exactly one
+    teacher job: `aiq`, untyped `--gres=gpu:4`, one torchrun agent with four
+    workers, 64 CPU cores, 128 GB host RAM and 48 hours. The resolved config and
+    shell syntax were checked. Use the new config stem for both the explicit
+    `--run-root runs/<stem>` and `--output-dir hpc/generated/<stem>` overrides;
+    no site-file change is needed.
+
+    Verification: 74 existing data-contract, batched-decoder, command-conditioning
+    and configuration checks pass. A bounded synthetic CPU check with the full
+    model and short, 32-point histories verifies `[2,32,8]` predictions, finite
+    backward gradients including the added position rows, Euler sampling,
+    post-action target alignment and terminal masking. The actual RTX 5000 Ada
+    hardware doctor passes FP32, BF16 and FP16 checks. The architecture diagram
+    retains its core H16 description and documents the optional H32 experiment
+    separately. These checks do not measure full-history B200 memory, throughput,
+    or policy quality. No real-data training or Slurm job was launched locally.

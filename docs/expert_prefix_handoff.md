@@ -1,5 +1,8 @@
 # Expert-prefix handoff in simulation — 26 October 2026
 
+The subsequent matched continuation and from-scratch command-ablation checks are
+recorded in [the 28 October inspection](command_ablation_inspection.md).
+
 Giving the policy a real expert approach prefix substantially improves these
 closed-loop training-scene diagnostics. Both near-50k checkpoints succeed on
 both inspected VideoUnmask scenes after 32 expert commands, while all zero-,

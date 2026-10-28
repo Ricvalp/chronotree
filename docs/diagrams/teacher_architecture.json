@@ -97,6 +97,10 @@
   "source_sha256": {
     "configs/base.yaml": "d43ab789fc05d99e89502781cd080a4ab23d0b1e12decebffb3ef1761e02b859",
     "configs/teacher.yaml": "f79a9b13d6fe8edb0a0921ece6cf2d6a0d0a789c8890fc8f99adf3630953a310",
+    "configs/teacher_b200.yaml": "adfc32dafad4957d8f957af99e11a51ebc629b4f9f05b270ecd9ba28f8fdebb6",
+    "configs/teacher_b200_b128_m8_blocks32.yaml": "77d78491d42bbe601545d0cfbb077434d8333d7ce09278d21792cff280ec41bf",
+    "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands.yaml": "ec4f18b021bdf80f0edd82dd17eee2987a7db5fce9f598c6308aece5140733e2",
+    "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml": "5f1954db858a5b302c5dd9cd869b0523b15143df29bec3e9a9bdcb41fab50605",
     "src/stmem/config.py": "b0b331bb5b89f8713f391ad203556c7cd6062cf22ba5223af6f2d2490dc81eeb",
     "src/stmem/data/canonical.py": "3f8bd860bd2daddbd1fd05f1148fca7b5bc5b2923108cc9b83cbc0bdc8ef7dfd",
     "src/stmem/data/center_sampling.py": "829973de64ed8909a3386627ae1e4575f3b3b294685b1df4af5062a07b976cdc",
@@ -146,5 +150,82 @@
     "warmup_steps": 1000,
     "weight_decay": 0.01,
     "workers": 8
+  },
+  "variants": {
+    "no_previous_joint_commands_h32": {
+      "configuration": "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml",
+      "extra_parameters_vs_core": 4096,
+      "model": {
+        "action_space": "joint_angle",
+        "archive_device": "cpu",
+        "block_size": 8,
+        "budget": 128,
+        "budgets": [
+          64,
+          128,
+          256
+        ],
+        "checkpoint_blocks": false,
+        "condition_on_previous_joint_commands": false,
+        "current_tokens": 32,
+        "decoder": "flow",
+        "encoder": "joint",
+        "encoder_options": {
+          "center_sampling": {
+            "cell_size": 0.1,
+            "foreground_fraction": 0.75,
+            "height_margin": 0.005,
+            "max_iterations": 20,
+            "method": "balanced_cluster",
+            "table_z": 0.0
+          }
+        },
+        "execute": 4,
+        "flow_steps": 8,
+        "heads": 8,
+        "horizon": 32,
+        "layers": 4,
+        "mass_bias": true,
+        "max_conditioning_frames": 1300,
+        "max_execution_frames": 2600,
+        "max_text_bytes": 256,
+        "points": 2048,
+        "router_width": 128,
+        "solver": "euler",
+        "text_layers": 2,
+        "visual_tokens": 256,
+        "width": 256
+      },
+      "total_parameters": 6102794,
+      "training": {
+        "checkpoint_every": 1000,
+        "checkpoint_steps": [
+          50000,
+          100000
+        ],
+        "context_mix": {
+          "current": 0.05,
+          "flat": 0.45,
+          "tree": 0.45,
+          "uniform": 0.05
+        },
+        "effective_batch": 128,
+        "encoder_block_batch_size": 32,
+        "grad_clip": 1.0,
+        "intermediate_probability": 0.5,
+        "length_bucket_size": 1,
+        "log_every": 50,
+        "lr": 0.0001,
+        "microbatch": 8,
+        "precision": "auto",
+        "prefetch_factor": 1,
+        "resume_boundary": "optimizer_step",
+        "steps": 100000,
+        "task_balanced": true,
+        "warmup_steps": 1000,
+        "weight_decay": 0.01,
+        "workers": 8
+      }
+    }
   }
 }

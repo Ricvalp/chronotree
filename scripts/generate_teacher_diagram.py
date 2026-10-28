@@ -23,6 +23,7 @@ from stmem.models.policy import MemoryPolicy
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "diagrams"
 STEM = "teacher_architecture"
+H32_CONFIG = "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml"
 PAGES = (
     ("overview", "01 · Overview"),
     ("encoders", "02 · Encoders"),
@@ -40,6 +41,10 @@ COLORS = {
 SOURCES = [
     "configs/base.yaml",
     "configs/teacher.yaml",
+    "configs/teacher_b200.yaml",
+    "configs/teacher_b200_b128_m8_blocks32.yaml",
+    "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands.yaml",
+    H32_CONFIG,
     "src/stmem/config.py",
     "src/stmem/data/pointcloud.py",
     "src/stmem/data/center_sampling.py",
@@ -68,6 +73,8 @@ def count(module):
 def snapshot():
     cfg = load_config(ROOT / "configs" / "teacher.yaml")
     policy = MemoryPolicy(cfg)
+    h32_cfg = load_config(ROOT / H32_CONFIG)
+    h32_policy = MemoryPolicy(h32_cfg)
     if cfg["model"]["encoder"] != "joint" or cfg["model"]["decoder"] != "flow":
         raise ValueError("Update the curated diagram for this encoder/decoder variant.")
     if cfg["model"]["visual_tokens"] % cfg["model"]["block_size"]:
@@ -107,6 +114,15 @@ def snapshot():
             "total_parameters": count(policy),
             "trainable_parameters": sum(p.numel() for p in policy.parameters() if p.requires_grad),
             "fp32_weight_bytes": 4 * count(policy),
+            "variants": {
+                "no_previous_joint_commands_h32": {
+                    "configuration": H32_CONFIG,
+                    "model": h32_cfg["model"],
+                    "training": h32_cfg["training"],
+                    "total_parameters": count(h32_policy),
+                    "extra_parameters_vs_core": count(h32_policy) - count(policy),
+                },
+            },
             "source_sha256": {
                 path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in SOURCES
             },
@@ -717,7 +733,7 @@ def encoders(file, cfg, policy):
         p.edge(a, b, tone="text")
 
 
-def decoder(file, cfg, policy):
+def decoder(file, cfg, policy, facts):
     m = cfg["model"]
     w, h, n, heads = (m[k] for k in ("width", "horizon", "layers", "heads"))
     p = Page(
@@ -725,7 +741,7 @@ def decoder(file, cfg, policy):
         "decoder",
         "Action-query conditional flow matching",
         "Training predicts a velocity field once; inference integrates that field to produce robot commands.",
-        height=1610,
+        height=1840,
     )
     noisy = p.card(
         48,
@@ -892,6 +908,32 @@ def decoder(file, cfg, policy):
         ],
         tone="note",
         size=19,
+        parent="notes",
+    )
+    variant = facts["variants"]["no_previous_joint_commands_h32"]
+    vm, vt = variant["model"], variant["training"]
+    p.card(
+        48,
+        1540,
+        1704,
+        210,
+        f"OPTIONAL H{vm['horizon']} TEACHER  /  Previous commanded joints disabled",
+        [
+            f"Chunk [B, {vm['horizon']}, 8]; learned positions [{vm['horizon']}, {vm['width']}]. "
+            f"Execute {vm['execute']} commands before replanning; control cadence is unchanged.",
+            f"{variant['total_parameters']:,} parameters "
+            f"(+{variant['extra_parameters_vs_core']:,} versus the core teacher). "
+            "All visual/history encoders and causal boundaries are preserved.",
+            f"4 B200s: effective batch {vt['effective_batch']}, microbatch {vt['microbatch']}/GPU, "
+            f"encoder block batch {vt['encoder_block_batch_size']}; "
+            f"LR {vt['lr']:g}, {vt['steps']:,} updates.",
+            f"This is a separate fresh-training experiment. The main diagram remains the H{h} core configuration.",
+        ],
+        tone="note",
+        size=19,
+        tooltip=variant["configuration"] + ". Prepared frame geometry is reused. "
+        "Future actions remain supervision only; target padding stays masked. "
+        "Previous gripper command and measured state remain available.",
         parent="notes",
     )
 
@@ -1198,7 +1240,7 @@ def build():
     )
     overview(file, cfg, facts)
     encoders(file, cfg, policy)
-    decoder(file, cfg, policy)
+    decoder(file, cfg, policy, facts)
     context(file, cfg, policy, facts)
     ET.indent(file, space="  ")
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(file, encoding="unicode") + "\n"

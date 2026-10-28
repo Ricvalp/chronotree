@@ -66,6 +66,19 @@ the nine-value historical command input, token counts and action targets; it
 does not require preparing the geometry again. This is an optional experiment,
 not a change to the core defaults shown by the diagram.
 
+The **Action decoder** page also labels the optional
+[`teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml`](../configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml)
+experiment. It predicts 32 consecutive commands while still executing four
+before replanning at the same native control cadence. Its action tensor is
+`[B, 32, 8]` and its learned position table is `[32, 256]`, giving 6,102,794
+parameters (4,096 more than the core teacher). All observation encoders and
+causal history boundaries remain the same. This fresh run retains the ablated
+teacher's effective batch 128, microbatch eight per GPU, encoder block batch 32,
+learning rate 0.0001 and 100,000 updates on four B200s. Prepared frame geometry is
+reused; targets and terminal masks are assembled for the configured horizon.
+The main diagram and its core parameter table remain the 16-action default;
+the JSON snapshot records the longer-horizon variant separately.
+
 ## Prepared geometry and token counts
 
 The revised preparation writes `prepared_balanced_v2/`, preserving the previous
@@ -160,3 +173,10 @@ regenerated; the core default remains enabled and the parameter count remains
 text bounds. The changed encoder and context layouts were visually inspected.
 The artifact freshness/structure check and Ruff check passed. This verifies the
 documentation layout, not the effect of the ablation on policy quality.
+
+On 2026-10-28, the optional 32-action teacher received a separately labeled note
+on the **Action decoder** page and a configuration/count record in the JSON
+snapshot. All three artifacts were regenerated while retaining the core
+16-action diagram. The snapshot/XML check and Ruff passed. Chromium rendered
+the changed decoder page; its text bounds fit every shape and the full page was
+visually inspected. This verifies the diagram, not B200 memory or throughput.

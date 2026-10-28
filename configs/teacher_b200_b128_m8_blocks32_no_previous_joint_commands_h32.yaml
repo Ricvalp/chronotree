@@ -1,0 +1,6 @@
+extends: teacher_b200_b128_m8_blocks32_no_previous_joint_commands.yaml
+# Fresh teacher with 32 consecutive targets at the unchanged native cadence.
+# Retain execute=4, effective batch=128, microbatch=8, encoder blocks=32,
+# LR=0.0001 and 100k steps from the command-conditioning ablation.
+model:
+  horizon: 32
