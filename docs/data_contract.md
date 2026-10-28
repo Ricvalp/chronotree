@@ -81,10 +81,20 @@ The frozen-vision experiment adds sidecars under
 `features_clip_rn50_layer1_v1/<task>.h5`; the existing
 `prepared_balanced_v2/<task>.h5` geometry and alignment record remain unchanged.
 Each selected point retains its observing camera (front=0, wrist=1) and original
-integer `(u,v)`. These sidecars follow exactly the XYZRGB selection indices;
-extra channels never change voxel representatives, sorting, centers or quotas.
-Preparation verifies the original raw SHA256 and checks exact regenerated
-XYZRGB/validity equality for every row.
+integer `(u,v)`. Online preprocessing carries this identity through XYZRGB
+selection. Offline feature preparation reads the saved XYZRGB/validity rows
+unchanged and recovers camera/pixel correspondence without rerunning selection.
+FP64 reprojection proposes an integer raw pixel; exact RGB and backprojection
+of its recorded depth must agree with the canonical point within 1 micrometre
+per XYZ coordinate. Missing or ambiguous correspondences are rejected; only
+bitwise-identical raw XYZRGB candidates in both cameras, with voxel deduplication
+enabled, use the sampler's stable front-camera tie break. The numerical bound
+validates correspondence, not a replacement point cloud. Voxel representatives,
+point order, centers, validity and quotas remain unchanged. Preparation also
+verifies the original raw SHA256.
+The bounded `--check-geometry --max-frames N` diagnostic reads at most N frames
+per task without writing a cache or hashing the full raw file; it is not a
+substitute for production integrity checks or cache completion.
 
 Frozen CLIP RN50 `layer1` maps have shape `[256,64,64]` for native 256×256 RGB.
 Sampling uses receptive-field origin `(1,1)` and stride four, with bilinear

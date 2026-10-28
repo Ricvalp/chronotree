@@ -12,6 +12,9 @@ DEFAULT_CROP = ((-0.9, -0.75, -0.05), (0.75, 0.75, 1.25))
 CALIBRATION_VERSION = "cv_world_to_camera_mm_v1"
 POINT_PROVENANCE_VERSION = "selected_xyzrgb_camera_uv_v1"
 CAMERA_NAMES = ("front", "wrist")
+# This only validates a source pixel for an already stored FP32 point. It never
+# authorizes replacing that point, changing its order, or resampling geometry.
+CANONICAL_PIXEL_XYZ_TOLERANCE_M = 1e-6
 POINT_SAMPLING_VERSION = "above_table_xy_balanced_v2"
 DEFAULT_POINT_SETTINGS = {
     "sampling": "balanced",
@@ -262,6 +265,127 @@ def rgbd_to_points_with_provenance(observation: dict, calibration: dict, **kwarg
     source[valid] = torch.cat(cameras)[indices[valid]]
     uv[valid] = torch.cat(pixels)[indices[valid]]
     return points, valid, source, uv
+
+
+@torch.no_grad()
+def canonical_point_provenance(
+    observation: dict,
+    calibration: dict,
+    points: Tensor,
+    valid: Tensor,
+    *,
+    max_depth_m: float = 4.0,
+    voxel_size: float = 0.005,
+) -> tuple[Tensor, Tensor]:
+    """Recover observing camera/pixel for immutable, already selected points.
+
+    Re-running voxelization can select different points after tiny CPU BLAS
+    rounding changes. Instead, project each canonical XYZ into each camera in
+    FP64, then validate its nearest integer pixel against that pixel's actual
+    depth-backprojected FP32 XYZRGB. RGB must match exactly and every XYZ
+    component must agree within one micrometre. The input points and mask are
+    never modified, reordered or resampled.
+
+    A point needs one matching camera. If both match, only bitwise-identical
+    source XYZRGB is accepted when voxelization was enabled: its original
+    stable merge order selected front before wrist in that exact tie. Without
+    voxelization both duplicate sources survive and remain ambiguous. Other
+    ambiguity and absent correspondence fail closed. Invalid padding returns
+    camera/UV -1. Results are CPU tensors.
+    """
+    if not isinstance(points, Tensor) or points.ndim != 2 or points.shape[1] != 6:
+        raise ValueError("Canonical points must be a Tensor [N,6]")
+    if points.dtype != torch.float32:
+        raise ValueError("Canonical points must retain their stored FP32 dtype")
+    if not isinstance(valid, Tensor) or valid.dtype != torch.bool or valid.shape != (len(points),):
+        raise ValueError("Canonical valid mask must be bool [N]")
+    if not torch.isfinite(points).all():
+        raise ValueError("Canonical points contain nonfinite values")
+    if not math.isfinite(max_depth_m) or max_depth_m <= 0:
+        raise ValueError("max_depth_m must be finite and positive")
+    if not math.isfinite(voxel_size) or voxel_size < 0:
+        raise ValueError("voxel_size must be finite and nonnegative")
+    canonical = points.detach().cpu()
+    valid_indices = torch.where(valid.detach().cpu())[0]
+    source = torch.full((len(points),), -1, dtype=torch.long)
+    uv = torch.full((len(points), 2), -1, dtype=torch.long)
+    if not len(valid_indices):
+        return source, uv
+    selected = canonical[valid_indices]
+    matches = torch.zeros((len(selected), len(CAMERA_NAMES)), dtype=torch.bool)
+    candidate_points = torch.zeros((len(selected), len(CAMERA_NAMES), 6), dtype=torch.float32)
+    candidate_uv = torch.full((len(selected), len(CAMERA_NAMES), 2), -1, dtype=torch.long)
+    for camera_index, camera in enumerate(CAMERA_NAMES):
+        rgb, depth = observation[f"{camera}_rgb"], observation[f"{camera}_depth"]
+        intrinsic = calibration[f"{camera}_camera_intrinsic"]
+        extrinsic = observation[f"{camera}_camera_extrinsic"]
+        raw_points, raw_uv = _backproject_with_pixels(
+            rgb, depth, intrinsic, extrinsic, crop=None, max_depth_m=max_depth_m
+        )
+        if not len(raw_points):
+            continue
+        height, width = np.asarray(rgb).shape[:2]
+        # Match the calibration values used by FP32 backprojection, while doing
+        # the inverse projection arithmetic in FP64 to choose an integer pixel.
+        k = torch.as_tensor(np.asarray(intrinsic).copy(), dtype=torch.float32).double().reshape(3, 3)
+        e = torch.as_tensor(np.asarray(extrinsic).copy(), dtype=torch.float32).double().reshape(3, 4)
+        # Invert the actual row-vector backprojection, even when a recorded
+        # rotation has small accepted departures from exact orthonormality.
+        camera_xyz = selected[:, :3].double() @ torch.linalg.inv(e[:, :3]) + e[:, 3]
+        projected = camera_xyz @ k.T
+        projectable = torch.isfinite(projected).all(-1) & (projected[:, 2] > 0)
+        pixel = torch.zeros((len(selected), 2), dtype=torch.float64)
+        pixel[projectable] = projected[projectable, :2] / projected[projectable, 2:3]
+        rounded = pixel.round()
+        projectable &= (
+            (rounded[:, 0] >= 0) & (rounded[:, 0] < width) & (rounded[:, 1] >= 0) & (rounded[:, 1] < height)
+        )
+        selected_indices = torch.where(projectable)[0]
+        if not len(selected_indices):
+            continue
+        integer_uv = rounded[selected_indices].long()
+        lookup = torch.full((height, width), -1, dtype=torch.long)
+        lookup[raw_uv[:, 1], raw_uv[:, 0]] = torch.arange(len(raw_points))
+        raw_indices = lookup[integer_uv[:, 1], integer_uv[:, 0]]
+        present = raw_indices >= 0
+        selected_indices, integer_uv, raw_indices = (
+            selected_indices[present],
+            integer_uv[present],
+            raw_indices[present],
+        )
+        candidate = raw_points[raw_indices]
+        expected = selected[selected_indices]
+        agrees = (candidate[:, 3:] == expected[:, 3:]).all(-1) & (
+            (candidate[:, :3] - expected[:, :3]).abs() <= CANONICAL_PIXEL_XYZ_TOLERANCE_M
+        ).all(-1)
+        selected_indices, candidate, integer_uv = (
+            selected_indices[agrees],
+            candidate[agrees],
+            integer_uv[agrees],
+        )
+        matches[selected_indices, camera_index] = True
+        candidate_points[selected_indices, camera_index] = candidate
+        candidate_uv[selected_indices, camera_index] = integer_uv
+    absent = ~matches.any(-1)
+    duplicate = matches.all(-1)
+    identical_sources = (
+        candidate_points[:, 0].contiguous().view(torch.int32)
+        == candidate_points[:, 1].contiguous().view(torch.int32)
+    ).all(-1)
+    ambiguous = duplicate & (~identical_sources if voxel_size > 0 else torch.ones_like(duplicate))
+    if absent.any() or ambiguous.any():
+        raise ValueError(
+            "Cannot recover canonical point provenance: "
+            f"missing={int(absent.sum())}, ambiguous={int(ambiguous.sum())}; "
+            f"first missing indices={valid_indices[absent][:8].tolist()}, "
+            f"first ambiguous indices={valid_indices[ambiguous][:8].tolist()}. "
+            "Requires exact RGB and unique raw-pixel XYZ agreement within "
+            f"{CANONICAL_PIXEL_XYZ_TOLERANCE_M:g} m; canonical geometry was not changed."
+        )
+    chosen = matches.to(torch.int64).argmax(-1)
+    source[valid_indices] = chosen
+    uv[valid_indices] = candidate_uv[torch.arange(len(selected)), chosen]
+    return source, uv
 
 
 def proprioception(observation: dict) -> Tensor:

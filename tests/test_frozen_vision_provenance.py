@@ -9,7 +9,12 @@ import torch
 from torch import nn
 
 from stmem.data.canonical import Frame
-from stmem.data.pointcloud import rgbd_to_points, rgbd_to_points_with_provenance
+from stmem.data.pointcloud import (
+    backproject,
+    canonical_point_provenance,
+    rgbd_to_points,
+    rgbd_to_points_with_provenance,
+)
 from stmem.vision import frozen
 
 
@@ -53,6 +58,124 @@ def test_provenance_empty_and_cropped(rgbd):
         obs[f"{name}_depth"][:] = -1
     points, valid, camera, uv = rgbd_to_points_with_provenance(obs, calibration, count=16)
     assert points.eq(0).all() and not valid.any()
+    assert camera.eq(-1).all() and uv.eq(-1).all()
+
+
+def test_canonical_provenance_recovers_source_without_mutating_stored_geometry(rgbd):
+    obs, calibration = rgbd
+    points, valid, expected_camera, expected_uv = rgbd_to_points_with_provenance(
+        obs, calibration, count=256, crop=None, voxel_size=0
+    )
+    # Emulate a one-ULP CPU backprojection difference, without changing the
+    # observed point selected by preparation or its exact RGB values.
+    points[valid, :3] = torch.nextafter(points[valid, :3], torch.full_like(points[valid, :3], torch.inf))
+    before, mask_before = points.clone(), valid.clone()
+    camera, uv = canonical_point_provenance(obs, calibration, points, valid)
+    assert torch.equal(camera, expected_camera)
+    assert torch.equal(uv, expected_uv)
+    assert torch.equal(points, before) and torch.equal(valid, mask_before)
+    assert camera[~valid].eq(-1).all() and uv[~valid].eq(-1).all()
+
+
+def test_canonical_provenance_does_not_reselect_or_reorder_points(rgbd):
+    obs, calibration = rgbd
+    # A subset/order different from the current sampler must retain its own
+    # observing pixels. No correspondence may depend on rerunning selection.
+    cloud = backproject(
+        obs["wrist_rgb"],
+        obs["wrist_depth"],
+        calibration["wrist_camera_intrinsic"],
+        obs["wrist_camera_extrinsic"],
+        crop=None,
+    )
+    points = cloud[torch.tensor([31, 3, 60, 14, 8])].clone()
+    valid = torch.ones(len(points), dtype=torch.bool)
+    camera, uv = canonical_point_provenance(obs, calibration, points, valid)
+    assert camera.eq(1).all()
+    for point, (u, v) in zip(points, uv):
+        assert torch.equal(point[3:], torch.tensor(obs["wrist_rgb"][v, u], dtype=torch.float32) / 255)
+
+
+@pytest.mark.parametrize("change", ["rgb", "xyz", "occlusion", "invalid_depth"])
+def test_canonical_provenance_rejects_changed_or_occluded_sources(rgbd, change):
+    obs, calibration = rgbd
+    points, valid, camera, uv = rgbd_to_points_with_provenance(
+        obs, calibration, count=1, crop=None, voxel_size=0
+    )
+    name = ("front", "wrist")[int(camera[0])]
+    u, v = uv[0].tolist()
+    if change == "rgb":
+        points[0, 3] += 1 / 255
+    elif change == "xyz":
+        points[0, 0] += 0.001
+    elif change == "occlusion":
+        obs[f"{name}_depth"][v, u] = 90
+    else:
+        obs[f"{name}_depth"][v, u] = 0
+    with pytest.raises(ValueError, match="missing=1, ambiguous=0"):
+        canonical_point_provenance(obs, calibration, points, valid)
+
+
+def test_canonical_provenance_rejects_two_distinct_matching_cameras(rgbd):
+    obs, calibration = rgbd
+    obs["wrist_rgb"] = obs["front_rgb"].copy()
+    # Both sources are within 1 um, but they are different observations. Exact
+    # RGB and proximity alone must not silently choose which image to encode.
+    obs["wrist_camera_extrinsic"][0, 3] = 0.5e-6
+    cloud = backproject(
+        obs["front_rgb"],
+        obs["front_depth"],
+        calibration["front_camera_intrinsic"],
+        obs["front_camera_extrinsic"],
+        crop=None,
+    )
+    with pytest.raises(ValueError, match="missing=0, ambiguous=1"):
+        canonical_point_provenance(obs, calibration, cloud[10:11], torch.ones(1, dtype=torch.bool))
+
+
+def test_canonical_provenance_identical_camera_tie_preserves_front_first(rgbd):
+    obs, calibration = rgbd
+    obs["wrist_rgb"] = obs["front_rgb"].copy()
+    points, valid, expected_camera, expected_uv = rgbd_to_points_with_provenance(
+        obs, calibration, count=32, crop=None, voxel_size=0.005
+    )
+    assert expected_camera.eq(0).all()
+    camera, uv = canonical_point_provenance(obs, calibration, points, valid)
+    assert torch.equal(camera, expected_camera)
+    assert torch.equal(uv, expected_uv)
+
+
+def test_canonical_provenance_identical_camera_tie_without_voxelization_is_ambiguous(rgbd):
+    obs, calibration = rgbd
+    obs["wrist_rgb"] = obs["front_rgb"].copy()
+    points, valid = rgbd_to_points(obs, calibration, count=8, crop=None, voxel_size=0)
+    with pytest.raises(ValueError, match="missing=0, ambiguous=8"):
+        canonical_point_provenance(obs, calibration, points, valid, voxel_size=0)
+
+
+@pytest.mark.parametrize("invalid", ["shape", "dtype", "mask_shape", "mask_dtype", "nan"])
+def test_canonical_provenance_validates_inputs(rgbd, invalid):
+    obs, calibration = rgbd
+    points, valid = rgbd_to_points(obs, calibration, count=16, crop=None)
+    if invalid == "shape":
+        points = points[:, :3]
+    elif invalid == "dtype":
+        points = points.half()
+    elif invalid == "mask_shape":
+        valid = valid[:-1]
+    elif invalid == "mask_dtype":
+        valid = valid.float()
+    else:
+        points[0, 0] = float("nan")
+    with pytest.raises(ValueError, match="Canonical"):
+        canonical_point_provenance(obs, calibration, points, valid)
+
+
+def test_canonical_provenance_all_padding_is_unavailable(rgbd):
+    obs, calibration = rgbd
+    camera, uv = canonical_point_provenance(
+        obs, calibration, torch.zeros(4, 6), torch.zeros(4, dtype=torch.bool)
+    )
     assert camera.eq(-1).all() and uv.eq(-1).all()
 
 

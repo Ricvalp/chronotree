@@ -1000,3 +1000,48 @@
     [experiment guide](frozen_vision_experiment.md) provides explicit preparation,
     capacity profiling, teacher-only submission and matched evaluation commands.
     Full-history B200 memory/throughput and trained behavior remain unmeasured.
+
+39. **Recover frozen-feature pixels from immutable canonical points (28 October 2026).**
+    HPC feature preparation failed at the first BinFill frame after passing the
+    raw-file checksum. The old implementation repeated geometry selection and
+    required bitwise equality with stored FP32 XYZRGB. A local real-data audit
+    reproduced that failure by changing CPU MKL dispatch: 1,401 of 2,048 rows
+    differed by at most 5.96e-8 metres on the first VideoUnmask frame. On later
+    frames, small arithmetic differences also changed voxel representatives and
+    selected rows. The HPC log does not identify its original CPU arithmetic;
+    the local audit establishes a real portability bug, not a measured hardware
+    diagnosis for that particular node. Replacing equality with a loose
+    whole-cloud tolerance would not resolve changed selection safely.
+
+    Offline descriptor preparation now reads canonical XYZRGB and validity
+    directly, without rerunning sampling. FP64 inverse projection proposes a
+    source camera's integer pixel; exact RGB and actual recorded-depth
+    backprojection must match within 1e-6 metres per XYZ coordinate. A unique
+    correspondence is required. Only bitwise-identical camera candidates with
+    positive voxel deduplication may use the original stable front-camera tie;
+    other ambiguity or absent correspondence fails. The bound validates the
+    pixel, never permits replacing a point. Geometry, centers, ordering, masks,
+    alignment and online point sampling are unchanged. Descriptor identity is
+    unchanged because the source-pixel/CLIP recipe is unchanged; compatible
+    existing partial caches resume and complete caches remain immutable.
+
+    `prepare_features --check-geometry --max-frames N` checks at most N frames
+    per task on CPU without CLIP weights, output writes or full-file hashing.
+    This is a bounded correspondence diagnostic, not a completed-cache or raw
+    integrity certificate. Production preparation still checks the full raw
+    SHA256 and validates correspondence for every newly written frame.
+
+    Verification: native and MKL-compatible CPU paths recovered exactly the
+    existing camera/pixel indices for all 464 local released VideoUnmask frames,
+    with no changes to canonical points or validity. A separate two-frame GPU
+    extraction under MKL-compatible arithmetic produced bit-identical FP16
+    descriptors and provenance versus the earlier cache, with an unchanged
+    prepared-file SHA256. Synthetic regressions cover small rounding, changed
+    row ordering, wrong RGB/depth/geometry, ambiguity, padding, interrupted
+    writer resume and the bounded read-only CLI. The full CPU suite passes
+    741 tests with one skipped legacy-path real-data check; the actual subset
+    was checked explicitly at its inspection path. The actual-device doctor
+    passes FP32/BF16/FP16, Ruff and the architecture snapshot/XML checks pass.
+    Evidence is retained under the ignored directory
+    `runs/inspection/fv_geometry_backend_audit/`. The full 16-task HPC cache
+    remains unrun locally; no Slurm jobs were submitted.

@@ -55,6 +55,7 @@ SOURCES = [
     "src/stmem/data/center_sampling.py",
     "src/stmem/data/canonical.py",
     "src/stmem/data/prepare.py",
+    "src/stmem/data/prepare_features.py",
     "src/stmem/data/dataset.py",
     "src/stmem/data/feature_cache.py",
     "src/stmem/vision/frozen.py",
@@ -1212,7 +1213,7 @@ def frozen_vision(file, facts):
             "Padding validity follows each point",
         ],
         size=18,
-        tooltip="pointcloud.py preserves observing-camera/pixel indices through exactly the same geometry-only selection; no object labels or reprojected unseen pixels.",
+        tooltip="Online pointcloud.py carries source camera/pixel indices through geometry-only selection. Offline feature preparation recovers pixels for unchanged canonical points, verifying exact RGB and recorded-depth backprojection within 1 micrometre per coordinate; missing or ambiguous matches fail. No object labels or unseen pixels are used.",
     )
     clip = p.card(
         430,

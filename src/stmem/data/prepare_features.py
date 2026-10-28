@@ -1,8 +1,8 @@
 """Attach frozen CLIP descriptors to existing prepared XYZRGB points.
 
 This command never changes canonical geometry or its alignment evidence. It
-repeats the deterministic RGB-D selection, checks exact agreement with every
-prepared row, and writes separate, resumable descriptor/provenance sidecars.
+recovers validated raw camera/pixel correspondences for the existing prepared
+points and writes separate, resumable descriptor/provenance sidecars.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from .feature_cache import (
     feature_cache_manifest,
     prepared_feature_identity,
 )
-from .pointcloud import rgbd_to_points_with_provenance, point_sampler_settings
+from .pointcloud import canonical_point_provenance, point_sampler_settings
 from .prepare import FORMAT_VERSION, numeric_keys
 from .preparation_state import preparation_lock
 
@@ -100,6 +100,69 @@ def estimate_feature_cache(prepared_path, config, *, episodes=None, max_frames=N
         "estimated_gib": frames * bytes_per_frame / 2**30,
         "diagnostic": max_frames is not None,
     }
+
+
+def _frame_provenance(canonical, raw_episode, row, calibration, manifest):
+    """Attach raw pixels to immutable canonical rows, never a newly sampled cloud."""
+    raw_index = int(canonical["raw_index"][row])
+    sensors = raw_episode[f"timestep_{raw_index}"]["obs"]
+    observation = {
+        name: sensors[name][()]
+        for name in (
+            "front_rgb",
+            "wrist_rgb",
+            "front_depth",
+            "wrist_depth",
+            "front_camera_extrinsic",
+            "wrist_camera_extrinsic",
+        )
+    }
+    points = torch.from_numpy(canonical["points"][row])
+    valid = torch.from_numpy(canonical["valid"][row])
+    try:
+        camera, uv = canonical_point_provenance(
+            observation,
+            calibration,
+            points,
+            valid,
+            max_depth_m=manifest["max_depth_m"],
+            voxel_size=manifest["voxel_size"],
+        )
+    except ValueError as error:
+        raise ValueError(
+            f"Cannot recover raw pixels for canonical {manifest['task']}/{canonical.name.rsplit('/', 1)[-1]}"
+            f"/{raw_index}: {error}; feature preparation is not allowed to change geometry"
+        ) from error
+    return observation, valid, camera, uv
+
+
+def check_feature_geometry(prepared_path, raw_path, config, *, episodes=None, max_frames):
+    """Bounded read-only pixel check; no CLIP, descriptor writes or whole-file hashing."""
+    if max_frames is None or max_frames < 1:
+        raise ValueError("Read-only geometry checks require a positive max_frames bound")
+    estimate = estimate_feature_cache(prepared_path, config, episodes=episodes, max_frames=max_frames)
+    started = time.monotonic()
+    checked = 0
+    with h5py.File(prepared_path, "r") as prepared, h5py.File(raw_path, "r") as raw:
+        manifest = json.loads(prepared.attrs["manifest"])
+        for key, count in estimate["episodes"].items():
+            calibration = {
+                f"{camera}_camera_intrinsic": raw[key]["setup"][f"{camera}_camera_intrinsic"][()]
+                for camera in ("front", "wrist")
+            }
+            for row in range(count):
+                _frame_provenance(prepared[key], raw[key], row, calibration, manifest)
+                checked += 1
+    report = {
+        "event": "feature_geometry_checked",
+        "task": manifest["task"],
+        "frames_checked": checked,
+        "elapsed_seconds": time.monotonic() - started,
+        "raw_checksum_verified": False,
+        "descriptors_written": False,
+    }
+    _emit(report)
+    return report
 
 
 def prepare_feature_task(
@@ -240,35 +303,9 @@ def prepare_feature_task(
                     if not 0 <= start <= count:
                         raise ValueError(f"Invalid partial completion counter in {temporary}:{key}")
                     for row in range(start, count):
-                        raw_index = int(canonical["raw_index"][row])
-                        sensors = raw_episode[f"timestep_{raw_index}"]["obs"]
-                        observation = {
-                            name: sensors[name][()]
-                            for name in (
-                                "front_rgb",
-                                "wrist_rgb",
-                                "front_depth",
-                                "wrist_depth",
-                                "front_camera_extrinsic",
-                                "wrist_camera_extrinsic",
-                            )
-                        }
-                        points, valid, camera, uv = rgbd_to_points_with_provenance(
-                            observation,
-                            calibration,
-                            count=manifest["points"],
-                            crop=prepared_manifest["crop"],
-                            voxel_size=prepared_manifest["voxel_size"],
-                            max_depth_m=prepared_manifest["max_depth_m"],
-                            **prepared_manifest["point_sampling"],
+                        observation, valid, camera, uv = _frame_provenance(
+                            canonical, raw_episode, row, calibration, prepared_manifest
                         )
-                        if not np.array_equal(points.numpy(), canonical["points"][row]) or not np.array_equal(
-                            valid.numpy(), canonical["valid"][row]
-                        ):
-                            raise ValueError(
-                                f"Regenerated XYZRGB differs from canonical {manifest['task']}/{key}/{raw_index}; "
-                                "feature selection is not allowed to change geometry"
-                            )
                         features = (
                             extractor.sample(observation, camera, uv, valid)
                             .detach()
@@ -349,6 +386,11 @@ def main(argv=None):
         action="store_true",
         help="Report selected frame counts and uncompressed cache bytes only",
     )
+    parser.add_argument(
+        "--check-geometry",
+        action="store_true",
+        help="Read-only CPU check of raw pixels for canonical points; requires --max-frames",
+    )
     args = parser.parse_args(argv)
     if (
         args.threads < 1
@@ -356,6 +398,8 @@ def main(argv=None):
         or (args.max_frames is not None and args.max_frames < 1)
     ):
         parser.error("--threads, --episodes and --max-frames must be positive")
+    if args.check_geometry and (args.max_frames is None or args.dry_run):
+        parser.error("--check-geometry requires --max-frames and cannot be combined with --dry-run")
     config = load_config(args.config)
     require_sampling_contract(config)
     spec = resolve_visual_features(config)
@@ -390,12 +434,22 @@ def main(argv=None):
             "estimated_bytes": sum(item["estimated_bytes"] for item in estimates),
             "output_dir": str(output_root),
             "dry_run": args.dry_run,
-            "note": "FP16 sampled descriptors before trainable projection; one sequential writer on the selected device",
+            "check_geometry": args.check_geometry,
+            "note": (
+                "Read-only bounded pixel correspondence check; no CLIP, descriptor writes or full-file hashing"
+                if args.check_geometry
+                else "FP16 sampled descriptors before trainable projection; one sequential writer on the selected device"
+            ),
         }
     )
     if args.dry_run:
         return estimates
     torch.set_num_threads(args.threads)
+    if args.check_geometry:
+        return [
+            check_feature_geometry(prepared, raw, config, episodes=episodes, max_frames=args.max_frames)
+            for prepared, raw, _ in jobs
+        ]
     extractor = FrozenCLIPFeatures(spec, device=args.device)
     return [
         prepare_feature_task(

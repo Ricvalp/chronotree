@@ -78,9 +78,15 @@ remain available in both arms. A metadata ablation is a separate future study.
 ```
 
 Only the last directory is new. Do not regenerate balanced-v2 geometry or repeat
-the alignment audit. Feature preparation repeats deterministic point selection
-and requires exact equality with existing XYZRGB/validity arrays before attaching
-features. It verifies the raw SHA256. Cache identity covers source/geometry
+the alignment audit. Feature preparation reads the existing XYZRGB/validity rows
+without resampling or changing them. It recovers each valid point's source camera
+and integer pixel by reprojection, requiring exact RGB agreement and agreement
+with the raw pixel's backprojected depth within 1 micrometre per coordinate.
+Missing or ambiguous correspondences fail explicitly. Only bitwise-identical
+points from both cameras with voxel deduplication enabled use the original
+stable front-camera tie break. This avoids CPU-dependent rounding changing
+point selection during cache creation.
+Preparation also verifies the raw SHA256. Cache identity covers source/geometry
 recipe, CLIP checksum, layer, preprocessing, shape, pixel correspondence and
 precision contract. Mismatched caches fail explicitly.
 
@@ -161,6 +167,28 @@ Logs are `hpc/logs/stmem_features_<array-job>_<task-index>.out` and `.err`.
 Progress includes throughput, ETA and bytes. Rerunning resumes matching partial
 files and verifies/skips completed tasks. Wait for all 16 final `.h5` files.
 
+If an earlier preparation failed with `Regenerated XYZRGB differs from canonical`,
+update the code before retrying. CPU math implementations can differ slightly in
+backprojection; rerunning the sampler can then change voxel representatives or
+their order. The corrected preparation recovers pixels for the saved canonical
+points instead, preserving geometry and centers.
+
+After loading the site environment in step 1, this bounded CPU check examines
+the first two prepared frames of BinFill without writing caches or loading CLIP:
+
+```bash
+"$STMEM_PYTHON" -m stmem.data.prepare_features \
+  --config configs/teacher_fv_prop.yaml --tasks BinFill \
+  --check-geometry --max-frames 2 --threads 2
+```
+
+The check does not hash the entire raw file or establish that feature preparation
+is complete. Production preparation performs the raw checksum verification and
+checks every selected frame. Once the check passes and previous preparation jobs
+have stopped, rerun the array command above; compatible partial files resume.
+Leave the partial and lock files in place. A `.lock` filename persists after its
+writer exits and does not by itself indicate a running job.
+
 ### 4. Measure longest-history capacity
 
 Microbatch eight is the retained recipe, not a proven full-history B200 memory
@@ -170,10 +198,12 @@ limit. This bounded profiling job uses long released training histories:
 "$STMEM_PYTHON" hpc/profile_memory.py \
   --site hpc/site_b200_4gpu.env --profile b200_4gpu \
   --config configs/teacher_fv_prop.yaml --name fv_prop_long_history \
-  --scenario long-history --warmup-steps 1 --steps 1 --trace-steps 0 \
+  --scenario long-history --warmup-steps 5 --steps 1 --trace-steps 0 \
   --walltime 00:30:00 --submit
 ```
 
+The profiler requires 5–10 warmup updates. This command runs five warmup updates
+and one measured update, six in total, using an isolated scratch model.
 FV-Prop has more state tokens and is the natural first capacity check. Inspect
 memory and timings before long training. If needed, reduce the common microbatch
 or encoder block batch in `teacher_fv_prop.yaml`, preserving effective batch 128,

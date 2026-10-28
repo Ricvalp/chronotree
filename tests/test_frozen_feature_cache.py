@@ -153,6 +153,60 @@ def test_interrupted_cache_resumes_only_committed_rows(cache_input):
     assert EpisodeDataset(canonical, visual_features_config=cfg).load_episode(0).conditioning
 
 
+def test_feature_attachment_preserves_existing_rows_under_rounding_and_reordering(cache_input, monkeypatch):
+    """Synthetic CPU-rounding/selection regression: attach, never reselect points."""
+    from stmem.data import pointcloud
+
+    cfg, _, canonical, output = cache_input
+    with h5py.File(canonical, "r+") as handle:
+        group = handle["episode_0"]
+        points, valid = group["points"][0][::-1].copy(), group["valid"][0][::-1].copy()
+        points[valid, :3] = np.nextafter(points[valid, :3], np.float32(np.inf))
+        group["points"][0], group["valid"][0] = points, valid
+    before = canonical.read_bytes()
+
+    def cannot_reselect(*args, **kwargs):
+        raise AssertionError("Feature attachment must not run point selection again")
+
+    monkeypatch.setattr(pointcloud, "sample_points", cannot_reselect)
+    prepare(cache_input)
+    assert canonical.read_bytes() == before
+    with h5py.File(output) as cache:
+        descriptors = cache["episode_0/features"][0]
+        assert np.array_equal(descriptors[valid, :3], (points[valid, 3:] * 255).astype(np.float16))
+
+
+def test_bounded_geometry_cli_needs_no_weights_hash_or_output(cache_input, monkeypatch, capsys, tmp_path):
+    from stmem.data import prepare_features
+
+    cfg, _, canonical, output = cache_input
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(cfg))
+    before = canonical.read_bytes()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Read-only geometry check cannot load CLIP or hash the full raw file")
+
+    monkeypatch.setattr(prepare_features, "FrozenCLIPFeatures", forbidden)
+    monkeypatch.setattr(prepare_features, "sha256", forbidden)
+    report = prepare_features.main(
+        [
+            "--config",
+            str(config_path),
+            "--check-geometry",
+            "--max-frames",
+            "2",
+        ]
+    )
+    assert report[0]["frames_checked"] == 2
+    assert not report[0]["raw_checksum_verified"] and not report[0]["descriptors_written"]
+    assert canonical.read_bytes() == before
+    assert not output.parent.exists()
+    assert "feature_geometry_checked" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        prepare_features.main(["--config", str(config_path), "--check-geometry"])
+
+
 def test_cache_rejects_geometry_and_raw_identity_changes(cache_input):
     cfg, raw, canonical, _ = cache_input
     prepare(cache_input)
@@ -238,8 +292,13 @@ def test_spawn_loader_sends_lazy_descriptor_rows_and_preserves_packed_prediction
     cfg, _, _, _ = cache_input
     prepare(cache_input)
     cfg["model"].update(
-        width=16, heads=4, layers=1, text_layers=1, max_text_bytes=24,
-        proprioception_mode="none", condition_on_previous_commands=False,
+        width=16,
+        heads=4,
+        layers=1,
+        text_layers=1,
+        max_text_bytes=24,
+        proprioception_mode="none",
+        condition_on_previous_commands=False,
     )
     cfg["training"].update(workers=1, prefetch_factor=1, encoder_block_batch_size=2)
     data = TrainingData(cfg)
@@ -250,8 +309,10 @@ def test_spawn_loader_sends_lazy_descriptor_rows_and_preserves_packed_prediction
         assert all(batch.worker_pid != os.getpid() for batch in batches)
         for batch in batches:
             packed = batch.packed
-            refs = [*packed.current_visual_features,
-                    *(row for block in packed.history.visual_features for row in block if row is not None)]
+            refs = [
+                *packed.current_visual_features,
+                *(row for block in packed.history.visual_features for row in block if row is not None),
+            ]
             assert refs and all(isinstance(ref, FeatureRow) for ref in refs)
             # Even these tiny 16-point fixtures would be 8KiB/frame as tensors;
             # transport contains path/row offsets with no persistent file handles.
