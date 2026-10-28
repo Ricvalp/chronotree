@@ -142,7 +142,9 @@ def evaluation_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(evaluate, "RunTracker", FakeTracker)
     monkeypatch.setattr(evaluate, "environment_manifest", lambda: {"device": "mock-cpu"})
     monkeypatch.setattr(evaluate, "source_revision", lambda: copy.deepcopy(source))
-    monkeypatch.setattr(evaluate, "load_policy", lambda *_: (object(), {"config": copy.deepcopy(cfg)}))
+    monkeypatch.setattr(
+        evaluate, "load_policy", lambda *_: (torch.nn.Module(), {"config": copy.deepcopy(cfg)})
+    )
     monkeypatch.setattr(evaluate, "OnlinePolicy", lambda *_args, **_kwargs: object())
     adapters = []
 

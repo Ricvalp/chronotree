@@ -939,3 +939,64 @@
     used offline W&B. These numbers do not establish B200 overhead or behavior
     on the full task set. Detailed local evidence is retained under
     `runs/inspection/attention_logging_20261028/`.
+
+38. **Frozen CLIP descriptors and matched measured-state ablation (28 October 2026).**
+    Implement `teacher_fv_prop.yaml` and its inherited `teacher_fv_no_prop.yaml`
+    as fresh H32/K4, native-20-Hz teachers: effective batch 128, microbatch eight,
+    encoder block batch 32, peak LR 0.0001 and 100k updates. Comparison snapshots
+    are 25k, 50k and 100k. Shared trainable modules receive identical initial
+    weights and both arms use the same deterministic sample order. Both disable
+    all previous commanded joint targets, gripper commands and availability.
+    FV-NoProp additionally removes current measured-state and historical event
+    tokens, including measured-end-effector anchors. Removed state slots do not
+    buy extra visual observations. The optional current-only proprioception
+    mode is implemented but is not another required run. Metadata ablation
+    remains a separate follow-up.
+
+    The frozen backbone is the official pretrained OpenAI CLIP RN50 through
+    `layer1`, not global attention pooling: native RGB256 produces 256-channel
+    64×64 maps. Camera/pixel provenance follows existing XYZRGB selection
+    indices exactly. Bilinear lookup uses feature origin one pixel, stride four,
+    border padding and `align_corners=False`. Raw sampled FP16 descriptors are
+    cached before trainable LayerNorm and 256→128 projection. Point geometry,
+    balanced-v2 sampling, frame-local centers and causal boundaries remain
+    unchanged. The backbone is separately frozen in eval mode, excluded from
+    the optimizer, and its online cost is included in observation preprocessing.
+
+    Feature sidecars are versioned separately from prepared geometry and include
+    source/geometry identity, CLIP checksum, preprocessing, coordinate mapping
+    and strict FP32 backend settings. An implementation check exposed that
+    ambient TF32 settings changed descriptors; the final extractor now scopes
+    cuDNN enabled/deterministic, benchmarking and TF32 disabled, and highest
+    float32 matmul precision, restoring caller settings. Caches produced under
+    the earlier contract are rejected. Production offline/online descriptors
+    match exactly under the final contract, including outer BF16 autocast and
+    high matmul precision. Complete caches are immutable, partial caches resume
+    committed rows, and diagnostic partial-frame caches cannot train a policy.
+    Picklable row references prevent multi-gigabyte descriptor histories from
+    accumulating in worker queues; bounded local block batches materialize them.
+
+    Evaluation-only instrumentation reports contact grasp, new grasp from reset,
+    lift, target-position error and commanded-versus-observed TCP error without
+    changing official success or allowed inputs. PickXtimes tracks its target
+    cube; VideoUnmask tracks the first required container (`bin_0`). Terminal
+    wrapper extra-step states are excluded from active diagnostic aggregates.
+    Unsupported tasks and diagnostic failures are explicit. Details remain in
+    episode JSON and `targeting.json`, preserving the two-chart W&B dashboard.
+
+    Verification: the full CPU suite passes 724 tests with one skipped legacy
+    real-data-path check; the actual released two-episode subset was checked
+    explicitly at its inspection path. The final strict-FP32 sidecar contains
+    464 frames and 491,310,800 bytes; local extraction measured about 17.4
+    frames/s. Both arms completed a real one-update forward/backward check and
+    production short rollouts on PickXtimes and VideoUnmask validation scene 0.
+    All four rollouts generated finite H32 chunks, issued K4 replans, wrote
+    videos and targeting reports, and reached their deliberately short limits
+    without feature/policy/simulator errors. These are execution checks, not
+    evidence of better targeting. The actual-device doctor and architecture
+    snapshot/XML checks pass; generated teacher jobs have separate run roots
+    and request four untyped GPUs on `aiq`, 64 CPUs, 128 GB RAM and 48 hours.
+    No Slurm job or full cache generation was launched. The
+    [experiment guide](frozen_vision_experiment.md) provides explicit preparation,
+    capacity profiling, teacher-only submission and matched evaluation commands.
+    Full-history B200 memory/throughput and trained behavior remain unmeasured.

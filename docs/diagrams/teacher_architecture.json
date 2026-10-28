@@ -106,28 +106,32 @@
     "configs/teacher_b200_b128_m8_blocks32.yaml": "77d78491d42bbe601545d0cfbb077434d8333d7ce09278d21792cff280ec41bf",
     "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands.yaml": "ec4f18b021bdf80f0edd82dd17eee2987a7db5fce9f598c6308aece5140733e2",
     "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml": "5f1954db858a5b302c5dd9cd869b0523b15143df29bec3e9a9bdcb41fab50605",
-    "src/stmem/config.py": "b0b331bb5b89f8713f391ad203556c7cd6062cf22ba5223af6f2d2490dc81eeb",
-    "src/stmem/data/canonical.py": "3f8bd860bd2daddbd1fd05f1148fca7b5bc5b2923108cc9b83cbc0bdc8ef7dfd",
+    "configs/teacher_fv_no_prop.yaml": "287697a68c8f5e4aa76bbe012242e041848dd3ad8c3063c2b982806765f7b177",
+    "configs/teacher_fv_prop.yaml": "bcf12b15fe6bf1c93f7a6454949ca3b10c9aa0424073cd01932b33c2f0f50237",
+    "src/stmem/config.py": "5497601d13d12bd38733c7401427559350a270e6a81d46cc44dfe35edc6a6cfc",
+    "src/stmem/data/canonical.py": "8060bd0aa7dd28d4bf712c73ddaa193e81c4abe8fa0153db67b96f35665e7f6b",
     "src/stmem/data/center_sampling.py": "829973de64ed8909a3386627ae1e4575f3b3b294685b1df4af5062a07b976cdc",
-    "src/stmem/data/dataset.py": "4410f877cf65c35c9ea5dde8bb298e60932b36f1e26f8d1dd76dcfaabad0a011",
-    "src/stmem/data/pointcloud.py": "0407bf549395014dd8016bc0478d82a06912af721d3045841164a995fa63ee56",
+    "src/stmem/data/dataset.py": "718ef443d1dee2bf55fb87dc8e7868e42a5b48f888bdc3cd92e529614de1822c",
+    "src/stmem/data/feature_cache.py": "3464c12630b4f80514491ecfe87354bf2e4e24854865b6c96fb0b80b434a1eea",
+    "src/stmem/data/pointcloud.py": "5c25996e801d742ee70961ad3d13b13beea0e0acfabfc59a68afbe5bf140d109",
     "src/stmem/data/prepare.py": "883cc6bcc039bed9739f8fc84f99b8883d9d3d1fb5633cdde6cef361293a21d3",
-    "src/stmem/evaluation/robomme_adapter.py": "33648a71430dbee9bcf153b07b5bc0d522ce126abcfe2c1aa90ca1128211e76c",
+    "src/stmem/evaluation/robomme_adapter.py": "3a2ae82f8e7c2008219d066570db3639ad6197bfaa2ca335b307c3aa269f57a4",
     "src/stmem/models/action_flow.py": "0f4e91469f7ff1726e2835ae5d370eee7a4fc75b7c76b3683c5c37df0976db6e",
     "src/stmem/models/attention_diagnostics.py": "1456e5645ccc4706e4615bf7b87b42e5cdf0105c8dcd3d57b686c7afa17ba5bd",
-    "src/stmem/models/batched_policy.py": "4f5df918c593343b092d13edd8c56651f6068370bbd5e27fcd71c2868430ac47",
-    "src/stmem/models/batched_spacetime.py": "1604c2fd2f98362c83f4769fd1f8e4358833e5ae5ee4c36731ab5440839ad04e",
-    "src/stmem/models/event_encoder.py": "d6c3ba46076882cfb87821c12e8b0f4b9902ade2f595b8d103acb98f00a173b7",
+    "src/stmem/models/batched_policy.py": "048b4f4aa08ffde2a65e3ba61179dfacf09e2e0b9fc8b759dbb005592ed802c5",
+    "src/stmem/models/batched_spacetime.py": "3cf7da97a09b741df55129fb60f4337b4ea43e8a08f8260c92a81f6a7e00fbe0",
+    "src/stmem/models/event_encoder.py": "57ba8a74b18c72345533ba38d947fb9f2932c47d2bc9262f93a03e2a06c3cd54",
     "src/stmem/models/metadata_adapter.py": "e396f64ea28c7a2700dfb52b5f735cc680f6e8ab66c74c5a4a8a3fa148aca30b",
-    "src/stmem/models/policy.py": "9815775b5d7dd14f520c1782094282062f152e87070889138e4cd34eafd1834b",
-    "src/stmem/models/spacetime_encoder.py": "41e5b4dfa42950f0d87e393fdce140621fd37b3bc856875da4748a186dd2aab9",
+    "src/stmem/models/policy.py": "4dfbb42614db9a1124a8b6833f30cbf22d49c5e7001411e38d6a35ebb50bc8c9",
+    "src/stmem/models/spacetime_encoder.py": "262d6ff1383ef69f90ed8fb980603ba0566226dc74b25ad3ce6eb2a43778940d",
     "src/stmem/models/text_encoder.py": "84fafb56b901b9883e0f6ef548574a885f77f35d5960dfb2d6df5290b4a5e503",
     "src/stmem/tracking.py": "711933bc1ee2d15babec3d579c46121165337f80688fcbc632c5e9fef0f3ca02",
     "src/stmem/train.py": "61b9ecb4162224e633729a772c80456e807f759250f9a09649269823c49008fa",
-    "src/stmem/training/attention.py": "1d9a578adaaaa5ddbea9d6bbdebc7032fcf23c47d6a40610d15b90dad39c59b0",
-    "src/stmem/training/data.py": "a5b22a0d3242de69e83e52122fc588f2a1b989bb10ecc1c84941160856431799",
+    "src/stmem/training/attention.py": "ec8bc7e5966246ec1a650778bcab1e46241caf29b09c9da1cb4187f07e642d23",
+    "src/stmem/training/data.py": "0ec0d6367ba2c04ed6ddc2559e5fcadb6db785d5fc9b3df2d13abfb59a0c04cc",
     "src/stmem/training/loader.py": "5d8908bb07cc2c5daaa6df62ad1f243077674a649be16e43f5a23a1558f4af33",
     "src/stmem/training/logging_options.py": "9ce7fd895a3f28de3b0c2fcbf566c24d0bdc59119e1657f6a7db3093ab554d67",
+    "src/stmem/vision/frozen.py": "50875723488e2038e38393765d526cf47b81017ea2dfcad89dc116939462c5c5",
     "src/stmem/visualization/diagnostics.py": "55c5e34f43127f0465d1d2a288e97c8d38badef5044648bf84d595663dd1dfa2"
   },
   "total_parameters": 6098698,
@@ -162,6 +166,288 @@
     "workers": 8
   },
   "variants": {
+    "fv_no_prop": {
+      "configuration": "configs/teacher_fv_no_prop.yaml",
+      "current_state_token": false,
+      "external_frozen_encoder_parameters": 244576,
+      "feature_projection_parameters": 33408,
+      "historical_event_tokens": false,
+      "inactive_policy_parameters": 276224,
+      "model": {
+        "action_space": "joint_angle",
+        "archive_device": "cpu",
+        "block_size": 8,
+        "budget": 128,
+        "budgets": [
+          64,
+          128,
+          256
+        ],
+        "checkpoint_blocks": false,
+        "condition_on_previous_commands": false,
+        "condition_on_previous_joint_commands": false,
+        "current_tokens": 32,
+        "decoder": "flow",
+        "encoder": "joint",
+        "encoder_options": {
+          "center_sampling": {
+            "cell_size": 0.1,
+            "foreground_fraction": 0.75,
+            "height_margin": 0.005,
+            "max_iterations": 20,
+            "method": "balanced_cluster",
+            "table_z": 0.0
+          }
+        },
+        "execute": 4,
+        "flow_steps": 8,
+        "heads": 8,
+        "horizon": 32,
+        "layers": 4,
+        "mass_bias": true,
+        "max_conditioning_frames": 1300,
+        "max_execution_frames": 2600,
+        "max_text_bytes": 256,
+        "points": 2048,
+        "proprioception_mode": "none",
+        "router_width": 128,
+        "solver": "euler",
+        "text_layers": 2,
+        "visual_features": {
+          "backbone": "openai_clip_rn50",
+          "cache_dir": "{data_root}/features_clip_rn50_layer1_v1",
+          "checkpoint": "{cache_root}/backbones/clip_RN50.pt",
+          "checkpoint_sha256": "afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762",
+          "layer": "layer1",
+          "mode": "clip_rn50_layer1",
+          "preprocessing": "clip_rgb_native256_v1",
+          "projection_dim": 128
+        },
+        "visual_tokens": 256,
+        "width": 256
+      },
+      "total_policy_parameters": 6168970,
+      "trainable_policy_parameters": 5892746,
+      "training": {
+        "checkpoint_every": 1000,
+        "checkpoint_steps": [
+          25000,
+          50000,
+          100000
+        ],
+        "context_mix": {
+          "current": 0.05,
+          "flat": 0.45,
+          "tree": 0.45,
+          "uniform": 0.05
+        },
+        "effective_batch": 128,
+        "encoder_block_batch_size": 32,
+        "grad_clip": 1.0,
+        "intermediate_probability": 0.5,
+        "length_bucket_size": 1,
+        "log_every": 50,
+        "lr": 0.0001,
+        "microbatch": 8,
+        "precision": "auto",
+        "prefetch_factor": 1,
+        "resume_boundary": "optimizer_step",
+        "steps": 100000,
+        "task_balanced": true,
+        "warmup_steps": 1000,
+        "weight_decay": 0.01,
+        "workers": 8
+      },
+      "visual_feature_identity": {
+        "backbone": "openai_clip_rn50",
+        "camera_order": [
+          "front",
+          "wrist"
+        ],
+        "channel_order": "RGB",
+        "checkpoint_sha256": "afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762",
+        "compute_dtype": "float32",
+        "compute_precision": "fp32_no_tf32_cudnn_deterministic_v1",
+        "cudnn_allow_tf32": false,
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": true,
+        "cudnn_enabled": true,
+        "feature_origin_uv": [
+          1.0,
+          1.0
+        ],
+        "feature_shape": [
+          256,
+          64,
+          64
+        ],
+        "feature_stride": 4,
+        "image_shape": [
+          256,
+          256,
+          3
+        ],
+        "layer": "layer1",
+        "matmul_precision": "highest",
+        "mode": "clip_rn50_layer1",
+        "normalization_mean": [
+          0.48145466,
+          0.4578275,
+          0.40821073
+        ],
+        "normalization_std": [
+          0.26862954,
+          0.26130258,
+          0.27577711
+        ],
+        "pixel_sampling": "rf_origin1_stride4_bilinear_border_align_corners_false_v1",
+        "point_provenance": "selected_xyzrgb_camera_uv_v1",
+        "preprocessing": "clip_rgb_native256_v1",
+        "rgb_scale": "uint8_div255",
+        "storage_dtype": "float16"
+      }
+    },
+    "fv_prop": {
+      "configuration": "configs/teacher_fv_prop.yaml",
+      "current_state_token": true,
+      "external_frozen_encoder_parameters": 244576,
+      "feature_projection_parameters": 33408,
+      "historical_event_tokens": true,
+      "inactive_policy_parameters": 68352,
+      "model": {
+        "action_space": "joint_angle",
+        "archive_device": "cpu",
+        "block_size": 8,
+        "budget": 128,
+        "budgets": [
+          64,
+          128,
+          256
+        ],
+        "checkpoint_blocks": false,
+        "condition_on_previous_commands": false,
+        "condition_on_previous_joint_commands": false,
+        "current_tokens": 32,
+        "decoder": "flow",
+        "encoder": "joint",
+        "encoder_options": {
+          "center_sampling": {
+            "cell_size": 0.1,
+            "foreground_fraction": 0.75,
+            "height_margin": 0.005,
+            "max_iterations": 20,
+            "method": "balanced_cluster",
+            "table_z": 0.0
+          }
+        },
+        "execute": 4,
+        "flow_steps": 8,
+        "heads": 8,
+        "horizon": 32,
+        "layers": 4,
+        "mass_bias": true,
+        "max_conditioning_frames": 1300,
+        "max_execution_frames": 2600,
+        "max_text_bytes": 256,
+        "points": 2048,
+        "proprioception_mode": "all",
+        "router_width": 128,
+        "solver": "euler",
+        "text_layers": 2,
+        "visual_features": {
+          "backbone": "openai_clip_rn50",
+          "cache_dir": "{data_root}/features_clip_rn50_layer1_v1",
+          "checkpoint": "{cache_root}/backbones/clip_RN50.pt",
+          "checkpoint_sha256": "afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762",
+          "layer": "layer1",
+          "mode": "clip_rn50_layer1",
+          "preprocessing": "clip_rgb_native256_v1",
+          "projection_dim": 128
+        },
+        "visual_tokens": 256,
+        "width": 256
+      },
+      "total_policy_parameters": 6168970,
+      "trainable_policy_parameters": 6100618,
+      "training": {
+        "checkpoint_every": 1000,
+        "checkpoint_steps": [
+          25000,
+          50000,
+          100000
+        ],
+        "context_mix": {
+          "current": 0.05,
+          "flat": 0.45,
+          "tree": 0.45,
+          "uniform": 0.05
+        },
+        "effective_batch": 128,
+        "encoder_block_batch_size": 32,
+        "grad_clip": 1.0,
+        "intermediate_probability": 0.5,
+        "length_bucket_size": 1,
+        "log_every": 50,
+        "lr": 0.0001,
+        "microbatch": 8,
+        "precision": "auto",
+        "prefetch_factor": 1,
+        "resume_boundary": "optimizer_step",
+        "steps": 100000,
+        "task_balanced": true,
+        "warmup_steps": 1000,
+        "weight_decay": 0.01,
+        "workers": 8
+      },
+      "visual_feature_identity": {
+        "backbone": "openai_clip_rn50",
+        "camera_order": [
+          "front",
+          "wrist"
+        ],
+        "channel_order": "RGB",
+        "checkpoint_sha256": "afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762",
+        "compute_dtype": "float32",
+        "compute_precision": "fp32_no_tf32_cudnn_deterministic_v1",
+        "cudnn_allow_tf32": false,
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": true,
+        "cudnn_enabled": true,
+        "feature_origin_uv": [
+          1.0,
+          1.0
+        ],
+        "feature_shape": [
+          256,
+          64,
+          64
+        ],
+        "feature_stride": 4,
+        "image_shape": [
+          256,
+          256,
+          3
+        ],
+        "layer": "layer1",
+        "matmul_precision": "highest",
+        "mode": "clip_rn50_layer1",
+        "normalization_mean": [
+          0.48145466,
+          0.4578275,
+          0.40821073
+        ],
+        "normalization_std": [
+          0.26862954,
+          0.26130258,
+          0.27577711
+        ],
+        "pixel_sampling": "rf_origin1_stride4_bilinear_border_align_corners_false_v1",
+        "point_provenance": "selected_xyzrgb_camera_uv_v1",
+        "preprocessing": "clip_rgb_native256_v1",
+        "rgb_scale": "uint8_div255",
+        "storage_dtype": "float16"
+      }
+    },
     "no_previous_joint_commands_h32": {
       "configuration": "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml",
       "extra_parameters_vs_core": 4096,

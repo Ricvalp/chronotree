@@ -179,6 +179,11 @@ def main():
     p.add_argument("--budget", type=int)
     p.add_argument("--selection-family", choices=["tree", "flat"])
     p.add_argument(
+        "--targeting-diagnostics",
+        action="store_true",
+        help="Save evaluation-only target/contact/trajectory diagnostics for PickXtimes and VideoUnmask",
+    )
+    p.add_argument(
         "--intervention",
         choices=["none", "erase_execution", "permute_execution", "erase_conditioning"],
         default="none",
@@ -244,6 +249,7 @@ def main():
         "selection_family": args.selection_family,
         "intervention": args.intervention,
         "budget": args.budget or cfg["model"]["budget"],
+        "targeting_diagnostics": args.targeting_diagnostics,
     }
     existing = output / "manifest.json"
     resuming = existing.exists()
@@ -294,6 +300,18 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
     started = time.perf_counter()
     policy, checkpoint_state = load_policy(checkpoint, device)
     validate_policy_config(checkpoint_state["config"], cfg)
+    from stmem.vision.frozen import FrozenCLIPFeatures, resolve_visual_features
+
+    visual_spec = resolve_visual_features(cfg)
+    feature_extractor = FrozenCLIPFeatures(cfg, device=device) if visual_spec["mode"] != "xyzrgb" else None
+    tracker.summary(
+        {
+            "evaluation/policy_parameters": sum(p.numel() for p in policy.parameters()),
+            "evaluation/frozen_visual_parameters": 0
+            if feature_extractor is None
+            else sum(p.numel() for p in feature_extractor.parameters()),
+        }
+    )
     router = None
     if router_path:
         router, router_state = load_router(router_path, device)
@@ -330,7 +348,12 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
                 point_sampling=point_sampler_settings(cfg),
                 center_sampling=center_sampler_settings(cfg),
                 center_counts=center_counts(cfg),
+                feature_extractor=feature_extractor,
             )
+            if args.targeting_diagnostics:
+                from stmem.evaluation.targeting import TargetingAdapter
+
+                adapter = TargetingAdapter(adapter)
             seed = cfg["evaluation"]["seed"] + cfg["data"]["tasks"].index(task) * 1000 + episode_idx
             video = (
                 output / "videos" / f"{task}_{episode_idx:03d}.mp4"
@@ -372,6 +395,8 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
                     else:
                         result["close_error"] = close_error
                         result["status"] = "infrastructure_error"
+                if args.targeting_diagnostics and result is not None:
+                    result["targeting_diagnostics"] = adapter.report(result["status"])
         result["model_load_seconds"] = load_seconds
         atomic_json(result, path)
         results.append(result)
@@ -394,6 +419,11 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
     atomic_json(summary, output / "summary.json")
     # Retain full latency/storage/cost measurements without hundreds of W&B panels.
     atomic_json(evaluation_tracking_scalars(results, planned, summary=summary), output / "diagnostics.json")
+    if args.targeting_diagnostics:
+        from stmem.evaluation.targeting import summarize_targeting
+
+        atomic_json(summarize_targeting(results), output / "targeting.json")
+        tracker.summary({"evaluation/targeting_report": str(output / "targeting.json")})
     if len(results) == len(planned):
         atomic_json(
             {

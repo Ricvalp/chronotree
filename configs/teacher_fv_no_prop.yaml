@@ -1,0 +1,5 @@
+extends: teacher_fv_prop.yaml
+# Primary candidate. Same visual observations/quotas, clocks, seed, action
+# cadence and optimizer schedule as FV-Prop; no measured state tokens.
+model:
+  proprioception_mode: none

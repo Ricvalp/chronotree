@@ -13,7 +13,7 @@ installation is needed to view or edit the saved diagram.
 
 ## Reading the diagram
 
-Use the four navigation tabs at the top of a page, or the viewer's page selector.
+Use the five navigation tabs at the top of a page, or the viewer's page selector.
 Hover over the diagram to reveal the toolbar. Zoom, drag to pan, and hover over
 blocks for source references and implementation notes. Linked blocks open a more
 detailed page. The toolbar also offers layers and a larger lightbox; the lightbox
@@ -26,6 +26,7 @@ contains explanatory cards; hiding it leaves the main architecture visible.
 | Encoders | Prepared point sampling and center indices, point and edge MLPs, Gaussian pooling, historical event branches, and the byte-level text Transformer. |
 | Action decoder | Query projections, each residual attention/FFN sublayer, and the distinction between training flow matching and inference Euler integration. |
 | Context & size | The shared metadata adapter, current auxiliary branches, valid versus allocated context lengths, parameter counts, and core batching settings. |
+| Frozen vision | The shared frozen CLIP feature path, source-pixel correspondence/cache, and matched FV-Prop versus FV-NoProp state-input paths. |
 
 Blue blocks represent visual/history processing, teal represents state and
 current evidence, violet represents goal text, and amber represents action
@@ -89,6 +90,56 @@ within each head before averaging. This instrumentation does not add model
 parameters or change the decoder's SDPA computation. Its interval is a runtime
 logging control, independent of checkpoint architecture/training hashes.
 
+## Frozen-vision experiment
+
+The fifth page describes the separately configured
+[`teacher_fv_prop.yaml`](../configs/teacher_fv_prop.yaml) and
+[`teacher_fv_no_prop.yaml`](../configs/teacher_fv_no_prop.yaml) experiments. The
+four earlier pages continue to document the core XYZRGB defaults and the
+existing H32 variant.
+
+Both new arms attach the same **frozen OpenAI CLIP RN50 layer1 descriptors** to
+each selected point. Front and wrist RGB images are independently normalized
+at their native 256 × 256 resolution, without crop or resize. The frozen
+three-convolution stem and first residual stage produce 256 × 64 × 64 feature
+maps per camera. Features are sampled from the point's original observing
+camera at its saved pixel coordinates. Selection, center placement and
+geometric neighborhoods still use the original XYZRGB/XYZ contract.
+
+Each 256-value raw descriptor is stored in an FP16 sidecar before the trainable
+LayerNorm and 256 → 128 projection. The point MLP receives 134 values: XYZ,
+RGB, and the projected descriptor. Gaussian pooling, metadata, all visual
+quotas and causal history boundaries remain the same. The frozen RGB encoder
+has 244,576 parameters outside the policy optimizer; live evaluation executes
+it once per available observed frame, while training reads aligned sidecars.
+The cache contains 1 MiB of descriptor payload per full 2,048-point frame before
+compression, so full-data cache size and I/O throughput must be measured.
+
+**FV-Prop** retains measured state, with one current state token and one event
+token per historical frame. **FV-NoProp** removes those tokens entirely,
+including historical end-effector anchors/bounds that otherwise reveal robot
+state through metadata. Both arms disable all preceding command inputs:
+joint targets, gripper command and the availability indicator. No freed event
+slot is reassigned to visual evidence. Goal, clocks, visual spatial/time/source
+metadata, visible robot pixels and calibrated geometry remain; metadata is a
+possible later ablation.
+
+The maximum valid contexts are `33 × (Hc + He) + 35` for FV-Prop and
+`32 × (Hc + He) + 34` for FV-NoProp. Masked tensor padding is not counted as
+evidence. Both retain H32, execute-four, effective batch 128, microbatch eight
+per GPU, encoder block batch 32, LR 0.0001 and 100k updates, with comparison
+checkpoints at 25k, 50k and 100k. Common modules initialize in the same order;
+inactive state/command modules remain stored for that initialization contract
+but have gradients disabled and do not consume optimizer state.
+
+FV-Prop has **6,100,618 active trainable policy parameters** and FV-NoProp has
+**5,892,746**; both serialize 6,168,970 policy parameters, excluding the external
+frozen CLIP encoder. The JSON snapshot records total, active and inactive
+parameters separately. Their comparison measures the effect of removing
+explicit state under a common frozen visual representation; it does not isolate
+the benefit of pretraining. Optional `current_only` keeps current measured state
+and removes historical measured state, but it is not a third required run.
+
 ## Prepared geometry and token counts
 
 The revised preparation writes `prepared_balanced_v2/`, preserving the previous
@@ -146,7 +197,7 @@ uv run python scripts/generate_teacher_diagram.py --check
 Commit the generator and regenerated `.drawio`, `.html`, and `.json` together.
 The JSON is an auditable configuration/count/source-hash snapshot. `--check`
 detects stale artifacts and validates XML IDs, references, page links and bounds;
-it cannot prove the prose matches a newly changed algorithm. Inspect all four
+it cannot prove the prose matches a newly changed algorithm. Inspect all five
 pages after editing their layout. Native draw.io shapes remain editable, but
 manual diagram edits must be reflected in the generator before regeneration.
 
@@ -197,3 +248,12 @@ parameter-count change. The snapshot/XML and Ruff checks passed. Chromium
 opened the actual HTML and rendered the decoder page; the added note and all
 other text fit their shapes, and the full page was visually inspected. Local
 layout evidence is retained in `runs/architecture_diagram/attention/`.
+
+The frozen-vision update on 2026-10-28 adds a fifth linked page for the required
+FV-Prop/FV-NoProp pair and separate configuration/count entries in the JSON.
+The original core pages retain their XYZRGB scope. Chromium opened the actual
+HTML, navigated all five pages and found no overflowing text bounds; the new
+page and updated navigation were visually inspected. Ruff and the snapshot/XML
+check passed. Local layout evidence is in
+`runs/architecture_diagram/frozen_vision/`. This checks the diagram, not the
+experiment's learned behavior or cluster performance.

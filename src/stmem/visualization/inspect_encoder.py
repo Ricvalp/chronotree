@@ -30,6 +30,7 @@ from stmem.data.paths import alignment_path
 from stmem.models.spacetime_encoder import BlockEncoder
 from stmem.training.checkpoints import atomic_json, file_sha256
 from stmem.training.runtime import load_checkpoint, validate_policy_config
+from stmem.vision.frozen import resolve_visual_features
 
 
 def _episode_key(value):
@@ -88,6 +89,9 @@ def _encoder(config):
             variant=model.get("encoder", "joint"),
             checkpoint_blocks=False,
             condition_on_previous_joint_commands=model.get("condition_on_previous_joint_commands", True),
+            condition_on_previous_commands=model.get("condition_on_previous_commands", True),
+            proprioception_mode=model.get("proprioception_mode", "all"),
+            visual_features=resolve_visual_features(config),
             **model.get("encoder_options", {}),
         )
         .cpu()
@@ -191,7 +195,13 @@ def inspect_encoder(
         )
     prepared_identity, alignment_identity = _file_identity(path), _file_identity(alignment)
     started = time.perf_counter()
-    dataset = EpisodeDataset(path, tasks=[task], horizon=config["model"]["horizon"], alignment_path=alignment)
+    dataset = EpisodeDataset(
+        path,
+        tasks=[task],
+        horizon=config["model"]["horizon"],
+        alignment_path=alignment,
+        visual_features_config=config,
+    )
     dataset.validate_preprocessing(config)
     matches = [
         index for index, ref in enumerate(dataset.episodes) if ref.task == task and ref.key == episode_key

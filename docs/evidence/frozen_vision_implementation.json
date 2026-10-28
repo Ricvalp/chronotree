@@ -1,0 +1,271 @@
+{
+  "feature_identity": {
+    "backbone": "openai_clip_rn50",
+    "camera_order": [
+      "front",
+      "wrist"
+    ],
+    "channel_order": "RGB",
+    "checkpoint_sha256": "afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762",
+    "compute_dtype": "float32",
+    "compute_precision": "fp32_no_tf32_cudnn_deterministic_v1",
+    "cudnn_allow_tf32": false,
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": true,
+    "cudnn_enabled": true,
+    "feature_origin_uv": [
+      1.0,
+      1.0
+    ],
+    "feature_shape": [
+      256,
+      64,
+      64
+    ],
+    "feature_stride": 4,
+    "image_shape": [
+      256,
+      256,
+      3
+    ],
+    "layer": "layer1",
+    "matmul_precision": "highest",
+    "mode": "clip_rn50_layer1",
+    "normalization_mean": [
+      0.48145466,
+      0.4578275,
+      0.40821073
+    ],
+    "normalization_std": [
+      0.26862954,
+      0.26130258,
+      0.27577711
+    ],
+    "pixel_sampling": "rf_origin1_stride4_bilinear_border_align_corners_false_v1",
+    "point_provenance": "selected_xyzrgb_camera_uv_v1",
+    "preprocessing": "clip_rgb_native256_v1",
+    "rgb_scale": "uint8_div255",
+    "storage_dtype": "float16"
+  },
+  "feature_signature": "0488cf57ed3db6d66f790fd2f533508d2f1a6946b94085a3f9e2506d5b6e77bc",
+  "legacy_checkpoint": {
+    "condition_on_previous_commands": true,
+    "condition_on_previous_joint_commands": false,
+    "loaded_strictly": true,
+    "optimizer_step": 16000,
+    "parameters": 6098698,
+    "proprioception_mode": "all",
+    "visual_mode": "xyzrgb"
+  },
+  "not_run": [
+    "full feature-cache generation",
+    "long training",
+    "HPC submission",
+    "official test-seed evaluation",
+    "router-label regeneration"
+  ],
+  "parameters": {
+    "no_prop": {
+      "external_frozen_visual_parameters": 244576,
+      "total_policy_parameters": 6168970,
+      "trainable_policy_parameters": 5892746
+    },
+    "prop": {
+      "external_frozen_visual_parameters": 244576,
+      "total_policy_parameters": 6168970,
+      "trainable_policy_parameters": 6100618
+    }
+  },
+  "prepared_subset": {
+    "bytes": 491310800,
+    "elapsed_seconds": 30.251203555613756,
+    "episodes": {
+      "episode_0": 239,
+      "episode_1": 225
+    },
+    "extraction_seconds": 26.63551422767341,
+    "frames": 464,
+    "frames_per_second": 17.42035051879704,
+    "prepared_identity": "bac6d8e42f80a29d203b872f7eed1497ea806aa5bdfa3890ea35d2ebe0839815",
+    "raw_sha256": "05a653a8f8232882f82c84057f328e045f4a875ff5cfcf068738c429c6081427"
+  },
+  "regression": {
+    "architecture": "generator snapshot/XML check and five-page Chromium layout review passed",
+    "cpu_pytest_passed": 724,
+    "device": "NVIDIA RTX 5000 Ada Generation 32GB",
+    "doctor_precisions_passed": [
+      "fp32",
+      "bf16",
+      "fp16"
+    ],
+    "planner": "two independent aiq --gres=gpu:4 dry-runs, no jobs submitted",
+    "seconds": 124.33,
+    "skip_reason": "legacy default prepared subset path unavailable; real smoke used explicit existing balanced-v2 paths",
+    "skipped": 1
+  },
+  "rollout": {
+    "cache_online_parity": {
+      "canonical_points_bitwise_equal": true,
+      "descriptor_signature": "0488cf57ed3db6d66f790fd2f533508d2f1a6946b94085a3f9e2506d5b6e77bc",
+      "episode": 0,
+      "max_abs_difference": 0.0,
+      "outer_bf16_autocast_and_high_matmul_bitwise_equal": true,
+      "provenance_bitwise_equal": true,
+      "raw_frame": 0,
+      "raw_frozen_fp16_features_bitwise_equal": true,
+      "reference_type": "FeatureRow",
+      "source": "conditioning",
+      "task": "VideoUnmask"
+    },
+    "episodes": [
+      {
+        "all_actions_finite": true,
+        "arm": "no_prop",
+        "checkpoint_optimizer_steps": 1,
+        "conditioning_frames": 0,
+        "decisions": 3,
+        "effective_max_steps": 10,
+        "error": null,
+        "execute": 4,
+        "first_active_tokens": 0,
+        "first_history_tokens": 0,
+        "horizon": 32,
+        "issued_commands": 9,
+        "peak_allocated_bytes": 104519680,
+        "requested_max_steps": 8,
+        "reset_encoding_seconds": 0.05940714105963707,
+        "runtime_seconds": 1.4415225889533758,
+        "startup_seconds": 0.3164074011147022,
+        "status": "timeout",
+        "target_observer_errors": [],
+        "target_observer_terminal_excluded": "terminal_auto_step",
+        "task": "PickXtimes",
+        "video": "runs/inspection/fv_implementation/rollout_no_prop_strictfp32/videos/PickXtimes_000.mp4",
+        "video_fps": 20.0,
+        "video_frames": 10,
+        "video_shape": [
+          256,
+          512,
+          3
+        ]
+      },
+      {
+        "all_actions_finite": true,
+        "arm": "no_prop",
+        "checkpoint_optimizer_steps": 1,
+        "conditioning_frames": 66,
+        "decisions": 3,
+        "effective_max_steps": 10,
+        "error": null,
+        "execute": 4,
+        "first_active_tokens": 2112,
+        "first_history_tokens": 2112,
+        "horizon": 32,
+        "issued_commands": 9,
+        "peak_allocated_bytes": 104519680,
+        "requested_max_steps": 8,
+        "reset_encoding_seconds": 0.23203383199870586,
+        "runtime_seconds": 6.750720079988241,
+        "startup_seconds": 5.414452450349927,
+        "status": "timeout",
+        "target_observer_errors": [],
+        "target_observer_terminal_excluded": "terminal_auto_step",
+        "task": "VideoUnmask",
+        "video": "runs/inspection/fv_implementation/rollout_no_prop_strictfp32/videos/VideoUnmask_000.mp4",
+        "video_fps": 20.0,
+        "video_frames": 76,
+        "video_shape": [
+          256,
+          512,
+          3
+        ]
+      },
+      {
+        "all_actions_finite": true,
+        "arm": "prop",
+        "checkpoint_optimizer_steps": 1,
+        "conditioning_frames": 0,
+        "decisions": 3,
+        "effective_max_steps": 10,
+        "error": null,
+        "execute": 4,
+        "first_active_tokens": 0,
+        "first_history_tokens": 0,
+        "horizon": 32,
+        "issued_commands": 9,
+        "peak_allocated_bytes": 104519680,
+        "requested_max_steps": 8,
+        "reset_encoding_seconds": 0.05914631113409996,
+        "runtime_seconds": 1.4656874053180218,
+        "startup_seconds": 0.3183551151305437,
+        "status": "timeout",
+        "target_observer_errors": [],
+        "target_observer_terminal_excluded": "terminal_auto_step",
+        "task": "PickXtimes",
+        "video": "runs/inspection/fv_implementation/rollout_prop_strictfp32/videos/PickXtimes_000.mp4",
+        "video_fps": 20.0,
+        "video_frames": 10,
+        "video_shape": [
+          256,
+          512,
+          3
+        ]
+      },
+      {
+        "all_actions_finite": true,
+        "arm": "prop",
+        "checkpoint_optimizer_steps": 1,
+        "conditioning_frames": 66,
+        "decisions": 3,
+        "effective_max_steps": 10,
+        "error": null,
+        "execute": 4,
+        "first_active_tokens": 2178,
+        "first_history_tokens": 2178,
+        "horizon": 32,
+        "issued_commands": 9,
+        "peak_allocated_bytes": 104519680,
+        "requested_max_steps": 8,
+        "reset_encoding_seconds": 0.2424408532679081,
+        "runtime_seconds": 6.9485160652548075,
+        "startup_seconds": 5.585660353302956,
+        "status": "timeout",
+        "target_observer_errors": [],
+        "target_observer_terminal_excluded": "terminal_auto_step",
+        "task": "VideoUnmask",
+        "video": "runs/inspection/fv_implementation/rollout_prop_strictfp32/videos/VideoUnmask_000.mp4",
+        "video_fps": 20.0,
+        "video_frames": 76,
+        "video_shape": [
+          256,
+          512,
+          3
+        ]
+      }
+    ],
+    "kind": "bounded_production_execution_smoke_not_task_performance",
+    "limitations": [
+      "Checkpoint has one optimizer update only; no conclusions about targeting, success, or comparative policy quality.",
+      "Tiny requested eight-step limits intentionally timeout under the wrapper protocol; nine external commands plus automatic reset/terminal behavior.",
+      "This verifies actual GPU frozen features, conditioning ingestion, H32/K4 finite commands, videos, and read-only diagnostic metrics."
+    ],
+    "status": "passed",
+    "total_issued_commands": 36,
+    "total_videos": 4
+  },
+  "scope": "bounded implementation diagnostics, not task-performance or four-B200 throughput evidence",
+  "source": {
+    "dirty": true,
+    "git": "d9e26ebe07ec89849f01fcc019906998f414d514",
+    "source_sha256": "c3e40d9d5f5e3ea2810f0411f18b4d336e2725cf7eb24df26e32eae1d1c6550e"
+  },
+  "training_smoke": {
+    "effective_batch": 1,
+    "history_frames": 190,
+    "loss_is_not_validation_performance": true,
+    "microbatch": 1,
+    "optimizer_updates_each": 1,
+    "peak_allocated_bytes_approx": 5525000000,
+    "precision": "fp32"
+  }
+}

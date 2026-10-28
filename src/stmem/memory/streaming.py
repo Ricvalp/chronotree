@@ -178,6 +178,10 @@ class StreamingMemory:
                 x.numel() * x.element_size()
                 for x in (frame.points, frame.valid, frame.proprio, frame.previous_action)
             )
+            for name in ("visual_features", "point_camera", "point_uv"):
+                tensor = getattr(frame, name, None)
+                if isinstance(tensor, torch.Tensor):
+                    pending_bytes += tensor.numel() * tensor.element_size()
         identity_bytes = sum(len(s.encode()) + len(i.encode()) for s, i in self._seen)
         return {
             "archive_payload_bytes": self.archive.storage_bytes,

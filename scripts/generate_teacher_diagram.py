@@ -19,17 +19,20 @@ from stmem.data.center_sampling import CENTER_SAMPLING_VERSION, center_sampler_s
 from stmem.data.pointcloud import POINT_SAMPLING_VERSION, point_sampler_settings
 from stmem.models.policy import MemoryPolicy
 from stmem.training.logging_options import resolve_logging
+from stmem.vision.frozen import _CLIPLayer1, visual_feature_identity
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "diagrams"
 STEM = "teacher_architecture"
 H32_CONFIG = "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml"
+FV_CONFIGS = {"fv_prop": "configs/teacher_fv_prop.yaml", "fv_no_prop": "configs/teacher_fv_no_prop.yaml"}
 PAGES = (
     ("overview", "01 · Overview"),
     ("encoders", "02 · Encoders"),
     ("decoder", "03 · Action decoder"),
     ("context", "04 · Context & size"),
+    ("frozen", "05 · Frozen vision"),
 )
 COLORS = {
     "data": ("#F1F5F9", "#64748B"),
@@ -46,12 +49,15 @@ SOURCES = [
     "configs/teacher_b200_b128_m8_blocks32.yaml",
     "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands.yaml",
     H32_CONFIG,
+    *FV_CONFIGS.values(),
     "src/stmem/config.py",
     "src/stmem/data/pointcloud.py",
     "src/stmem/data/center_sampling.py",
     "src/stmem/data/canonical.py",
     "src/stmem/data/prepare.py",
     "src/stmem/data/dataset.py",
+    "src/stmem/data/feature_cache.py",
+    "src/stmem/vision/frozen.py",
     "src/stmem/evaluation/robomme_adapter.py",
     "src/stmem/models/policy.py",
     "src/stmem/models/spacetime_encoder.py",
@@ -81,6 +87,27 @@ def snapshot():
     policy = MemoryPolicy(cfg)
     h32_cfg = load_config(ROOT / H32_CONFIG)
     h32_policy = MemoryPolicy(h32_cfg)
+    frozen_variants = {}
+    for name, path in FV_CONFIGS.items():
+        variant_cfg = load_config(ROOT / path)
+        variant_policy = MemoryPolicy(variant_cfg)
+        frozen_variants[name] = {
+            "configuration": path,
+            "model": variant_cfg["model"],
+            "training": variant_cfg["training"],
+            "total_policy_parameters": count(variant_policy),
+            "trainable_policy_parameters": sum(
+                p.numel() for p in variant_policy.parameters() if p.requires_grad
+            ),
+            "inactive_policy_parameters": sum(
+                p.numel() for p in variant_policy.parameters() if not p.requires_grad
+            ),
+            "feature_projection_parameters": count(variant_policy.encoder.visual.feature_projection),
+            "external_frozen_encoder_parameters": count(_CLIPLayer1()),
+            "visual_feature_identity": visual_feature_identity(variant_cfg),
+            "current_state_token": variant_policy.current_state_enabled,
+            "historical_event_tokens": variant_policy.encoder.history_events_enabled,
+        }
     if cfg["model"]["encoder"] != "joint" or cfg["model"]["decoder"] != "flow":
         raise ValueError("Update the curated diagram for this encoder/decoder variant.")
     if cfg["model"]["visual_tokens"] % cfg["model"]["block_size"]:
@@ -126,6 +153,7 @@ def snapshot():
                 "changes_model_parameters": False,
             },
             "variants": {
+                **frozen_variants,
                 "no_previous_joint_commands_h32": {
                     "configuration": H32_CONFIG,
                     "model": h32_cfg["model"],
@@ -174,10 +202,11 @@ class Page:
         self.text(48, 92, 1690, 44, subtitle, size=19, color="#475569")
         for i, (target, label) in enumerate(PAGES):
             selected = target == key
+            stride = 1728 / len(PAGES)
             self.card(
-                48 + 432 * i,
+                48 + stride * i,
                 153,
-                408,
+                stride - 24,
                 46,
                 label,
                 tone="visual" if selected else "note",
@@ -191,8 +220,12 @@ class Page:
             height - 48,
             1690,
             30,
-            "CHRONOTREE  /  Teacher · configs/teacher.yaml     •     "
-            "Click page tabs or linked blocks · hover for details · all shapes are editable",
+            (
+                "CHRONOTREE  /  Matched FV-Prop / FV-NoProp experiment     •     "
+                if key == "frozen"
+                else "CHRONOTREE  /  Teacher · configs/teacher.yaml     •     "
+            )
+            + "Click page tabs or linked blocks · hover for details · all shapes are editable",
             size=14,
             color="#64748B",
         )
@@ -1154,6 +1187,205 @@ def context(file, cfg, policy, facts):
     )
 
 
+def frozen_vision(file, facts):
+    """Required matched experiment, separate from the core XYZRGB defaults."""
+    prop, no_prop = (facts["variants"][key] for key in ("fv_prop", "fv_no_prop"))
+    p = Page(
+        file,
+        "frozen",
+        "Frozen RGB features · matched state-input experiment",
+        "FV-Prop and FV-NoProp share visual evidence, initial shared weights, clocks, action cadence and training budget",
+        height=1800,
+    )
+    p.section(48, 225, 1704, "01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS")
+    source = p.card(
+        48,
+        285,
+        310,
+        250,
+        "Observed RGB-D only",
+        [
+            "Front + wrist RGB, each 256 × 256",
+            "Backproject → crop → voxel/sample",
+            "Canonical XYZRGB stays [2048, 6]",
+            "Save source camera + original (u,v)",
+            "Padding validity follows each point",
+        ],
+        size=18,
+        tooltip="pointcloud.py preserves observing-camera/pixel indices through exactly the same geometry-only selection; no object labels or reprojected unseen pixels.",
+    )
+    clip = p.card(
+        430,
+        285,
+        365,
+        250,
+        "Frozen CLIP RN50 · layer1",
+        [
+            "RGB normalization; no crop/resize",
+            "3-convolution stem + average pool",
+            "First 3 residual bottlenecks",
+            "Per-camera [256, 64, 64] feature map",
+            "Stride 4; origin at input pixel (1,1)",
+            "Eval mode, including BatchNorm",
+        ],
+        tone="visual",
+        size=18,
+        tooltip="vision/frozen.py loads the SHA256-pinned OpenAI RN50 artifact, retaining stem and layer1 only. Parameters have no gradients; training uses cached descriptors, online rollout executes the frozen image encoder.",
+    )
+    descriptors = p.card(
+        875,
+        285,
+        365,
+        250,
+        "Sample source-camera features",
+        [
+            "Bilinear sample at saved pixel (u,v)",
+            "Raw descriptors [2048, 256]",
+            "FP16 sidecar; invalid rows zero",
+            "Identity includes weights + mapping",
+            "Read only requested episode/frame",
+            "No trainable projection in cache",
+        ],
+        tone="visual",
+        size=18,
+        tooltip="feature_cache.py aligns each descriptor with the exact prepared point index. Offline and online paths share normalization, sampling and FP16 descriptor rounding. No future frame enters an individual image encoding.",
+    )
+    projection = p.card(
+        1320,
+        285,
+        432,
+        250,
+        "Trainable point representation",
+        [
+            "LayerNorm 256 → Linear 256 → 128",
+            "Concatenate XYZ + RGB + descriptor",
+            "Point MLP: 134 → 256 → 256",
+            "Same edge MLP + Gaussian pooling",
+            "Distances/anchors use only XYZ",
+            "Geometry and reductions remain FP32",
+        ],
+        tone="visual",
+        size=18,
+        tooltip="spacetime_encoder.py and batched_spacetime.py. The new descriptor projection and point encoder are optimized; the frozen RGB backbone is excluded from the optimizer. Shared center indices, quotas, neighborhoods and temporal groups do not depend on descriptors.",
+    )
+    p.edge(source, clip, "RGB", tone="visual")
+    p.edge(clip, descriptors, "dense map", tone="visual")
+    p.edge(descriptors, projection, "raw features", tone="visual")
+    p.card(
+        48,
+        580,
+        1704,
+        130,
+        "Geometry, visibility and causality stay matched",
+        [
+            "Both arms: ≤2048 observed points/frame; nominal 75% above-table quota; ≤32 balanced centers/frame; 256 visual leaves/full 8-frame block.",
+            "Conditioning and execution remain separate; history strictly precedes current t. Current appears once. No removed state slot becomes a visual token.",
+            "Robot pixels, depth and calibration remain. Visual XYZ/time/source metadata and clock tokens remain; their ablation is a separate follow-up.",
+        ],
+        tone="note",
+        size=18,
+    )
+    p.section(
+        48,
+        760,
+        1704,
+        "02  COMPLETE COMMAND REMOVAL IN BOTH ARMS  /  MEASURED-STATE INPUT IS THE CONTROLLED DIFFERENCE",
+    )
+    p.card(
+        48,
+        820,
+        804,
+        350,
+        "FV-Prop · required matched control",
+        [
+            "Measured joints, TCP pose and gripper state retained.",
+            "Current state MLP gets [15 measured values, 9 fixed zeros].",
+            "Historical event content uses measured-state branch only.",
+            "Historical event anchor/bounds retain measured TCP XYZ.",
+            "Previous joints, gripper command and availability all disabled.",
+            "≤33(Hc + He) + 35 valid context tokens; masked batch padding.",
+            f"{prop['trainable_policy_parameters']:,} active trainable policy parameters",
+            f"{prop['inactive_policy_parameters']:,} inactive stored parameters; frozen RGB encoder separate",
+        ],
+        tone="event",
+        size=19,
+        tooltip="configs/teacher_fv_prop.yaml. model.proprioception_mode=all, condition_on_previous_commands=false. Inactive command-branch weights are initialized for matching but frozen and excluded from optimization.",
+    )
+    p.card(
+        930,
+        820,
+        822,
+        350,
+        "FV-NoProp · primary candidate",
+        [
+            "No explicit numerical robot state reaches the learned policy.",
+            "Current state token removed; goal and clock tokens retained.",
+            "Historical event tokens removed, including state-derived XYZ.",
+            "Router numerical state/command inputs are fixed zeros.",
+            "Previous joints, gripper command and availability all disabled.",
+            "≤32(Hc + He) + 34 valid context tokens; masked batch padding.",
+            f"{no_prop['trainable_policy_parameters']:,} active trainable policy parameters",
+            f"{no_prop['inactive_policy_parameters']:,} inactive stored parameters; frozen RGB encoder separate",
+        ],
+        tone="visual",
+        size=19,
+        tooltip="configs/teacher_fv_no_prop.yaml. model.proprioception_mode=none. Raw-state mutation checks rebuild archives and metadata. Zeroing only the state MLP would leave historical TCP anchors as a leak; these tokens are removed entirely.",
+    )
+    t = prop["training"]
+    p.card(
+        48,
+        1225,
+        1704,
+        190,
+        "03  SAME DECODER, FRESH TRAINING AND DEVELOPMENT PROTOCOL",
+        [
+            "FULL teacher reads every causal visual leaf. Action flow predicts H=32 native 20 Hz joint commands; execute K=4, then replan.",
+            f"4 B200s · effective batch {t['effective_batch']} · microbatch {t['microbatch']}/GPU · encoder block batch {t['encoder_block_batch_size']} · activation checkpointing off",
+            f"AdamW, LR {t['lr']:g} · {t['steps']:,} updates · compare 25k / 50k / 100k · same seed, sample order and fixed validation scenes",
+            "Autonomous first grasp/lift and target error are diagnostics; full task success remains distinct. No new masks, expert recovery or target-pose inputs.",
+        ],
+        tone="decoder",
+        size=19,
+        link="decoder",
+    )
+    p.card(
+        48,
+        1465,
+        804,
+        230,
+        "Resource and interpretation boundaries",
+        [
+            f"External frozen image encoder: {prop['external_frozen_encoder_parameters']:,} parameters",
+            "FP16 descriptors: 1 MiB/frame before HDF5 compression.",
+            "Two full FP32 feature maps: 8 MiB transient/frame.",
+            "Cache I/O and online CLIP latency must be measured.",
+            "FV-NoProp vs FV-Prop isolates explicit state removal",
+            "under frozen vision, not the benefit of visual pretraining.",
+        ],
+        tone="note",
+        size=18,
+        parent="notes",
+    )
+    p.card(
+        930,
+        1465,
+        822,
+        230,
+        "Legacy defaults and later readers",
+        [
+            "Existing XYZRGB checkpoint loading and token counts remain.",
+            "Old seven-joint ablation still retains command gripper/mask.",
+            "These new arms use the stronger complete-command switch.",
+            "Optional current_only mode retains current measured state",
+            "and removes historical state; it is not a required third run.",
+            "TREE/FLAT must later reuse the same selected recipe/leaves.",
+        ],
+        tone="note",
+        size=18,
+        parent="notes",
+    )
+
+
 def validate_xml(xml):
     """Check references and page bounds without requiring the draw.io renderer."""
     file = ET.fromstring(xml)
@@ -1220,7 +1452,7 @@ footer{{padding:0 24px 18px;font-size:13px;color:#64748b}}
 <body>
 <header><div><div class="eyebrow">CHRONOTREE / MODEL REFERENCE</div>
 <h1>The full-history teacher</h1>
-<p>{total:,} trainable parameters · Four linked views · Core configuration</p></div>
+<p>{total:,} core trainable parameters · Five linked views · Frozen-vision experiment included</p></div>
 <nav aria-label="Diagram files">
 <a class="button" href="teacher_architecture.drawio" download>Download editable .drawio</a>
 <a class="button" href="../architecture_diagram.md">Reading guide</a>
@@ -1275,6 +1507,7 @@ def build():
     encoders(file, cfg, policy)
     decoder(file, cfg, policy, facts)
     context(file, cfg, policy, facts)
+    frozen_vision(file, facts)
     ET.indent(file, space="  ")
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(file, encoding="unicode") + "\n"
     validate_xml(xml)

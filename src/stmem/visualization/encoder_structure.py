@@ -240,6 +240,9 @@ def build_structure(
                 "block_size": encoder.block_size,
                 "visual_tokens": encoder.visual_tokens,
                 "current_tokens": encoder.current_tokens,
+                "proprioception_mode": encoder.proprioception_mode,
+                "condition_on_previous_commands": encoder.event.condition_on_previous_commands,
+                "history_events_enabled": encoder.history_events_enabled,
                 "tau_x": float(visual.tau_x.detach()),
                 "tau_t": float(visual.tau_t.detach()),
                 "tau_x_units": "metres squared",
@@ -260,6 +263,7 @@ def build_structure(
                 "nodes": [_node(record) for record in current_records],
                 "proprio": _values(current.proprio),
                 "action_available": bool(current.action_available),
+                "raw_state_diagnostic_only": encoder.proprioception_mode == "none",
             },
             "provenance": {
                 "trace_source": "Actual SpacetimeEncoder.forward neighborhood indices, masks, and weights",
@@ -270,6 +274,10 @@ def build_structure(
                 "causality": "All conditioning and execution strictly before current; current stays outside archive",
                 "scope": "Full causal binary hierarchy; point details only for the last requested blocks per source and current",
                 "features": "Learned features, expert targets, and future execution observations are omitted",
-                "events": "Event inputs are observed proprioception and the available previous executed command; command values are not serialized",
+                "events": (
+                    "Event tokens disabled; visual quotas are unchanged"
+                    if not encoder.history_events_enabled
+                    else "Event content and anchors follow the configured proprioception/command switches; raw state fields shown here are diagnostic values, not proof of model conditioning"
+                ),
             },
         }

@@ -50,6 +50,10 @@ class PackedBlocks:
     blocks_per_example: list[int]
     center_indices: dict[int, torch.Tensor] = field(default_factory=dict)
     center_sampling_signature: str | None = None
+    # Lazy disk-row references (or bounded online tensors), never whole-episode
+    # feature tensors in each loader worker's prefetch queue.
+    visual_features: list = field(default_factory=list)
+    visual_feature_signature: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,7 @@ class PackedFrameInfo:
     action_available: bool
     center_counts: tuple[int, ...] = ()
     center_sampling_signature: str | None = None
+    visual_feature_signature: str | None = None
 
     @classmethod
     def from_frame(cls, frame):
@@ -76,6 +81,7 @@ class PackedFrameInfo:
             frame.action_available,
             tuple(sorted(frame.center_indices)),
             frame.center_sampling_signature,
+            getattr(frame, "visual_feature_signature", None),
         )
 
 
@@ -122,6 +128,8 @@ class PackedPolicyBatch:
     block_size: int
     current_center_indices: dict[int, torch.Tensor] = field(default_factory=dict)
     current_center_sampling_signature: str | None = None
+    current_visual_features: list = field(default_factory=list)
+    current_visual_feature_signature: str | None = None
 
     @property
     def history_lengths(self):
@@ -133,10 +141,13 @@ class PackedPolicyBatch:
         The teacher uses metadata directly and never needs this Python frame
         reconstruction. Returned tensors share the packed CPU storage; exact
         original point counts, identities and Python clocks are restored.
+        Sampled frozen descriptors retain their row identity and point order.
+        Source camera/pixel sidecars are not sent through the worker queue;
+        inspect the original EpisodeDataset frames for that provenance.
         """
         from stmem.data.canonical import Decision, Frame
 
-        def frame(info, points, valid, state, action, centers):
+        def frame(info, points, valid, state, action, centers, features=None):
             return Frame(
                 points=points[: info.point_count],
                 valid=valid[: info.point_count],
@@ -149,6 +160,8 @@ class PackedPolicyBatch:
                 source_index=info.source_index,
                 center_indices={quota: centers[quota] for quota in info.center_counts},
                 center_sampling_signature=info.center_sampling_signature,
+                visual_features=features,
+                visual_feature_signature=info.visual_feature_signature,
             )
 
         result, block = [], 0
@@ -169,6 +182,9 @@ class PackedPolicyBatch:
                                     quota: values[block, offset]
                                     for quota, values in self.history.center_indices.items()
                                 },
+                                self.history.visual_features[block][offset]
+                                if self.history.visual_features
+                                else None,
                             )
                         )
                     block += 1
@@ -180,6 +196,7 @@ class PackedPolicyBatch:
                 self.current_state[owner, :15],
                 self.current_state[owner, 15:23],
                 {quota: values[owner, 0] for quota, values in self.current_center_indices.items()},
+                self.current_visual_features[owner] if self.current_visual_features else None,
             )
             result.append(
                 Decision(
@@ -234,6 +251,30 @@ def _center_cache_state(frames):
     signatures = {frame.center_sampling_signature for frame in frames}
     signature = next(iter(signatures)) if len(signatures) == 1 else None
     return counts, signature
+
+
+def _feature_cache_state(frames):
+    frames = list(frames)
+    signatures = {getattr(frame, "visual_feature_signature", None) for frame in frames}
+    if len(signatures) > 1:
+        raise ValueError("A packed batch cannot mix frozen-feature identities")
+    signature = next(iter(signatures), None)
+    for frame in frames:
+        if (getattr(frame, "visual_features", None) is not None) != (signature is not None):
+            raise ValueError("Frozen-feature descriptors and identity must be provided together")
+    return signature
+
+
+def _load_features(encoder, rows, signature, point_count, device):
+    if not encoder.visual_feature_dim:
+        if signature is not None:
+            raise ValueError("XYZRGB policy cannot consume frozen-feature inputs")
+        return None
+    if signature != encoder.visual_feature_signature:
+        raise ValueError("Packed frozen-feature identity differs from the policy")
+    from stmem.data.feature_cache import load_feature_rows
+
+    return load_feature_rows(rows, point_count=point_count, device=device)
 
 
 def pack_blocks(decisions, block_size, *, center_sampling=None, centers_per_frame=None):
@@ -304,6 +345,11 @@ def pack_blocks(decisions, block_size, *, center_sampling=None, centers_per_fram
         lengths,
         centers,
         signature,
+        [
+            [getattr(frame, "visual_features", None) for frame in part] + [None] * (block_size - len(part))
+            for part in blocks
+        ],
+        _feature_cache_state(frame for part in blocks for frame in part),
     )
 
 
@@ -366,6 +412,8 @@ def pack_policy_batch(decisions, block_size, *, model_config=None):
         block_size=block_size,
         current_center_indices=centers,
         current_center_sampling_signature=signature,
+        current_visual_features=[getattr(d.current, "visual_features", None) for d in decisions],
+        current_visual_feature_signature=_feature_cache_state(d.current for d in decisions),
     )
 
 
@@ -447,8 +495,10 @@ def encode_history_bank(policy, decisions, clocks, *, packed=None):
     chunk_size = policy.config["training"].get("encoder_block_batch_size", 32)
     contents, metas, masks = [], [], []
 
-    def pool(points, valid, times, indices):
-        result = encoder.visual.forward_batched(points, valid, times, quotas, center_indices=indices)
+    def pool(points, valid, times, indices, descriptors):
+        result = encoder.visual.forward_batched(
+            points, valid, times, quotas, center_indices=indices, visual_features=descriptors
+        )
         return tuple(getattr(result, field) for field in EncodedLeaves.__dataclass_fields__)
 
     for start in range(0, k, chunk_size):
@@ -457,14 +507,21 @@ def encode_history_bank(policy, decisions, clocks, *, packed=None):
         valid = packed.valid[start:end].to(device)
         times = packed.times[start:end].to(device)
         indices = None if prepared_centers is None else prepared_centers[start:end].to(device)
-        if encoder.checkpoint_blocks and encoder.training and torch.is_grad_enabled():
-            visual = EncodedLeaves(*checkpoint(pool, points, valid, times, indices, use_reentrant=False))
-        else:
-            visual = EncodedLeaves(*pool(points, valid, times, indices))
-        state = packed.state[start:end].to(device)
-        events = encoder.event(
-            state, packed.action[start:end].to(device), packed.available[start:end].to(device)
+        descriptors = _load_features(
+            encoder.visual,
+            [row for part in packed.visual_features[start:end] for row in part],
+            packed.visual_feature_signature,
+            points.shape[-2],
+            device,
         )
+        if descriptors is not None:
+            descriptors = descriptors.reshape(end - start, encoder.block_size, points.shape[-2], 256)
+        if encoder.checkpoint_blocks and encoder.training and torch.is_grad_enabled():
+            visual = EncodedLeaves(
+                *checkpoint(pool, points, valid, times, indices, descriptors, use_reentrant=False)
+            )
+        else:
+            visual = EncodedLeaves(*pool(points, valid, times, indices, descriptors))
         source = packed.source[start:end].to(device)
         owner = packed.owner[start:end].to(device)
         now = clocks[owner, source][:, None]
@@ -480,12 +537,27 @@ def encode_history_bank(policy, decisions, clocks, *, packed=None):
             True,
             done,
         )
-        anchor = state[..., 7:10]
-        event_meta = _leaf_metadata(anchor, anchor, anchor, times, times, now, source[:, None], False, done)
-        contents.append(torch.cat([visual.content, events], dim=1))
-        metas.append(torch.cat([visual_meta, event_meta], dim=1))
-        masks.append(torch.cat([visual.valid, packed.frame_valid[start:end].to(device)], dim=1))
-    tokens = encoder.visual_tokens + encoder.block_size
+        if encoder.history_events_enabled:
+            state = packed.state[start:end].to(device)
+            events = encoder.event(
+                state, packed.action[start:end].to(device), packed.available[start:end].to(device)
+            )
+            anchor = (
+                state[..., 7:10]
+                if encoder.proprioception_mode == "all"
+                else torch.zeros_like(state[..., 7:10])
+            )
+            event_meta = _leaf_metadata(
+                anchor, anchor, anchor, times, times, now, source[:, None], False, done
+            )
+            contents.append(torch.cat([visual.content, events], dim=1))
+            metas.append(torch.cat([visual_meta, event_meta], dim=1))
+            masks.append(torch.cat([visual.valid, packed.frame_valid[start:end].to(device)], dim=1))
+        else:
+            contents.append(visual.content)
+            metas.append(visual_meta)
+            masks.append(visual.valid)
+    tokens = encoder.visual_tokens + (encoder.block_size if encoder.history_events_enabled else 0)
     max_length = max(packed.blocks_per_example) * tokens
     indices = (
         ((packed.owner * max_length + packed.slot * tokens)[:, None] + torch.arange(tokens))
@@ -537,12 +609,24 @@ def encode_current_bank(policy, decisions, clocks, *, packed_batch=None):
             if encoder.current_tokens not in packed_batch.current_center_indices:
                 raise ValueError("Packed current input is missing its required center quota")
             prepared_centers = packed_batch.current_center_indices[encoder.current_tokens]
+    descriptors = _load_features(
+        encoder.visual,
+        [getattr(d.current, "visual_features", None) for d in decisions]
+        if packed_batch is None
+        else packed_batch.current_visual_features,
+        _feature_cache_state(d.current for d in decisions)
+        if packed_batch is None
+        else packed_batch.current_visual_feature_signature,
+        points.shape[-2],
+        policy.device,
+    )
     visual = policy.encoder.visual.forward_batched(
         points.to(policy.device),
         valid.to(policy.device),
         clocks[:, 1:2],
         policy.encoder.current_tokens,
         center_indices=None if prepared_centers is None else prepared_centers.to(policy.device),
+        visual_features=None if descriptors is None else descriptors[:, None],
     )
     meta = _leaf_metadata(
         visual.anchor,
@@ -668,17 +752,19 @@ def batch_context(
         .to(device)
         .float()
     )
-    current_tokens = torch.cat(
+    pieces = [current.adapt(policy.adapter)]
+    if policy.current_state_enabled:
+        pieces.append(policy.encode_current_state(states)[:, None])
+    pieces.extend([text[:, None], policy.clock(clocks / 100)[:, None]])
+    current_tokens = torch.cat(pieces, dim=1)
+    current_valid = torch.cat(
         [
-            current.adapt(policy.adapter),
-            policy.encode_current_state(states)[:, None],
-            text[:, None],
-            policy.clock(clocks / 100)[:, None],
+            current.valid,
+            torch.ones(
+                len(decisions), 2 + int(policy.current_state_enabled), device=device, dtype=torch.bool
+            ),
         ],
         dim=1,
-    )
-    current_valid = torch.cat(
-        [current.valid, torch.ones(len(decisions), 3, device=device, dtype=torch.bool)], dim=1
     )
     history_tokens = history.adapt(policy.adapter)
     history_valid = history.valid

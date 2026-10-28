@@ -12,7 +12,13 @@ from functools import wraps
 import numpy as np
 import torch
 from stmem.data.canonical import Frame
-from stmem.data.pointcloud import DEFAULT_CROP, rgbd_to_points, proprioception, resolve_point_sampling
+from stmem.data.pointcloud import (
+    DEFAULT_CROP,
+    rgbd_to_points,
+    rgbd_to_points_with_provenance,
+    proprioception,
+    resolve_point_sampling,
+)
 from stmem.data.center_sampling import (
     resolve_center_sampling,
     center_sampling_signature,
@@ -109,6 +115,7 @@ class RoboMMEAdapter:
         point_sampling=None,
         center_sampling=None,
         center_counts=(32,),
+        feature_extractor=None,
     ):
         if split not in ("train", "val", "test"):
             raise ValueError("Unknown official split")
@@ -122,6 +129,7 @@ class RoboMMEAdapter:
         self.point_sampling = resolve_point_sampling(point_sampling)
         self.center_sampling = resolve_center_sampling(center_sampling)
         self.center_counts = tuple(center_counts)
+        self.feature_extractor = feature_extractor
         self.center_sampling_signature = center_sampling_signature(self.center_sampling)
         self.requested_max_steps = max_steps
         self.env = env
@@ -206,7 +214,9 @@ class RoboMMEAdapter:
         for i in range(n):
             source = "conditioning" if reset and i < n - 1 else "execution"
             allowed = {field: numpy_value(obs[field + "_list"][i]) for field in OBSERVATION_FIELDS}
-            points, mask = rgbd_to_points(
+            cloud = (
+                rgbd_to_points_with_provenance if self.feature_extractor is not None else rgbd_to_points
+            )(
                 allowed,
                 self.calibration,
                 count=self.points,
@@ -215,6 +225,16 @@ class RoboMMEAdapter:
                 max_depth_m=self.max_depth_m,
                 **self.point_sampling,
             )
+            points, mask = cloud[:2]
+            feature_kwargs = {}
+            if self.feature_extractor is not None:
+                camera, uv = cloud[2:]
+                feature_kwargs = {
+                    "visual_features": self.feature_extractor.sample(allowed, camera, uv, mask).cpu(),
+                    "visual_feature_signature": self.feature_extractor.signature,
+                    "point_camera": camera,
+                    "point_uv": uv,
+                }
             action_known = not reset and command is not None and n == 1
             previous = (
                 torch.as_tensor(command, dtype=torch.float32).clone() if action_known else torch.zeros(8)
@@ -235,6 +255,7 @@ class RoboMMEAdapter:
                         points, mask, self.center_counts, self.center_sampling
                     ),
                     center_sampling_signature=self.center_sampling_signature,
+                    **feature_kwargs,
                 )
             )
             self._clock[source] += 1

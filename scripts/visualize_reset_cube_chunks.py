@@ -28,6 +28,7 @@ from stmem.evaluation.runner import OnlinePolicy, episode_timeout
 from stmem.training.checkpoints import file_sha256
 from stmem.training.runtime import environment_manifest, load_policy
 from stmem.visualization.kinematics import panda_observation_errors, panda_tcp_pose
+from stmem.vision.frozen import FrozenCLIPFeatures, resolve_visual_features, visual_feature_identity
 
 
 TASK = "PickXtimes"
@@ -92,13 +93,14 @@ def relocate_before_reset(adapter, shift):
     base._initialize_episode = initialize_with_translation
 
 
-def make_adapter(cfg, episode, split):
+def make_adapter(cfg, episode, split, feature_extractor=None):
     return RoboMMEAdapter(
         TASK, episode, split, points=cfg["model"]["points"],
         max_steps=cfg["evaluation"]["max_steps"], crop=cfg["geometry"]["crop"],
         voxel_size=cfg["geometry"]["voxel_size"], max_depth_m=cfg["geometry"]["max_depth"],
         point_sampling=point_sampler_settings(cfg), center_sampling=center_sampler_settings(cfg),
         center_counts=center_counts(cfg),
+        feature_extractor=feature_extractor,
     )
 
 
@@ -184,6 +186,8 @@ def generate(args):
         path = Path(raw_path).resolve()
         policy, state = load_policy(path, args.device)
         cfg = state["config"]
+        if args.visual_checkpoint:
+            cfg["model"].setdefault("visual_features", {})["checkpoint"] = str(args.visual_checkpoint.resolve())
         online = OnlinePolicy(policy, cfg, "FULL", cfg["model"]["budget"])
         assert policy.config == cfg
         if reference_cfg is None:
@@ -193,17 +197,24 @@ def generate(args):
             for key in ("points", "horizon", "execute", "flow_steps"):
                 assert cfg["model"][key] == reference_cfg["model"][key], key
             assert center_counts(cfg) == center_counts(reference_cfg)
+            assert visual_feature_identity(cfg) == visual_feature_identity(reference_cfg), "Different frozen visual preprocessing"
         models.append({"id": identifier, "label": MODEL_LABELS.get(identifier, identifier),
                        "step": state["step"], "checkpoint": str(path),
                        "checkpoint_sha256": file_sha256(path),
                        "condition_on_previous_joint_commands": cfg["model"].get(
                            "condition_on_previous_joint_commands", True),
                        "precision": online.precision})
+        models[-1].update(
+            proprioception_mode=cfg["model"].get("proprioception_mode", "all"),
+            condition_on_previous_commands=cfg["model"].get("condition_on_previous_commands", True),
+            visual_features=visual_feature_identity(cfg),
+        )
         online_models[identifier] = online
         print(json.dumps({"event": "loaded", "model": identifier, "step": state["step"],
                           "precision": online.precision}), flush=True)
     assert len({model["precision"] for model in models}) == 1, "Mixed numerical protocols"
     cfg = reference_cfg
+    feature_extractor = FrozenCLIPFeatures(cfg, device=args.device) if resolve_visual_features(cfg)["mode"] != "xyzrgb" else None
     payload = {
         "schema_version": 1, "kind": "initial_cube_relocation_diagnostic_not_benchmark_score",
         "task": TASK, "split": args.split, "episode_idx": args.episode, "decision_step": 0,
@@ -225,14 +236,14 @@ def generate(args):
             "Only the first execute_steps commands would normally run before replanning; later targets are predictions.",
             "Shifted scenes are artificial diagnostics, not official episode configurations; original XY spawn-range membership is reported per scene.",
             "At reset, previous commands are unavailable in every model; differences between checkpoints reflect learned weights.",
-            "Fresh 16k and continued 64,978-step checkpoints have different training exposure.",
+            "Each checkpoint's training step and input settings are listed separately; only compare matched training budgets as a controlled ablation.",
         ],
     }
     basestate = None
     baseline_reset = None
     with torch.no_grad(), episode_timeout(args.timeout_seconds):
         for name, label, shift in PLACEMENTS:
-            adapter = make_adapter(cfg, args.episode, args.split)
+            adapter = make_adapter(cfg, args.episode, args.split, feature_extractor)
             try:
                 if any(shift):
                     relocate_before_reset(adapter, shift)
@@ -284,11 +295,13 @@ def generate(args):
             finally:
                 adapter.close()
         # Repeat baseline without interventions: verify renderer/sampling and full predictions.
-        adapter = make_adapter(cfg, args.episode, args.split)
+        adapter = make_adapter(cfg, args.episode, args.split, feature_extractor)
         try:
             repeat = adapter.reset()
             for field in ("points", "valid", "proprio", "previous_action"):
                 assert torch.equal(getattr(repeat.current, field), getattr(baseline_reset.current, field)), field
+            if feature_extractor is not None:
+                assert torch.equal(repeat.current.visual_features, baseline_reset.current.visual_features)
             assert repeat.goal == baseline_reset.goal
             for identifier, online in online_models.items():
                 online.reset(repeat, args.seeds[0])
@@ -305,6 +318,7 @@ def generate(args):
                 prediction["metrics"] = {
                     "first4_tcp_change_mean_mm": float(displacement[:payload["execute_steps"]].mean()),
                     "full16_tcp_change_mean_mm": float(displacement.mean()),
+                    "full_chunk_tcp_change_mean_mm": float(displacement.mean()),
                     "max_tcp_change_mm": float(displacement.max()),
                     "tcp_change_by_target_mm": displacement,
                     "tcp_signed_delta_xyz_mm": delta * 1000,
@@ -332,6 +346,7 @@ def main():
     parser.add_argument("--checkpoint", action="append", help="Repeat: model_id=/path/to/checkpoint.pt")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--visual-checkpoint", type=Path, help="Local CLIP RN50 path when inspecting checkpoints copied from another machine")
     parser.add_argument("--split", choices=("train", "val"), default="val")
     parser.add_argument("--episode", type=int, default=0)
     parser.add_argument("--seeds", nargs="+", type=int, default=[2701, 2702, 2703, 2704])

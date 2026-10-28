@@ -103,6 +103,7 @@ class SpacetimeEncoder(nn.Module):
         learnable_bandwidth: bool = True,
         framewise: bool = False,
         center_sampling: dict | None = None,
+        visual_features: dict | None = None,
     ):
         super().__init__()
         if (
@@ -130,8 +131,43 @@ class SpacetimeEncoder(nn.Module):
         self.raw_tau_t = nn.Parameter(
             torch.tensor(inverse_softplus(tau_t)), requires_grad=learnable_bandwidth
         )
-        self.point_mlp = nn.Sequential(nn.Linear(6, width), nn.SiLU(), nn.Linear(width, width))
+        from stmem.vision.frozen import resolve_visual_features, visual_feature_signature
+
+        self.visual_features = resolve_visual_features(visual_features or {})
+        self.visual_feature_dim = 256 if self.visual_features["mode"] != "xyzrgb" else 0
+        self.visual_feature_signature = (
+            visual_feature_signature(self.visual_features) if self.visual_feature_dim else None
+        )
+        projected = self.visual_features.get("projection_dim", 128) if self.visual_feature_dim else 0
+        if self.visual_feature_dim:
+            self.feature_projection = nn.Sequential(nn.LayerNorm(256), nn.Linear(256, projected))
+        self.point_mlp = nn.Sequential(nn.Linear(6 + projected, width), nn.SiLU(), nn.Linear(width, width))
         self.edge_mlp = nn.Sequential(nn.Linear(width + 4, width), nn.SiLU(), nn.Linear(width, width))
+
+    def point_features(self, points: Tensor, descriptors: Tensor | None = None) -> Tensor:
+        """Appearance is appended only after canonical geometry ordering."""
+        if self.visual_feature_dim:
+            if descriptors is None or descriptors.shape != (*points.shape[:-1], 256):
+                raise ValueError(
+                    "Frozen vision requires aligned raw descriptors [...,N,256]; prepare feature sidecars"
+                )
+            projected = self.feature_projection(descriptors.float())
+            points = torch.cat([points, projected], dim=-1)
+        elif descriptors is not None:
+            raise ValueError("XYZRGB policy cannot consume a frozen-feature cache")
+        return self.point_mlp(points)
+
+    def frame_features(self, frame: Any) -> Tensor | None:
+        if not self.visual_feature_dim:
+            if getattr(frame, "visual_features", None) is not None:
+                raise ValueError("Feature-augmented frame supplied to an XYZRGB policy")
+            return None
+        if getattr(frame, "visual_feature_signature", None) != self.visual_feature_signature:
+            raise ValueError("Frame frozen-feature identity does not match the encoder")
+        value = frame.visual_features
+        if value is None:
+            raise ValueError("Missing frozen descriptors; prepare matching feature sidecars")
+        return value.load() if hasattr(value, "load") else value
 
     @property
     def tau_x(self) -> Tensor:
@@ -149,9 +185,18 @@ class SpacetimeEncoder(nn.Module):
         centers_per_frame: int | Sequence[int],
         *,
         center_indices: Tensor | None = None,
+        visual_features: Tensor | None = None,
     ) -> EncodedLeaves:
         """Vectorized independent local blocks; masked leaves retain fixed slots."""
-        return forward_batched(self, points, valid, times, centers_per_frame, center_indices=center_indices)
+        return forward_batched(
+            self,
+            points,
+            valid,
+            times,
+            centers_per_frame,
+            center_indices=center_indices,
+            visual_features=visual_features,
+        )
 
     def forward(
         self,
@@ -162,6 +207,7 @@ class SpacetimeEncoder(nn.Module):
         *,
         trace: VisualTrace | None = None,
         center_indices: Sequence[Tensor] | Tensor | None = None,
+        visual_features: Sequence[Tensor] | Tensor | None = None,
     ) -> EncodedLeaves:
         """Pool observed points; an optional observer receives the actual pooling graph.
 
@@ -179,11 +225,16 @@ class SpacetimeEncoder(nn.Module):
             raise ValueError("One nonnegative temporal-stratum center quota is required per frame")
         if center_indices is not None and len(center_indices) != len(points):
             raise ValueError("One prepared center-index row is required per frame")
+        if self.visual_feature_dim and (visual_features is None or len(visual_features) != len(points)):
+            raise ValueError("One aligned frozen-feature row is required per frame")
+        if not self.visual_feature_dim and visual_features is not None:
+            raise ValueError("XYZRGB encoder cannot consume frozen features")
         device = self.raw_tau_x.device
         times = torch.as_tensor(times, dtype=torch.float32, device=device)
         if not torch.isfinite(times).all() or (len(times) > 1 and (times[1:] < times[:-1]).any()):
             raise ValueError("Use finite chronological source-local timestamps")
         ordered, frame_indices, point_times = [], [], []
+        ordered_features = []
         anchors, center_times, center_frames, center_valid = [], [], [], []
         center_point_indices = [] if trace is not None else None
         trace_neighbors, trace_masks, trace_weights = [], [], []
@@ -201,6 +252,14 @@ class SpacetimeEncoder(nn.Module):
             observed = torch.where(frame_valid)[0]
             original_order = observed[_lexicographic_indices(frame_points[observed])]
             cloud = frame_points[original_order]
+            if visual_features is not None:
+                descriptor = visual_features[frame_index].to(device=device)
+                if descriptor.shape != (len(frame_points), 256):
+                    raise ValueError("Frozen descriptors must align with the original selected points")
+                descriptor = descriptor[original_order]
+                if not torch.isfinite(descriptor).all():
+                    raise ValueError("Valid point descriptors must be finite")
+                ordered_features.append(descriptor)
             supplied = None if center_indices is None else center_indices[frame_index]
             if supplied is None and self.center_sampling is not None:
                 # Direct raw-tensor visualizations may request selection without
@@ -301,7 +360,9 @@ class SpacetimeEncoder(nn.Module):
                     torch.empty(m, 0, device=device),
                 )
             return result
-        features = self.point_mlp(cloud)
+        features = self.point_features(
+            cloud, torch.cat(ordered_features) if visual_features is not None else None
+        )
         contents, valids, minima, maxima, tmins, tmaxs, occupancies = [], [], [], [], [], [], []
         for start in range(0, m, self.center_chunk):
             end = min(start + self.center_chunk, m)
@@ -422,6 +483,8 @@ class BlockEncoder(nn.Module):
         variant: str = "joint",
         checkpoint_blocks: bool = False,
         condition_on_previous_joint_commands: bool = True,
+        condition_on_previous_commands: bool = True,
+        proprioception_mode: str = "all",
         **visual_kwargs: Any,
     ):
         super().__init__()
@@ -437,12 +500,18 @@ class BlockEncoder(nn.Module):
         )
         self.variant = variant
         self.checkpoint_blocks = checkpoint_blocks
+        if proprioception_mode not in ("all", "current_only", "none"):
+            raise ValueError("proprioception_mode must be all, current_only, or none")
+        self.proprioception_mode = proprioception_mode
+        self.history_events_enabled = proprioception_mode == "all" or condition_on_previous_commands
         self.visual = SpacetimeEncoder(width, framewise=variant == "framewise", **visual_kwargs)
         self.event = EventEncoder(
             width,
             proprio_dim,
             action_dim,
             condition_on_previous_joint_commands=condition_on_previous_joint_commands,
+            condition_on_previous_commands=condition_on_previous_commands,
+            condition_on_proprioception=proprioception_mode == "all",
         )
 
     def encode_frames(
@@ -469,6 +538,8 @@ class BlockEncoder(nn.Module):
             for i in range(len(frames))
         ]
         points, valid, times = [f.points for f in frames], [f.valid for f in frames], [f.time for f in frames]
+        descriptors = [self.visual.frame_features(f) for f in frames]
+        descriptors = descriptors if self.visual.visual_feature_dim else None
         center_indices = None
         if self.visual.center_sampling is not None:
             center_indices = [
@@ -480,13 +551,31 @@ class BlockEncoder(nn.Module):
         if self.checkpoint_blocks and self.training and torch.is_grad_enabled():
 
             def pool():
-                output = self.visual(points, valid, times, quotas, trace=trace, center_indices=center_indices)
+                output = self.visual(
+                    points,
+                    valid,
+                    times,
+                    quotas,
+                    trace=trace,
+                    center_indices=center_indices,
+                    visual_features=descriptors,
+                )
                 return tuple(getattr(output, name) for name in EncodedLeaves.__dataclass_fields__)
 
             pooled = EncodedLeaves(*checkpoint(pool, use_reentrant=False))
         else:
-            pooled = self.visual(points, valid, times, quotas, trace=trace, center_indices=center_indices)
+            pooled = self.visual(
+                points,
+                valid,
+                times,
+                quotas,
+                trace=trace,
+                center_indices=center_indices,
+                visual_features=descriptors,
+            )
         records = self._visual_records(pooled, source, block_id, completed)
+        if not self.history_events_enabled:
+            return records
         device = self.visual.raw_tau_x.device
         state = torch.stack([f.proprio for f in frames]).to(device=device, dtype=torch.float32)
         action = torch.stack([f.previous_action for f in frames]).to(device=device, dtype=torch.float32)
@@ -499,7 +588,9 @@ class BlockEncoder(nn.Module):
                 leaf_record(
                     f"{block_id}:event:{index}",
                     content,
-                    state[index, 7:10],
+                    state[index, 7:10]
+                    if self.proprioception_mode == "all"
+                    else torch.zeros(3, device=device),
                     frame.time,
                     source,
                     "event",
@@ -509,6 +600,7 @@ class BlockEncoder(nn.Module):
         return records
 
     def current(self, frame: Any, *, trace: VisualTrace | None = None) -> list[MemoryRecord]:
+        descriptor = self.visual.frame_features(frame)
         indices = None
         if self.visual.center_sampling is not None:
             indices = [
@@ -526,6 +618,7 @@ class BlockEncoder(nn.Module):
             [self.current_tokens],
             trace=trace,
             center_indices=indices,
+            visual_features=[descriptor] if descriptor is not None else None,
         )
         return self._visual_records(pooled, frame.source, f"current:{frame.event_id}", True)
 

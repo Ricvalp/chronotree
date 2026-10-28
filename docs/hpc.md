@@ -1205,3 +1205,11 @@ its existing W&B run. The H16 and H32 model shapes are not interchangeable.
 No new site file, run root or prepared dataset is needed. A different original
 run/generated directory must be substituted consistently rather than creating
 an empty recovery directory.
+
+## Frozen visual features and measured-state ablation
+
+Use the [frozen-vision experiment workflow](frozen_vision_experiment.md) for the
+two fresh H32 teachers. It covers descriptor-cache size estimates, parallel
+one-GPU preparation tasks, long-history memory profiling, separate four-B200
+training jobs and matched H200 evaluations with videos. These experiments reuse
+the existing balanced-v2 geometry and require new frozen-feature sidecars.

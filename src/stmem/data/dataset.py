@@ -34,7 +34,15 @@ class EpisodeActions:
 
 
 class EpisodeDataset:
-    def __init__(self, root=f"data/{PREPARED_SUBDIR}", tasks=None, horizon=16, alignment_path=None):
+    def __init__(
+        self,
+        root=f"data/{PREPARED_SUBDIR}",
+        tasks=None,
+        horizon=16,
+        alignment_path=None,
+        *,
+        visual_features_config=None,
+    ):
         self.root = Path(root)
         self.horizon = horizon
         self.episodes = []
@@ -61,6 +69,47 @@ class EpisodeDataset:
                     self.episodes.append(ref)
         if not self.episodes:
             raise FileNotFoundError(f"No prepared episodes at {self.root}; run python -m stmem.data.prepare")
+        self.feature_identity = None
+        self.feature_paths = {}
+        self.feature_manifests = {}
+        self.feature_signature = None
+        if visual_features_config is not None:
+            self._configure_features(visual_features_config)
+
+    def _configure_features(self, config):
+        from stmem.vision.frozen import (
+            resolve_visual_features,
+            visual_feature_identity,
+            visual_feature_signature,
+        )
+        from .feature_cache import feature_cache_manifest
+
+        spec = resolve_visual_features(config)
+        if spec["mode"] == "xyzrgb":
+            if self.feature_identity is not None:
+                raise ValueError("A frozen-feature dataset cannot be reconfigured as XYZRGB")
+            return
+        identity = visual_feature_identity(spec)
+        if self.feature_identity is not None:
+            if self.feature_identity != identity:
+                raise ValueError("Frozen feature identity changed after dataset construction")
+            return
+        for ref in self.episodes:
+            if ref.task in self.feature_paths:
+                continue
+            path = Path(spec["cache_dir"]) / f"{ref.task}.h5"
+            self.feature_manifests[ref.task] = feature_cache_manifest(path, ref.metadata, spec)
+            self.feature_paths[ref.task] = path
+        self.feature_identity = identity
+        self.feature_signature = visual_feature_signature(spec)
+
+    def _require_feature_episode(self, ref):
+        if self.feature_identity is not None:
+            layout = self.feature_manifests[ref.task]["episodes"]
+            if ref.key not in layout:
+                raise ValueError(
+                    f"Frozen feature cache lacks {ref.task}/{ref.key}; prepare all requested training episodes"
+                )
 
     def validate_preprocessing(self, config):
         from stmem.config import require_sampling_contract
@@ -98,6 +147,7 @@ class EpisodeDataset:
                     raise ValueError(
                         f"{ref.task}: prepared {key}={observed} differs from configuration {value}; re-run prepare with matching config"
                     )
+        self._configure_features(config)
 
     def __len__(self):
         return len(self.episodes)
@@ -155,6 +205,7 @@ class EpisodeDataset:
     def load_episode_actions(self, index):
         """Read only small source/action arrays for startup indexing/statistics."""
         ref = self.episodes[index]
+        self._require_feature_episode(ref)
         alignment = self._alignment_for(ref)
         action_alignment_offset(alignment)  # Fail before exposing unverified supervision.
         with h5py.File(ref.path, "r") as f:
@@ -170,10 +221,18 @@ class EpisodeDataset:
         from .center_sampling import center_sampling_signature
 
         ref = self.episodes[index]
+        self._require_feature_episode(ref)
         alignment = self._alignment_for(ref)
         with h5py.File(ref.path, "r") as f:
             g = f[ref.key]
             self._validate_episode_layout(g)
+            feature_rows, point_camera, point_uv = None, None, None
+            if self.feature_identity is not None:
+                from .feature_cache import episode_feature_rows
+
+                feature_rows, point_camera, point_uv = episode_feature_rows(
+                    self.feature_paths[ref.task], ref.key, g, self.feature_signature
+                )
             center_signature = None
             centers = {}
             if ref.metadata.get("format") == FORMAT_VERSION:
@@ -213,6 +272,10 @@ class EpisodeDataset:
                         int(indices[row]),
                         center_indices={count: values[row] for count, values in centers.items()},
                         center_sampling_signature=center_signature,
+                        visual_features=None if feature_rows is None else feature_rows[row],
+                        point_camera=None if point_camera is None else point_camera[row],
+                        point_uv=None if point_uv is None else point_uv[row],
+                        visual_feature_signature=self.feature_signature,
                     )
                 )
             return Episode(

@@ -214,5 +214,13 @@
       "size": 9455,
       "path": "tarxz_h5.py"
     }
-  ]
+  ],
+  "clip_revision": "d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
+  "clip_rn50": {
+    "url": "https://openaipublic.azureedge.net/clip/models/afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762/RN50.pt",
+    "sha256": "afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762",
+    "bytes": 255827503,
+    "execution": "visual stem and layer1 only",
+    "license": "MIT"
+  }
 }

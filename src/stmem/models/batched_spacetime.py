@@ -80,6 +80,7 @@ def forward_batched(
     centers_per_frame: int | Sequence[int],
     *,
     center_indices: Tensor | None = None,
+    visual_features: Tensor | None = None,
 ) -> EncodedLeaves:
     """Pool independent padded local blocks [K,F,N,6] into leaves [K,M,...].
 
@@ -122,6 +123,18 @@ def forward_batched(
             z,
         )
     cloud, point_valid, order = _canonical_cloud(points, valid)
+    descriptors = None
+    if encoder.visual_feature_dim:
+        if visual_features is None or visual_features.shape != (*points.shape[:-1], 256):
+            raise ValueError("Batched frozen descriptors must be [K,F,N,256]")
+        descriptors = visual_features.to(device=device)
+        descriptors = descriptors.gather(-2, order[..., None].expand(*order.shape, 256))
+        descriptors = descriptors.masked_fill(~point_valid[..., None], 0)
+        if not torch.isfinite(descriptors).all():
+            raise ValueError("Valid frozen descriptors must be finite")
+        descriptors = descriptors.flatten(1, 2)
+    elif visual_features is not None:
+        raise ValueError("XYZRGB encoder cannot consume frozen descriptors")
     if center_indices is None:
         if encoder.center_sampling is not None:
             raise ValueError("Configured center sampling requires CPU-prepared indices in batched pooling")
@@ -148,7 +161,7 @@ def forward_batched(
     point_valid = point_valid.flatten(1, 2)
     point_time = times[:, :, None].expand(k, frames, point_count).flatten(1, 2)
     point_frame = torch.arange(frames, device=device).repeat_interleave(point_count)
-    features = encoder.point_mlp(cloud)
+    features = encoder.point_features(cloud, descriptors)
     batch_index = torch.arange(k, device=device)[:, None, None]
     contents, valids, minima, maxima, tmins, tmaxs, occupancies = [], [], [], [], [], [], []
     for start in range(0, m, encoder.center_chunk):

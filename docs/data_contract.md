@@ -75,6 +75,40 @@ because the RGB-D source, source clocks and action alignment are unchanged.
 
 The recorded frame clock is deliberately distinct from physical elapsed time. Upstream can omit NO RECORD intervals; contiguous HDF5 numeric names do not prove uninterrupted physics. Metadata logs nominal and measured cadence, but stored indices are not silently treated as physical seconds or divided by eventual episode length.
 
+## Optional frozen visual descriptors
+
+The frozen-vision experiment adds sidecars under
+`features_clip_rn50_layer1_v1/<task>.h5`; the existing
+`prepared_balanced_v2/<task>.h5` geometry and alignment record remain unchanged.
+Each selected point retains its observing camera (front=0, wrist=1) and original
+integer `(u,v)`. These sidecars follow exactly the XYZRGB selection indices;
+extra channels never change voxel representatives, sorting, centers or quotas.
+Preparation verifies the original raw SHA256 and checks exact regenerated
+XYZRGB/validity equality for every row.
+
+Frozen CLIP RN50 `layer1` maps have shape `[256,64,64]` for native 256×256 RGB.
+Sampling uses receptive-field origin `(1,1)` and stride four, with bilinear
+border interpolation and `align_corners=False`. The versioned extraction
+contract includes checkpoint checksum, CLIP normalization, camera order,
+provenance/sampling rules and explicit FP32 backend settings. Sidecars store
+FP16 descriptors **before** trainable LayerNorm/projection. Invalid points have
+zero descriptors and camera/pixel identity -1. Lightweight row references cross
+loader processes; only the next local encoder block batch is read into RAM.
+Mismatched, incomplete or `--max-frames` diagnostic caches cannot silently train
+a policy. Completed caches are immutable and require explicit verified reuse.
+
+`model.proprioception_mode` selects `all`, `current_only` or `none`;
+`model.condition_on_previous_commands: false` removes joint/gripper commands
+and availability completely. Defaults preserve legacy behavior. FV-NoProp
+removes current state and historical event tokens, including state-derived
+end-effector metadata. Both required FV arms disable all previous commands.
+Visual observations, timestamps and clocks are unchanged; removed event slots
+do not become extra visual slots. Measured state still exists in canonical
+records for controller/evaluation bookkeeping, and the robot remains visible
+in RGB-D. Evaluation-only target poses/contact flags are kept outside `Frame`
+and policy inputs. See [the experiment workflow](frozen_vision_experiment.md)
+for preparation, matched training and diagnostic definitions.
+
 ## Reproduce
 
 ```bash

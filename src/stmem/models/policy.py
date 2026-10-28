@@ -12,6 +12,7 @@ from stmem.models.metadata_adapter import MetadataAdapter
 from stmem.models.text_encoder import TextEncoder
 from stmem.models.perceiver import Perceiver
 from stmem.models.router import query_features
+from stmem.vision.frozen import resolve_visual_features
 
 
 @dataclass
@@ -31,6 +32,13 @@ class MemoryPolicy(nn.Module):
         m = config["model"]
         self.config = config
         self.condition_on_previous_joint_commands = m.get("condition_on_previous_joint_commands", True)
+        self.condition_on_previous_commands = m.get("condition_on_previous_commands", True)
+        self.proprioception_mode = m.get("proprioception_mode", "all")
+        if self.proprioception_mode not in ("all", "current_only", "none"):
+            raise ValueError("model.proprioception_mode must be all, current_only, or none")
+        if not isinstance(self.condition_on_previous_commands, bool):
+            raise ValueError("model.condition_on_previous_commands must be boolean")
+        self.current_state_enabled = self.proprioception_mode != "none" or self.condition_on_previous_commands
         self.encoder = BlockEncoder(
             width=m["width"],
             visual_tokens=m["visual_tokens"],
@@ -39,6 +47,9 @@ class MemoryPolicy(nn.Module):
             variant=m.get("encoder", "joint"),
             checkpoint_blocks=m.get("checkpoint_blocks", False),
             condition_on_previous_joint_commands=self.condition_on_previous_joint_commands,
+            condition_on_previous_commands=self.condition_on_previous_commands,
+            proprioception_mode=self.proprioception_mode,
+            visual_features=resolve_visual_features(config),
             **m.get("encoder_options", {}),
         )
         self.text_encoder = TextEncoder(
@@ -46,6 +57,7 @@ class MemoryPolicy(nn.Module):
         )
         self.adapter = MetadataAdapter(m["width"])
         self.proprio = nn.Sequential(nn.Linear(24, m["width"]), nn.SiLU(), nn.Linear(m["width"], m["width"]))
+        self.proprio.requires_grad_(self.current_state_enabled)
         self.clock = nn.Linear(2, m["width"])
         decoder = RegressionHead if m.get("decoder") == "regression" else ActionFlow
         self.decoder = decoder(m["width"], m["heads"], m["layers"], m["horizon"])
@@ -106,16 +118,30 @@ class MemoryPolicy(nn.Module):
             evidence.clocks,
             budget,
             condition_on_previous_joint_commands=self.condition_on_previous_joint_commands,
+            condition_on_previous_commands=self.condition_on_previous_commands,
+            proprioception_mode=self.proprioception_mode,
         )
 
     def encode_current_state(self, state):
         """Shared current-state input contract for serial and packed policies."""
-        if not self.condition_on_previous_joint_commands:
+        if (
+            not self.condition_on_previous_joint_commands
+            or not self.condition_on_previous_commands
+            or self.proprioception_mode == "none"
+        ):
             state = torch.cat(
                 [
-                    state[..., :15],
-                    command_conditioning(state[..., 15:23], include_joint_commands=False),
-                    state[..., 23:],
+                    state[..., :15]
+                    if self.proprioception_mode != "none"
+                    else torch.zeros_like(state[..., :15]),
+                    command_conditioning(
+                        state[..., 15:23],
+                        include_joint_commands=self.condition_on_previous_joint_commands,
+                        include_commands=self.condition_on_previous_commands,
+                    ),
+                    state[..., 23:]
+                    if self.condition_on_previous_commands
+                    else torch.zeros_like(state[..., 23:]),
                 ],
                 dim=-1,
             )
@@ -135,15 +161,11 @@ class MemoryPolicy(nn.Module):
             [evidence.clocks["conditioning"] / 100.0, evidence.clocks["execution"] / 100.0],
             device=self.device,
         )
-        current = torch.cat(
-            [
-                current,
-                self.encode_current_state(state)[None],
-                evidence.text.to(self.device)[None],
-                self.clock(clock)[None],
-            ],
-            0,
-        )
+        pieces = [current]
+        if self.current_state_enabled:
+            pieces.append(self.encode_current_state(state)[None])
+        pieces.extend([evidence.text.to(self.device)[None], self.clock(clock)[None]])
+        current = torch.cat(pieces, 0)
         history = self.adapter(records, evidence.clocks, self.device)
         if self.config["model"].get("mass_bias", True):
             bias = torch.tensor([math.log(r.count) for r in records], device=self.device)

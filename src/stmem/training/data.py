@@ -61,6 +61,7 @@ class TrainingData:
                 self.tasks,
                 self.horizon,
                 alignment,
+                visual_features_config=cfg,
             )
             self.dataset.validate_preprocessing(cfg)
             cap = int(cfg["data"]["episodes_per_task"] * cfg["data"].get("fraction", 1.0))
@@ -78,6 +79,11 @@ class TrainingData:
                     "manifests": [r.metadata for r in self.dataset.episodes],
                     "alignment": self.dataset.alignment,
                     "data": cfg["data"],
+                    **(
+                        {"visual_features": self.dataset.feature_identity}
+                        if self.dataset.feature_identity is not None
+                        else {}
+                    ),
                 }
             )
         self.candidates = {}

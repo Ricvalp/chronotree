@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import torch
 from torch import Tensor
+
+if TYPE_CHECKING:
+    from stmem.data.feature_cache import FeatureRow
 
 PROPRIO_DIM = 15  # qpos7, xyz3, quaternion wxyz4, mean finger opening1
 ACTION_DIM = 8
@@ -50,6 +53,12 @@ class Frame:
     # requested quota. Invalid/padded slots are -1; never truncate another quota.
     center_indices: dict[int, Tensor] = field(default_factory=dict)
     center_sampling_signature: str | None = None
+    # Optional frozen RGB descriptors BEFORE the trainable normalization/projection.
+    # These share precisely the canonical sampled-point order and validity mask.
+    visual_features: Tensor | FeatureRow | None = None
+    point_camera: Tensor | None = None
+    point_uv: Tensor | None = None
+    visual_feature_signature: str | None = None
 
     def __post_init__(self):
         if self.points.ndim != 2 or self.points.shape[-1] != 6:
@@ -66,6 +75,18 @@ class Frame:
             self.previous_action = torch.zeros_like(self.previous_action)
         if self.source_index < 0:
             self.source_index = int(self.time)
+        if self.visual_features is not None:
+            if self.visual_features.shape != (len(self.points), 256):
+                raise ValueError("frozen visual_features must be [N,256] in sampled-point order")
+            if not self.visual_features.dtype.is_floating_point:
+                raise ValueError("frozen visual_features must be floating point")
+        if (self.point_camera is None) != (self.point_uv is None):
+            raise ValueError("point_camera and point_uv provenance must be supplied together")
+        if self.point_camera is not None:
+            if self.point_camera.shape != (len(self.points),) or self.point_camera.dtype != torch.long:
+                raise ValueError("point_camera must be int64 [N]")
+            if self.point_uv.shape != (len(self.points), 2) or self.point_uv.dtype != torch.long:
+                raise ValueError("point_uv must be int64 [N,2]")
         for count, indices in self.center_indices.items():
             if not isinstance(count, int) or isinstance(count, bool) or count < 1:
                 raise ValueError("center_indices keys must be positive integer quotas")
@@ -102,6 +123,9 @@ class Frame:
             proprio=self.proprio.to(device),
             previous_action=self.previous_action.to(device),
             center_indices={count: indices.to(device) for count, indices in self.center_indices.items()},
+            visual_features=None if self.visual_features is None else self.visual_features.to(device),
+            point_camera=None if self.point_camera is None else self.point_camera.to(device),
+            point_uv=None if self.point_uv is None else self.point_uv.to(device),
         )
 
 

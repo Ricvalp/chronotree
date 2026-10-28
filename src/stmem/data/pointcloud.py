@@ -10,6 +10,8 @@ from torch import Tensor
 # World tabletop is z=0, Panda base x=-0.615; geometry-derived, task-independent.
 DEFAULT_CROP = ((-0.9, -0.75, -0.05), (0.75, 0.75, 1.25))
 CALIBRATION_VERSION = "cv_world_to_camera_mm_v1"
+POINT_PROVENANCE_VERSION = "selected_xyzrgb_camera_uv_v1"
+CAMERA_NAMES = ("front", "wrist")
 POINT_SAMPLING_VERSION = "above_table_xy_balanced_v2"
 DEFAULT_POINT_SETTINGS = {
     "sampling": "balanced",
@@ -51,6 +53,13 @@ def point_sampler_settings(config: Mapping | None = None) -> dict:
 
 def backproject(rgb, depth_mm, intrinsic, extrinsic, *, crop=DEFAULT_CROP, max_depth_m=4.0) -> Tensor:
     """Return valid xyzrgb points; reject signed-depth invalids before projection."""
+    return _backproject_with_pixels(rgb, depth_mm, intrinsic, extrinsic, crop=crop, max_depth_m=max_depth_m)[
+        0
+    ]
+
+
+def _backproject_with_pixels(rgb, depth_mm, intrinsic, extrinsic, *, crop=DEFAULT_CROP, max_depth_m=4.0):
+    """Also return original integer (u,v), following exactly the XYZRGB filtering."""
     depth = torch.as_tensor(np.asarray(depth_mm).copy(), dtype=torch.float32)
     if depth.ndim == 3 and depth.shape[-1] == 1:
         depth = depth.squeeze(-1)
@@ -67,7 +76,7 @@ def backproject(rgb, depth_mm, intrinsic, extrinsic, *, crop=DEFAULT_CROP, max_d
     valid = torch.isfinite(z) & (z > 0) & (z < max_depth_m)
     v, u = torch.where(valid)
     if len(u) == 0:
-        return torch.empty((0, 6), dtype=torch.float32)
+        return torch.empty((0, 6), dtype=torch.float32), torch.empty((0, 2), dtype=torch.long)
     pixels = torch.stack((u.float(), v.float(), torch.ones_like(u).float()), -1)
     camera = (pixels @ torch.linalg.inv(k).T) * z[v, u, None]
     world = (camera - e[:, 3]) @ e[:, :3]
@@ -76,7 +85,7 @@ def backproject(rgb, depth_mm, intrinsic, extrinsic, *, crop=DEFAULT_CROP, max_d
     if crop is not None:
         lo, hi = map(lambda a: torch.as_tensor(a, dtype=torch.float32), crop)
         good &= ((world >= lo) & (world <= hi)).all(-1)
-    return points[good]
+    return points[good], torch.stack((u, v), dim=-1)[good]
 
 
 def _canonical_voxel_indices(points: Tensor, voxel_size: float) -> np.ndarray:
@@ -134,7 +143,8 @@ def sample_points(
     table_z: float = 0.0,
     height_margin: float = 0.005,
     cell_size: float = 0.1,
-) -> tuple[Tensor, Tensor]:
+    return_indices: bool = False,
+) -> tuple[Tensor, Tensor] | tuple[Tensor, Tensor, Tensor]:
     """Voxelize, prioritize elevated geometry, then retain broad scene coverage.
 
     The default reserves up to 75% of slots for points above calibrated table z
@@ -178,6 +188,10 @@ def sample_points(
     if len(p):
         out[: len(p)] = torch.from_numpy(p.copy())
         mask[: len(p)] = True
+    if return_indices:
+        indices = torch.full((count,), -1, dtype=torch.long)
+        indices[: len(p)] = torch.from_numpy(raw_indices[selected].copy())
+        return out, mask, indices
     return out, mask
 
 
@@ -216,6 +230,38 @@ def rgbd_to_points(
         height_margin=height_margin,
         cell_size=cell_size,
     )
+
+
+def rgbd_to_points_with_provenance(observation: dict, calibration: dict, **kwargs):
+    """Canonical XYZRGB plus observing-camera index and original integer pixels.
+
+    Returns ``points[N,6], valid[N], camera[N], uv[N,2]``. Front is 0 and
+    wrist is 1. Padding camera/uv are -1. Provenance is carried by selection
+    indices, never concatenated into the geometry used to select points.
+    Consequently voxel tie-breaking and point order are identical to
+    :func:`rgbd_to_points`, including overlapping camera observations.
+    """
+    crop = kwargs.pop("crop", DEFAULT_CROP)
+    max_depth_m = kwargs.pop("max_depth_m", 4.0)
+    clouds, cameras, pixels = [], [], []
+    for index, camera in enumerate(CAMERA_NAMES):
+        points, uv = _backproject_with_pixels(
+            observation[f"{camera}_rgb"],
+            observation[f"{camera}_depth"],
+            calibration[f"{camera}_camera_intrinsic"],
+            observation[f"{camera}_camera_extrinsic"],
+            crop=crop,
+            max_depth_m=max_depth_m,
+        )
+        clouds.append(points)
+        cameras.append(torch.full((len(points),), index, dtype=torch.long))
+        pixels.append(uv)
+    points, valid, indices = sample_points(torch.cat(clouds), return_indices=True, **kwargs)
+    source = torch.full((len(points),), -1, dtype=torch.long)
+    uv = torch.full((len(points), 2), -1, dtype=torch.long)
+    source[valid] = torch.cat(cameras)[indices[valid]]
+    uv[valid] = torch.cat(pixels)[indices[valid]]
+    return points, valid, source, uv
 
 
 def proprioception(observation: dict) -> Tensor:

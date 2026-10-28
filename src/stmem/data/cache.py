@@ -17,7 +17,7 @@ FORMAT = 1
 
 
 def cache_identity(cfg, teacher_path, data_identity):
-    return {
+    identity = {
         "format": FORMAT,
         "teacher_sha256": file_sha256(teacher_path),
         "geometry": cfg["geometry"],
@@ -45,6 +45,17 @@ def cache_identity(cfg, teacher_path, data_identity):
         "prefix_convention": "history_strictly_before_current_v1",
         "code": source_revision()["source_sha256"],
     }
+    # Preserve the legacy omission semantics; new input contracts must never
+    # share a cache with the old state/command or XYZRGB recipe.
+    from stmem.vision.frozen import visual_feature_identity, resolve_visual_features
+
+    for key, default in (("proprioception_mode", "all"), ("condition_on_previous_commands", True)):
+        if key in cfg["model"]:
+            identity["model_encoder"][key] = cfg["model"].get(key, default)
+    if resolve_visual_features(cfg)["mode"] != "xyzrgb":
+        identity["model_encoder"]["visual_features"] = visual_feature_identity(cfg)
+        identity["model_encoder"]["feature_projection_dim"] = resolve_visual_features(cfg)["projection_dim"]
+    return identity
 
 
 def write_records(group, records):

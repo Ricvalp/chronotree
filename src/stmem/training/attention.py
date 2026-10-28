@@ -14,12 +14,16 @@ from stmem.models.policy import choose_records
 from stmem.tracking import _preserve_rng
 
 
-def context_groups(evidence, records, device):
+def context_groups(evidence, records, device, *, current_state_enabled=True):
     """Exactly the token order produced by MemoryPolicy.context, without padding."""
     ids = {name: index for index, name in enumerate(GROUP_NAMES)}
     groups = [ids["current_visual"]] * len(evidence.current_records)
-    groups.extend(ids[name] for name in ("current_state", "goal", "clock"))
-    groups.extend(ids["history_visual" if record.modality == "visual" else "history_event"] for record in records)
+    if current_state_enabled:
+        groups.append(ids["current_state"])
+    groups.extend(ids[name] for name in ("goal", "clock"))
+    groups.extend(
+        ids["history_visual" if record.modality == "visual" else "history_event"] for record in records
+    )
     return torch.tensor(groups, dtype=torch.long, device=device)
 
 
@@ -89,7 +93,12 @@ class PolicyAttention:
                         with torch.autocast(policy.device.type, enabled=False):
                             evidence = self.cache.evidence(inputs) if self.cache else policy.encode(inputs)
                         records = choose_records(evidence, method, self.cfg["model"]["budget"]).records
-                        groups = context_groups(evidence, records, policy.device)
+                        groups = context_groups(
+                            evidence,
+                            records,
+                            policy.device,
+                            current_state_enabled=policy.current_state_enabled,
+                        )
                         noise_seed = self.cfg["seed"] * 1009 + index
                         noise = torch.randn(
                             (self.cfg["model"]["horizon"], 8),
@@ -97,7 +106,9 @@ class PolicyAttention:
                         ).to(policy.device)
                         with (
                             torch.autocast(policy.device.type, dtype=dtype, enabled=self.precision != "fp32"),
-                            CrossAttentionDiagnostics(policy.decoder, groups, capture_on_call=calls) as capture,
+                            CrossAttentionDiagnostics(
+                                policy.decoder, groups, capture_on_call=calls
+                            ) as capture,
                         ):
                             prediction = policy.predict(evidence, records, noise=noise)
                         if not torch.isfinite(prediction).all():
@@ -145,6 +156,4 @@ class PolicyAttention:
             },
             step=step,
         )
-        self.tracker.summary(
-            {"attention/seconds_total": self.seconds, "attention/events": self.events}
-        )
+        self.tracker.summary({"attention/seconds_total": self.seconds, "attention/events": self.events})

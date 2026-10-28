@@ -110,6 +110,13 @@ def validate_config(cfg: dict) -> None:
     m, t = cfg["model"], cfg["training"]
     if not isinstance(m.get("condition_on_previous_joint_commands", True), bool):
         raise ValueError("model.condition_on_previous_joint_commands must be boolean")
+    if not isinstance(m.get("condition_on_previous_commands", True), bool):
+        raise ValueError("model.condition_on_previous_commands must be boolean")
+    if m.get("proprioception_mode", "all") not in ("all", "current_only", "none"):
+        raise ValueError("model.proprioception_mode must be all, current_only, or none")
+    from stmem.vision.frozen import resolve_visual_features
+
+    resolve_visual_features(cfg)
     from stmem.data.pointcloud import point_sampler_settings
     from stmem.data.center_sampling import center_sampler_settings, center_counts
 

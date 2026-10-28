@@ -128,12 +128,22 @@ class CachedScorer:
         return self.feature_transferred_bytes + self.key_transferred_bytes + self.query_transferred_bytes
 
 
-def query_features(current_mean, text, current, clocks, budget, *, condition_on_previous_joint_commands=True):
+def query_features(
+    current_mean,
+    text,
+    current,
+    clocks,
+    budget,
+    *,
+    condition_on_previous_joint_commands=True,
+    condition_on_previous_commands=True,
+    proprioception_mode="all",
+):
     """Only allowed observations. No target, noisy action, episode ID, or duration."""
     device = current_mean.device
     extra = torch.tensor(
         [
-            float(current.action_available),
+            float(current.action_available) if condition_on_previous_commands else 0.0,
             clocks.get("conditioning", 0.0) / 100.0,
             clocks.get("execution", 0.0) / 100.0,
             math.log1p(budget),
@@ -144,10 +154,13 @@ def query_features(current_mean, text, current, clocks, budget, *, condition_on_
         [
             current_mean,
             text,
-            current.proprio.to(device).float(),
+            current.proprio.to(device).float()
+            if proprioception_mode != "none"
+            else torch.zeros_like(current.proprio, device=device).float(),
             command_conditioning(
                 current.previous_action.to(device).float(),
                 include_joint_commands=condition_on_previous_joint_commands,
+                include_commands=condition_on_previous_commands,
             ),
             extra,
         ]

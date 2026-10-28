@@ -110,6 +110,28 @@ def validate_policy_config(checkpoint_cfg: dict, cfg: dict) -> None:
         "mass_bias",
     )
     mismatches = []
+    from stmem.vision.frozen import visual_feature_identity, resolve_visual_features
+
+    for key, default in (("proprioception_mode", "all"), ("condition_on_previous_commands", True)):
+        recorded = checkpoint_cfg.get("model", {}).get(key, default)
+        requested = cfg.get("model", {}).get(key, default)
+        if key == "condition_on_previous_commands" and (
+            not isinstance(recorded, bool) or not isinstance(requested, bool)
+        ):
+            raise ValueError(f"model.{key} must be boolean")
+        if key == "proprioception_mode" and (
+            recorded not in ("all", "current_only", "none")
+            or requested not in ("all", "current_only", "none")
+        ):
+            raise ValueError("model.proprioception_mode must be all, current_only, or none")
+        if recorded != requested:
+            mismatches.append(f"model.{key}: checkpoint={recorded!r}, requested={requested!r}")
+    if visual_feature_identity(checkpoint_cfg) != visual_feature_identity(cfg):
+        mismatches.append("model.visual_features backbone/extraction identity differs from checkpoint")
+    if resolve_visual_features(checkpoint_cfg).get("projection_dim") != resolve_visual_features(cfg).get(
+        "projection_dim"
+    ):
+        mismatches.append("model.visual_features.projection_dim differs from checkpoint")
     # Older checkpoints used all command channels; omission means the original
     # contract, rather than an unspecified setting that can change at evaluation.
     key = "condition_on_previous_joint_commands"
