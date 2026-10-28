@@ -51,11 +51,25 @@ def positive_seconds(value: str) -> float:
     return parsed
 
 
+def nonnegative_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer") from error
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer")
+    return parsed
+
+
 def scientific_training_command(command: list[str]) -> list[str]:
     """Remove only validated runtime logging flag/value pairs from identity."""
     if command[1:3] != ["-m", "stmem.train"]:
         return command
-    validators = {"--log-every": positive_integer, "--progress-every-seconds": positive_seconds}
+    validators = {
+        "--log-every": positive_integer,
+        "--progress-every-seconds": positive_seconds,
+        "--attention-every": nonnegative_integer,
+    }
     result = []
     index = 0
     while index < len(command):
@@ -219,6 +233,7 @@ def build_jobs(
     log_every: int | None = None,
     progress_every_seconds: float | None = None,
     teacher_config: Path | None = None,
+    attention_every: int | None = None,
 ) -> list[Job]:
     jobs: list[Job] = []
     gpu_count = PROFILES[profile]
@@ -266,6 +281,8 @@ def build_jobs(
                     item += ["--log-every", str(log_every)]
                 if progress_every_seconds is not None and stage != "router":
                     item += ["--progress-every-seconds", str(progress_every_seconds)]
+                if attention_every is not None and stage != "router":
+                    item += ["--attention-every", str(attention_every)]
         jobs.append(
             Job(
                 name=name,
@@ -794,6 +811,12 @@ def main() -> None:
         help="Runtime policy accumulation progress interval; not passed to router training",
     )
     parser.add_argument(
+        "--attention-every",
+        type=nonnegative_integer,
+        help="Policy attention diagnostic interval in optimizer updates (trainer default: 10; 0 disables); "
+        "safe to change on resume and not passed to router training",
+    )
+    parser.add_argument(
         "--only", nargs="+", help="Stage categories or exact job names, without rerunning ancestors"
     )
     parser.add_argument("--output-dir", type=Path)
@@ -877,6 +900,7 @@ def main() -> None:
         log_every=args.log_every,
         progress_every_seconds=args.progress_every_seconds,
         teacher_config=teacher_config,
+        attention_every=args.attention_every,
     )
     # Configuration provenance contains bounded label totals explicitly.
     for seed in manifest["seeds"]:

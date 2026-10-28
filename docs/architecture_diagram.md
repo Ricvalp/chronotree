@@ -79,6 +79,16 @@ reused; targets and terminal masks are assembled for the configured horizon.
 The main diagram and its core parameter table remain the 16-action default;
 the JSON snapshot records the longer-horizon variant separately.
 
+The decoder page also describes the optional attention diagnostics. Every ten
+optimizer updates by default, fixed training-scene probes generate action
+chunks from fixed noise and measure cross-attention at the final Euler
+evaluation (`u=7/8` for eight integration steps). The telemetry distinguishes
+current visual/state, goal/clock and historical visual/event tokens. It reports
+group mass, token-count baselines and normalized conditional entropy, computed
+within each head before averaging. This instrumentation does not add model
+parameters or change the decoder's SDPA computation. Its interval is a runtime
+logging control, independent of checkpoint architecture/training hashes.
+
 ## Prepared geometry and token counts
 
 The revised preparation writes `prepared_balanced_v2/`, preserving the previous
@@ -180,3 +190,10 @@ snapshot. All three artifacts were regenerated while retaining the core
 16-action diagram. The snapshot/XML check and Ruff passed. Chromium rendered
 the changed decoder page; its text bounds fit every shape and the full page was
 visually inspected. This verifies the diagram, not B200 memory or throughput.
+
+Later on 2026-10-28, a separate attention-telemetry note was added below the H32
+experiment. All three artifacts were regenerated, with no architecture or
+parameter-count change. The snapshot/XML and Ruff checks passed. Chromium
+opened the actual HTML and rendered the decoder page; the added note and all
+other text fit their shapes, and the full page was visually inspected. Local
+layout evidence is retained in `runs/architecture_diagram/attention/`.

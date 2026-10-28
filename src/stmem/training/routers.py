@@ -50,7 +50,7 @@ def _validation_ranking_pairs(context_arrays, validation_ids, validation_gain, e
 
 
 def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
-    logging_options = resolve_logging(cfg, log_every=log_every)
+    logging_options = resolve_logging(cfg, log_every=log_every, attention_every=0)
     validation_every = positive_log_every(cfg["training"]["log_every"])
     if int(os.environ.get("WORLD_SIZE", "1")) > 1:
         raise ValueError("Small router training uses one worker; select the one-GPU router resource profile")

@@ -1096,3 +1096,112 @@ recovery allocation requests four GPUs on `aiq` (`--gres=gpu:4`), 64 CPU cores,
 Slurm decides when resources become available. No new site file, run root or
 dataset preparation is required. Resuming does not resolve an underlying node,
 driver or filesystem failure.
+
+## Attention diagnostics and resuming the H16/H32 teachers
+
+Policy attention diagnostics default to every ten completed optimizer updates.
+Use `--attention-every 10` on `hpc/plan.py` or `python -m stmem.train` to make the
+interval explicit; `--attention-every 0` disables these probes. This runtime
+option does not modify model/training provenance, so it can change on resume.
+Ordinary scalar logging and checkpoint/point-cloud media intervals remain
+independent.
+
+The probes reuse fixed training examples and fixed Gaussian action noise. Each
+probe encodes its causal context, performs the configured action-generation
+integration, and measures cross-attention at the last Euler evaluation. With
+eight flow steps this is `u=7/8`; it is not an average over the entire flow path.
+All decoder layers, heads and predicted-action queries contribute. Expert
+target actions do not enter the probe, and current observations remain separate
+from strictly earlier execution history. These are training-scene diagnostics,
+not held-out benchmark results.
+
+Probe identities and decision indices are recorded. The existing scene rule
+chooses an early valid decision at or after twice the action horizon, when
+available; H16 and H32 runs can therefore use different decision times. They
+are fixed within each run, not a matched cross-horizon benchmark subset.
+
+Attention mass is summed over current visual tokens, the current state token,
+goal and clock tokens, historical visual tokens, and historical robot-event
+tokens. Historical conditioning and execution tokens both belong to history.
+The six groups partition the context, so their masses sum to one. Aggregate
+`current` includes current visual/state tokens; aggregate `history` includes
+historical visual/event tokens. Goal and clock are outside these two aggregates.
+For each group, the uniform-attention baseline is its valid-token fraction
+`N_group / N_total`; relative mass divides measured mass by that baseline.
+Conditional entropy renormalizes attention within the group, then divides by
+`log(N_group)`. It is computed per head/query before averaging, with zero
+entropy for singleton groups and undefined entropy omitted for empty groups.
+Attention concentration alone does not establish causal influence on actions.
+
+The compact W&B `attention/` dashboard includes total current/history mass,
+their visual/state/event components, visual-group entropy, and visual mass
+relative to uniform attention. `attention/entropy_all` measures concentration
+over the entire context. `attention/seconds` reports probe cost. Additional
+group baselines and auxiliary-token metrics are logged but hidden from automatic
+panel creation; they remain available for custom panels. No point-cloud media
+or per-head panel is uploaded at this ten-step cadence.
+Per-scene and per-layer statistics are retained in
+`<run-root>/seed0/teacher/attention.jsonl`, alongside the ordinary metrics and
+tracking journals. Teacher probes use all history leaves; compact-policy probes
+use deterministic UNIFORM contexts. Perceiver attention is not labeled with
+visual/event groups because its resampled tokens mix those modalities.
+
+A bounded local check on an RTX 5000 Ada, using the existing 16k checkpoint and
+two VideoUnmask training scenes with 3,269 context tokens each, measured 0.806
+seconds for a warm complete probe (0.081 seconds per update at interval ten).
+The same inference without attention instrumentation averaged 0.768 seconds.
+This is a measured diagnostic example, not a B200 training-throughput estimate;
+inspect `attention/seconds` on the actual resumed jobs.
+
+To add these curves to the two from-scratch teachers already running, retain
+their original run roots and W&B `tracking.json` files. After pushing the edits,
+request a checkpointed stop of both old allocations before updating the HPC
+checkout. First identify their job IDs with `squeue -u "$USER"`; verify each job's command
+and output paths with `scontrol show job JOB_ID`. Replace the placeholders here
+with those two numeric IDs:
+
+```bash
+scancel --signal=USR1 --batch H16_JOB_ID H32_JOB_ID
+squeue -u "$USER"
+```
+
+The batch wrapper handles `USR1` by creating a stop marker. The trainer finishes
+its current optimizer update, writes `last.pt`, then exits with the expected
+partial-stage code 75. Wait until both jobs have left the queue before resuming.
+An ordinary immediate cancellation may lose work since the latest periodic
+checkpoint. If a job has already stopped, use its existing `last.pt`.
+
+Pull the updated code on the HPC after both jobs have stopped, then prepare the
+recovery jobs below.
+
+For the run names used in the H16 and H32 launch instructions, this loop renders
+both recovery jobs without submitting:
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+
+for run_name in \
+  teacher_b200_b128_m8_blocks32_no_previous_joint_commands \
+  teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32
+do
+  test -s "runs/${run_name}/seed0/teacher/last.pt" || break
+  test -s "runs/${run_name}/seed0/teacher/tracking.json" || break
+  .venv/bin/python hpc/plan.py \
+    --site hpc/site_b200_4gpu.env --profile b200_4gpu \
+    --teacher-config "configs/${run_name}.yaml" \
+    --plan core_seed0 --only seed0_teacher \
+    --run-root "runs/${run_name}" \
+    --output-dir "hpc/generated/${run_name}" \
+    --log-every 1 --progress-every-seconds 30 \
+    --attention-every 10 --resume --dry-run || break
+done
+```
+
+Inspect the two plans, then run the loop with `--submit` replacing `--dry-run`.
+It submits one job per run, each with four GPUs on `aiq` using `--gres=gpu:4`,
+64 CPUs, 128G RAM and a fresh 48-hour allocation limit. Each loads its own saved
+optimizer step from `last.pt`, retains the original 100k endpoint and continues
+its existing W&B run. The H16 and H32 model shapes are not interchangeable.
+No new site file, run root or prepared dataset is needed. A different original
+run/generated directory must be substituted consistently rather than creating
+an empty recovery directory.

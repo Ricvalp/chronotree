@@ -13,6 +13,42 @@ from stmem.tracking import _preserve_rng
 from stmem.visualization.scenes import build_action_scene
 
 
+def fixed_policy_examples(data, count=2):
+    """Load fixed probes without changing the training sampler or episode LRU."""
+    by_episode = {}
+    for task in data.tasks:
+        for episode, index in data.candidates[task]:
+            by_episode.setdefault(episode, []).append(index)
+    episodes = list(by_episode)
+    chosen = episodes[:1] if count == 1 else episodes[:: max(1, len(episodes) - 1)]
+    examples = []
+    for episode in chosen:
+        candidates = by_episode[episode]
+        # Same early-prefix rule as the point-cloud diagnostics, independent of
+        # model results. Keep every conditioning and preceding execution frame.
+        index = next((i for i in candidates if i >= 2 * data.horizon), candidates[0])
+        if data.synthetic:
+            from stmem.data.dataset import synthetic_episode
+
+            task, number, seed = data.refs[episode]
+            options = data.cfg["data"]
+            loaded = synthetic_episode(
+                options.get("synthetic_execution_frames", 12),
+                options.get("synthetic_conditioning_frames", 5),
+                data.cfg["model"]["points"],
+                seed,
+            )
+            loaded.task, loaded.episode_id = task, f"episode_{number}"
+        else:
+            loaded = data.dataset.load_episode(data.refs[episode])
+        examples.append(loaded.decision(index, data.horizon))
+    if len(examples) < count and len(episodes) == 1:
+        alternatives = [i for i in by_episode[episodes[0]] if i != examples[0].index]
+        if alternatives:
+            examples.append(loaded.decision(alternatives[0], data.horizon))
+    return examples
+
+
 class PolicyScenes:
     def __init__(self, cfg, data, policy, tracker, *, stage, cache=None, precision="fp32"):
         options = cfg.get("tracking", {}).get("scenes", {})
@@ -31,27 +67,7 @@ class PolicyScenes:
             )
 
     def _examples(self):
-        # Use early valid decisions from distinct episodes/tasks when available.
-        # No sample_position/episode calls: never perturb the sampler or its LRU.
-        by_episode = {}
-        for task in self.data.tasks:
-            for episode, index in self.data.candidates[task]:
-                by_episode.setdefault(episode, []).append(index)
-        episodes = list(by_episode)
-        chosen = episodes[:1] if self.count == 1 else episodes[:: max(1, len(episodes) - 1)]
-        examples = []
-        for episode in chosen:
-            candidates = by_episode[episode]
-            # Two chunks into execution includes a short causal history beyond
-            # reset/initial settling. This fixed rule never ranks model results.
-            index = next((i for i in candidates if i >= 2 * self.data.horizon), candidates[0])
-            loaded = self.data.dataset.load_episode(self.data.refs[episode])
-            examples.append(loaded.decision(index, self.data.horizon))
-        if len(examples) < self.count and len(episodes) == 1:
-            alternatives = [i for i in by_episode[episodes[0]] if i != examples[0].index]
-            if alternatives:
-                examples.append(loaded.decision(alternatives[0], self.data.horizon))
-        return examples
+        return fixed_policy_examples(self.data, self.count)
 
     def log(self, step):
         if not self.enabled:

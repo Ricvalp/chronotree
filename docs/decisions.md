@@ -878,3 +878,64 @@
     retains its core H16 description and documents the optional H32 experiment
     separately. These checks do not measure full-history B200 memory, throughput,
     or policy quality. No real-data training or Slurm job was launched locally.
+
+37. **Frequent, fixed-scene cross-attention telemetry (28 October 2026).**
+    Teacher attention probes run every ten completed optimizer updates by
+    default, independently of scalar logging and checkpoint/media intervals.
+    `--attention-every` is a runtime override accepted by the trainer and
+    planner; zero disables it. It is recorded as logging metadata rather than
+    changing scientific configuration hashes or model state, allowing the
+    existing H16 and H32 command-ablation teachers to resume their own `last.pt`
+    and W&B identities.
+
+    Rank zero observes the same fixed training examples used by the diagnostic
+    point-cloud scenes, with fixed Gaussian action noise. Expert targets are
+    cleared before inference; the training sampler, model modes and RNG state
+    are preserved. Each probe uses FP32 observation encoders and the configured
+    autocast precision for context/action decoding. Cross-attention is measured
+    on the final Euler evaluation (`u=7/8` with eight steps), across every decoder
+    layer, head and predicted-action query. Other ranks wait before beginning
+    the next optimizer update. Geometry inputs can be retained, but learned
+    visual features are recomputed from the current weights.
+
+    The six disjoint groups are current visual, current state, goal, clock,
+    historical visual and historical robot-event tokens. Their masses sum to
+    one. Current/history unions exclude goal and clock. Conditional group
+    entropy is computed per head/query, normalized by the log of the group's
+    valid-token count, then averaged. Singleton entropy is zero; empty-group
+    entropy and relative mass are undefined and omitted. The uniform-token
+    baseline and measured-to-uniform ratio distinguish actual concentration
+    from the much larger number of historical tokens. Attention statistics
+    remain descriptive and do not replace action-sensitivity tests.
+
+    Detached hooks reuse the actual decoder Q/K projections and reduce score
+    statistics in bounded key chunks. The SDPA output, trainable parameter set,
+    target construction and causal boundaries are unchanged. W&B exposes a
+    compact set of attention curves; additional scalar details remain available
+    without creating a separate panel for every head/layer. Probe runtime is
+    recorded rather than assuming the extra work is free. Full-history B200
+    overhead must be measured on the resumed jobs.
+
+    Verification: 195 targeted checks pass, including tracking, logging,
+    bit-identical training/resume state with changed diagnostic cadence, scene
+    probes, attention statistics, planner controls, routers, teacher forks and
+    batched/DDP gradients. An eleven-update synthetic CPU run logs attention
+    exactly at update ten independently of scalar logging. Two-rank CPU runs
+    with probes disabled versus every update retain bit-identical model, Adam,
+    scheduler, scaler, sampler, per-rank RNG and provenance state. Additional
+    probe checks cover target isolation, fixed input reuse, learned-feature
+    recomputation, model/gradient/RNG preservation and cleanup after failures.
+    The actual-device doctor passes FP32, BF16 and FP16. The two H16/H32
+    local-path resume dry-runs each render
+    one four-GPU `aiq` job with the existing checkpoint and tracking identity,
+    unchanged scientific config, 64 CPUs, 128G host RAM and 48 hours; no Slurm
+    submission was performed. Actual-checkpoint inference on the RTX 5000 Ada
+    used two released VideoUnmask training scenes at decision 32, each with
+    3,269 context tokens. The first probe took 1.329 seconds; two warm probes
+    averaged 0.806 seconds, compared with 0.768 seconds for the same inference
+    without attention instrumentation. At ten-update spacing the measured warm
+    total probe cost amortizes to about 0.081 seconds per optimizer update on
+    this device and these scenes. The check performed no training updates and
+    used offline W&B. These numbers do not establish B200 overhead or behavior
+    on the full task set. Detailed local evidence is retained under
+    `runs/inspection/attention_logging_20261028/`.

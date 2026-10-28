@@ -268,7 +268,9 @@ def test_real_sdk_offline_files_contain_metrics_and_resumed_progress(monkeypatch
         projects.update(r.run.project for r in records if r.HasField("run"))
         for record in records:
             if record.HasField("metric") and record.metric.options.hidden:
-                hidden.add(record.metric.name)
+                hidden.add(record.metric.name or record.metric.glob_name)
+            if record.HasField("metric") and record.metric.name.startswith("attention/"):
+                assert record.metric.step_metric == "progress/step"
             if record.HasField("history"):
                 histories.append(
                     {
@@ -283,4 +285,9 @@ def test_real_sdk_offline_files_contain_metrics_and_resumed_progress(monkeypatch
     assert [h["progress/step"] for h in histories] == [5, 3]
     assert [h["_step"] for h in histories] == [0, 1]
     assert [h[metric] for h in histories] == [1.0, 0.5]
-    assert hidden == ({"progress/step", "tracking/attempt"} if job_type == "evaluation" else set())
+    if job_type == "evaluation":
+        assert hidden == {"progress/step", "tracking/attempt"}
+    else:
+        assert {"attention/mass_goal", "attention/uniform_mass_history", "attention/scenes"} <= hidden
+        assert not {"attention/mass_current", "attention/mass_history", "attention/entropy_all"} & hidden
+        assert all(name.startswith("attention/") for name in hidden)

@@ -214,6 +214,7 @@ def test_router_frequent_scalars_preserve_validation_cadence_and_weights(tmp_pat
     assert tracker.options["metadata"]["logging"] == {
         "log_every": 1,
         "progress_every_seconds": None,
+        "attention_every": 0,
         "validation_every": 3,
     }
     validation_logs = {step: row for step, row in tracker.logs if "conditional_label_validation_loss" in row}
@@ -263,11 +264,23 @@ def test_runtime_logging_rejects_invalid_progress_interval(value):
         resolve_logging({"training": {"log_every": 50}}, progress_every_seconds=value)
 
 
+@pytest.mark.parametrize("value", [-1, True, 1.5, "1.5", "nan", "inf", "no"])
+def test_runtime_logging_rejects_invalid_attention_interval(value):
+    with pytest.raises(argparse.ArgumentTypeError, match="nonnegative integer"):
+        resolve_logging({"training": {"log_every": 50}}, attention_every=value)
+
+
 def test_runtime_logging_resolution_preserves_scientific_configuration():
     cfg = {"training": {"log_every": 50}}
     before = deepcopy(cfg)
-    assert resolve_logging(cfg) == {"log_every": 50, "progress_every_seconds": None}
-    assert resolve_logging(cfg, "1", "0.5") == {"log_every": 1, "progress_every_seconds": 0.5}
+    assert resolve_logging(cfg) == {"log_every": 50, "progress_every_seconds": None, "attention_every": 10}
+    assert resolve_logging(cfg, "1", "0.5") == {
+        "log_every": 1, "progress_every_seconds": 0.5, "attention_every": 10,
+    }
+    assert resolve_logging(cfg, attention_every="0") == {
+        "log_every": 50, "progress_every_seconds": None, "attention_every": 0,
+    }
+    assert resolve_logging(cfg, attention_every="25")["attention_every"] == 25
     assert cfg == before
 
 

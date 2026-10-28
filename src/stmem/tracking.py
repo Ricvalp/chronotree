@@ -201,6 +201,29 @@ class RunTracker:
                 )
                 self.run.define_metric("progress/step", hidden=self.job_type == "evaluation")
                 self.run.define_metric("*", step_metric="progress/step", step_sync=False)
+                if self.job_type in ("teacher", "compact"):
+                    # Keep the automatic dashboard compact. Full group baselines
+                    # and metrics remain logged and available for custom panels.
+                    from stmem.models.attention_diagnostics import GROUP_NAMES, GROUP_UNIONS
+
+                    visible = {
+                        "mass_current", "mass_history", "mass_current_visual", "mass_current_state",
+                        "mass_history_visual", "mass_history_event", "entropy_all",
+                        "entropy_current_visual", "entropy_history_visual",
+                        "relative_mass_current_visual", "relative_mass_history_visual", "seconds",
+                    }
+                    names = {
+                        f"{statistic}_{group}"
+                        for statistic in ("mass", "uniform_mass", "relative_mass", "entropy")
+                        for group in (*GROUP_NAMES, *GROUP_UNIONS)
+                    } | {"entropy_all", "seconds", "scenes"}
+                    for key in sorted(names):
+                        # Explicit axes/visibility avoid wildcard precedence and
+                        # reset any older metric definition when resuming.
+                        self.run.define_metric(
+                            f"attention/{key}", step_metric="progress/step", step_sync=False,
+                            hidden=key not in visible, overwrite=True,
+                        )
                 if self.job_type == "evaluation":
                     # Keep the dashboard focused on success and rollout progress;
                     # these bookkeeping metrics still exist for axes and restarts.

@@ -335,6 +335,55 @@ def test_teacher_resume_can_use_frozen_yaml_after_source_defaults_change(plannin
     assert resumed["signature"] == initial["signature"]
 
 
+@pytest.mark.parametrize("suffix,horizon", [("", 16), ("_h32", 32)])
+def test_b200_command_ablation_resume_enables_attention_without_replacing_run(
+    planning, tmp_path, suffix, horizon,
+):
+    planner, invoke, repo, _, generated = planning
+    stem = "teacher_b200_b128_m8_blocks32_no_previous_joint_commands" + suffix
+    run_root = repo / "runs" / stem
+    site = tmp_path / "site.env"
+    site.write_text(site.read_text() + "STMEM_PARTITION=aiq\nSTMEM_GPU_TYPE=\n"
+                    "STMEM_CPUS=64\nSTMEM_MEM=128G\nSTMEM_WALLTIME=48:00:00\n")
+    options = [
+        "--profile", "b200_4gpu", "--only", "seed0_teacher",
+        "--teacher-config", f"configs/{stem}.yaml", "--run-root", f"runs/{stem}",
+    ]
+    initial = invoke(*options)["jobs"][0]
+    initial_config = planner.resolved_config(Path(option(initial["commands"][0], "--config")))
+    directory = run_root / "seed0/teacher"
+    directory.mkdir(parents=True)
+    checkpoint = directory / "last.pt"
+    checkpoint.write_bytes(b"Presence-only fixture; training checkpoint validation runs in trainer")
+    tracking = directory / "tracking.json"
+    tracking.write_text('{"id":"existing-wandb-run"}\n')
+    before = {p: p.read_bytes() for p in (checkpoint, tracking)}
+
+    resumed = invoke(*options, "--resume", "--attention-every", "10")
+    assert resumed["job_count"] == 1
+    job = resumed["jobs"][0]
+    command = job["commands"][0]
+    assert option(command, "--resume") == str(checkpoint)
+    assert option(command, "--attention-every") == "10"
+    assert job["signature"] == initial["signature"]
+    cfg = planner.resolved_config(Path(option(command, "--config")))
+    assert cfg == initial_config
+    assert cfg["model"]["horizon"] == horizon and cfg["model"]["execute"] == 4
+    assert cfg["model"]["condition_on_previous_joint_commands"] is False
+    assert cfg["training"]["effective_batch"] == 128 and cfg["training"]["microbatch"] == 8
+    assert cfg["training"]["encoder_block_batch_size"] == 32
+    assert cfg["training"]["steps"] == 100000 and cfg["training"]["lr"] == 0.0001
+    script = Path(job["script"]).read_text()
+    for directive in (
+        "--partition=aiq", "--gres=gpu:4", "--cpus-per-task=64", "--mem=128G", "--time=48:00:00",
+    ):
+        assert f"#SBATCH {directive}" in script
+    assert "--nproc-per-node=4" in script and "--attention-every 10" in script
+    subprocess.run(["bash", "-n", job["script"]], check=True)
+    assert {p: p.read_bytes() for p in before} == before
+    assert not (generated / "submitted.json").exists()
+
+
 def test_dry_run_forwards_runtime_flags_without_changing_configs_or_signatures(planning):
     _, invoke, _, _, generated = planning
     initial = invoke()
@@ -343,7 +392,8 @@ def test_dry_run_forwards_runtime_flags_without_changing_configs_or_signatures(p
     for job in initial["jobs"]:
         for command in job["commands"]:
             assert "--log-every" not in command and "--progress-every-seconds" not in command
-    changed = invoke("--log-every", "1", "--progress-every-seconds", "2.5")
+            assert "--attention-every" not in command
+    changed = invoke("--log-every", "1", "--progress-every-seconds", "2.5", "--attention-every", "10")
     assert {
         path.name: path.read_bytes() for path in (generated / "configs").glob("*.yaml")
     } == original_configs
@@ -355,14 +405,18 @@ def test_dry_run_forwards_runtime_flags_without_changing_configs_or_signatures(p
                 assert option(command, "--log-every") == "1"
                 if job["stage"] == "router":
                     assert "--progress-every-seconds" not in command
+                    assert "--attention-every" not in command
                 else:
                     assert option(command, "--progress-every-seconds") == "2.5"
+                    assert option(command, "--attention-every") == "10"
                 script = Path(job["script"]).read_text()
                 assert "--log-every 1" in script
                 assert ("--progress-every-seconds 2.5" in script) == (job["stage"] != "router")
+                assert ("--attention-every 10" in script) == (job["stage"] != "router")
                 subprocess.run(["bash", "-n", job["script"]], check=True)
             else:
                 assert "--log-every" not in command and "--progress-every-seconds" not in command
+                assert "--attention-every" not in command
     assert not (generated / "submitted.json").exists()
 
 
@@ -383,6 +437,8 @@ def test_resume_second_render_retains_runtime_flags_and_original_stage_identity(
         "3",
         "--progress-every-seconds",
         "0.25",
+        "--attention-every",
+        "0",
     )
     assert len(resumed["jobs"]) == 2
     for job in resumed["jobs"]:
@@ -393,11 +449,15 @@ def test_resume_second_render_retains_runtime_flags_and_original_stage_identity(
         assert option(command, "--resume") == str(checkpoint)
         assert option(command, "--log-every") == "3"
         assert ("--progress-every-seconds" in command) == (stage == "teacher")
+        assert ("--attention-every" in command) == (stage == "teacher")
+        if stage == "teacher":
+            assert option(command, "--attention-every") == "0"
         assert job["signature"] == original_jobs[job["name"]]["signature"]
         script = Path(job["script"]).read_text()
         assert f"--signature {job['signature']}" in script
         assert "--log-every 3" in script and f"--resume {checkpoint}" in script
         assert ("--progress-every-seconds 0.25" in script) == (stage == "teacher")
+        assert ("--attention-every 0" in script) == (stage == "teacher")
         subprocess.run(["bash", "-n", job["script"]], check=True)
     assert not (generated / "submitted.json").exists()
 
@@ -415,6 +475,11 @@ def test_resume_second_render_retains_runtime_flags_and_original_stage_identity(
         ("--progress-every-seconds", "inf"),
         ("--progress-every-seconds", "1e309"),
         ("--progress-every-seconds", "nope"),
+        ("--attention-every", "-1"),
+        ("--attention-every", "1.5"),
+        ("--attention-every", "nan"),
+        ("--attention-every", "inf"),
+        ("--attention-every", "nope"),
     ],
 )
 def test_invalid_runtime_flags_fail_before_any_plan_output(planning, flag, value):
@@ -428,8 +493,12 @@ def test_invalid_runtime_flags_fail_before_any_plan_output(planning, flag, value
 def test_signature_normalization_removes_only_valid_exact_training_pairs(planning):
     planner, _, _, _, _ = planning
     command = [sys.executable, "-m", "stmem.train", "--stage", "teacher"]
-    runtime = ["--log-every", "5", "--progress-every-seconds", "1.5"]
+    runtime = ["--log-every", "5", "--progress-every-seconds", "1.5", "--attention-every", "10"]
     assert planner.scientific_training_command(command + runtime) == command
+    assert planner.scientific_training_command(command + ["--attention-every", "0"]) == command
+    assert planner.scientific_training_command(command + ["--attention-every", "-1"]) == (
+        command + ["--attention-every", "-1"]
+    )
     assert planner.scientific_training_command(command + ["--log-every", "--config", "x"]) == (
         command + ["--log-every", "--config", "x"]
     )

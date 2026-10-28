@@ -17,7 +17,12 @@ from stmem.models.action_flow import flow_sample, masked_mse
 from stmem.training.data import TrainingData, rank_positions
 from stmem.training.loader import PolicyBatchLoader
 from stmem.training.forks import COMMAND_FLAG, load_fork_checkpoint, schedule_steps, validate_teacher_fork
-from stmem.training.logging_options import positive_log_every, positive_progress_seconds, resolve_logging
+from stmem.training.logging_options import (
+    nonnegative_attention_every,
+    positive_log_every,
+    positive_progress_seconds,
+    resolve_logging,
+)
 from stmem.training.progress import TrainingProgress, print_json
 from stmem.training.runtime import (
     distributed_setup,
@@ -65,6 +70,7 @@ def train_policy(
     stop_file=None,
     log_every=None,
     progress_every_seconds=None,
+    attention_every=None,
 ):
     validate_config(cfg)
     if resume and fork_from:
@@ -73,7 +79,7 @@ def train_policy(
         raise ValueError("fork_sha256 requires fork_from")
     if fork_from and stage != "teacher":
         raise ValueError("Only teacher checkpoints support matched continuations")
-    logging = resolve_logging(cfg, log_every, progress_every_seconds)
+    logging = resolve_logging(cfg, log_every, progress_every_seconds, attention_every)
     rank = int(os.environ.get("RANK", "0"))
     directory = run_dir(cfg, stage)
     if fork_from:
@@ -317,6 +323,11 @@ def _train_policy(
     from stmem.visualization.diagnostics import PolicyScenes
 
     scenes = PolicyScenes(cfg, data, policy, tracker, stage=stage, cache=cache, precision=precision)
+    from stmem.training.attention import PolicyAttention
+
+    attention = PolicyAttention(
+        cfg, policy, tracker, scenes, stage=stage, every=logging["attention_every"], cache=cache, precision=precision
+    )
     startup_progress(
         "loader_starting",
         workers_per_rank=cfg["training"].get("workers", 0),
@@ -577,6 +588,13 @@ def _train_policy(
                     stream.write(json.dumps(record) + "\n")
                 print_json(record)
                 tracker.log({f"train/{key}": value for key, value in record.items()}, step=current_step)
+        if logging["attention_every"] and current_step % logging["attention_every"] == 0 and not stopped:
+            progress.update("attention_diagnostics")
+            attention.log(current_step)
+            # Only rank zero runs inference probes. Keep other ranks out of the
+            # next update while it observes the same completed optimizer state.
+            if world > 1:
+                torch.distributed.barrier()
         if checkpoint_due and not (stopped and current_step < steps):
             progress.update("scene_diagnostics")
             scenes.log(current_step)
@@ -643,6 +661,11 @@ def main():
         help="Log scalar metrics every N optimizer updates; runtime-only override, safe to change on resume",
     )
     parser.add_argument(
+        "--attention-every",
+        type=nonnegative_attention_every,
+        help="Fixed-scene attention probes every N optimizer updates (default 10; 0 disables); resume-safe",
+    )
+    parser.add_argument(
         "--progress-every-seconds",
         type=positive_progress_seconds,
         help="Policy-training wall-clock heartbeat interval for stdout/progress.jsonl (disabled by default)",
@@ -658,6 +681,8 @@ def main():
 
         if args.progress_every_seconds is not None:
             parser.error("--progress-every-seconds applies to teacher, compact and perceiver training")
+        if args.attention_every is not None:
+            parser.error("--attention-every applies to policy training, not router training")
         result = train_router(cfg, resume=args.resume, stop_file=args.stop_file, log_every=args.log_every)
     else:
         result = train_policy(
@@ -669,6 +694,7 @@ def main():
             stop_file=args.stop_file,
             log_every=args.log_every,
             progress_every_seconds=args.progress_every_seconds,
+            attention_every=args.attention_every,
         )
     raise SystemExit(result)
 

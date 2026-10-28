@@ -93,7 +93,7 @@ def test_logging_overrides_preserve_training_and_allow_resume(tmp_path):
 
     baseline = run("baseline")
     assert baseline.returncode == 0, baseline.stderr
-    frequent = run("frequent", "--log-every", 1, "--progress-every-seconds", 0.01)
+    frequent = run("frequent", "--log-every", 1, "--progress-every-seconds", 0.01, "--attention-every", 1)
     assert frequent.returncode == 0, frequent.stderr
     directories = {name: root / "seed0/teacher" for name, root in roots.items()}
     assert [row["step"] for row in _rows(directories["baseline"] / "metrics.jsonl")] == [1, 3]
@@ -126,6 +126,8 @@ def test_logging_overrides_preserve_training_and_allow_resume(tmp_path):
         2,
         "--progress-every-seconds",
         0.01,
+        "--attention-every",
+        2,
     )
     assert resumed.returncode == 0, resumed.stderr
     before = torch.load(directories["baseline"] / "last.pt", weights_only=False, map_location="cpu")
@@ -146,9 +148,21 @@ def test_logging_overrides_preserve_training_and_allow_resume(tmp_path):
         resolved = json.loads((directories[name] / "config.json").read_text())
         assert resolved["training"] == cfg["training"]
         assert "progress_every_seconds" not in resolved["training"]
-        expected_logging = {"log_every": 1 if name == "frequent" else 2, "progress_every_seconds": 0.01}
+        expected_logging = {
+            "log_every": 1 if name == "frequent" else 2,
+            "progress_every_seconds": 0.01,
+            "attention_every": 1 if name == "frequent" else 2,
+        }
         manifest = json.loads((directories[name] / "manifest.json").read_text())
         assert after["logging"] == manifest["logging"] == expected_logging
+    assert not (directories["baseline"] / "attention.jsonl").exists()
+    assert [row["step"] for row in _rows(directories["frequent"] / "attention.jsonl")] == [1, 2, 3]
+    assert [row["step"] for row in _rows(directories["resumed"] / "attention.jsonl")] == [2]
+    for row in _rows(directories["frequent"] / "attention.jsonl"):
+        assert row["seconds"] > 0
+        assert row["metrics"]["entropy/all"] >= 0
+    attention_history = [row["metrics"] for row in history if "attention/entropy_all" in row["metrics"]]
+    assert [row["progress/step"] for row in attention_history] == [1, 2, 3]
 
 
 @pytest.mark.parametrize(
@@ -158,6 +172,9 @@ def test_logging_overrides_preserve_training_and_allow_resume(tmp_path):
         ("--log-every", "-1"),
         ("--log-every", "1.5"),
         ("--log-every", "nan"),
+        ("--attention-every", "-1"),
+        ("--attention-every", "1.5"),
+        ("--attention-every", "nan"),
         ("--progress-every-seconds", "0"),
         ("--progress-every-seconds", "-1"),
         ("--progress-every-seconds", "nan"),

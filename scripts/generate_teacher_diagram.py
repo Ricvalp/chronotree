@@ -18,6 +18,7 @@ from stmem.config import load_config
 from stmem.data.center_sampling import CENTER_SAMPLING_VERSION, center_sampler_settings
 from stmem.data.pointcloud import POINT_SAMPLING_VERSION, point_sampler_settings
 from stmem.models.policy import MemoryPolicy
+from stmem.training.logging_options import resolve_logging
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,8 +61,13 @@ SOURCES = [
     "src/stmem/models/text_encoder.py",
     "src/stmem/models/metadata_adapter.py",
     "src/stmem/models/action_flow.py",
+    "src/stmem/models/attention_diagnostics.py",
     "src/stmem/training/data.py",
     "src/stmem/training/loader.py",
+    "src/stmem/training/attention.py",
+    "src/stmem/training/logging_options.py",
+    "src/stmem/visualization/diagnostics.py",
+    "src/stmem/tracking.py",
     "src/stmem/train.py",
 ]
 
@@ -114,6 +120,11 @@ def snapshot():
             "total_parameters": count(policy),
             "trainable_parameters": sum(p.numel() for p in policy.parameters() if p.requires_grad),
             "fp32_weight_bytes": 4 * count(policy),
+            "attention_diagnostics": {
+                "default_interval_optimizer_steps": resolve_logging(cfg)["attention_every"],
+                "capture_flow_time": (cfg["model"]["flow_steps"] - 1) / cfg["model"]["flow_steps"],
+                "changes_model_parameters": False,
+            },
             "variants": {
                 "no_previous_joint_commands_h32": {
                     "configuration": H32_CONFIG,
@@ -741,7 +752,7 @@ def decoder(file, cfg, policy, facts):
         "decoder",
         "Action-query conditional flow matching",
         "Training predicts a velocity field once; inference integrates that field to produce robot commands.",
-        height=1840,
+        height=2110,
     )
     noisy = p.card(
         48,
@@ -830,6 +841,28 @@ def decoder(file, cfg, policy, facts):
         ],
         tone="note",
         size=18,
+        parent="notes",
+    )
+
+    attention = facts["attention_diagnostics"]
+    p.card(
+        48,
+        1800,
+        1704,
+        225,
+        "ATTENTION DIAGNOSTICS  /  Fixed training-scene inference probes",
+        [
+            f"Every {attention['default_interval_optimizer_steps']} optimizer updates by default; "
+            f"fixed noise, final Euler evaluation at u = {attention['capture_flow_time']:g}.",
+            "Cross-attention mass: current visual/state, goal/clock, historical visual/robot-event tokens.",
+            "Conditional entropy is normalized within each group before averaging heads, queries and layers.",
+            "Uniform token-count baselines account for longer histories. Attention weight alone is not causal importance.",
+            "Detached Q/K statistics leave SDPA and learned parameters unchanged; runtime cadence is resume-safe.",
+        ],
+        tone="note",
+        size=19,
+        tooltip="training/attention.py and models/attention_diagnostics.py. Fixed probes do not expose "
+        "expert targets to inference. Diagnostic work is separate from the optimization update and timed explicitly.",
         parent="notes",
     )
     p.section(48, 820, 1650, "INSIDE EACH DECODER BLOCK  /  Pre-normalized residual sublayers")

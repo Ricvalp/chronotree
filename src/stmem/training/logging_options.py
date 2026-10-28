@@ -35,11 +35,25 @@ def positive_progress_seconds(value):
     return result
 
 
-def resolve_logging(cfg, log_every=None, progress_every_seconds=None):
+def nonnegative_attention_every(value):
+    """Parse an optimizer-update interval; zero disables attention diagnostics."""
+    if isinstance(value, bool) or not isinstance(value, (str, Integral)):
+        raise argparse.ArgumentTypeError("attention interval must be a nonnegative integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise argparse.ArgumentTypeError("attention interval must be a nonnegative integer") from error
+    if result < 0:
+        raise argparse.ArgumentTypeError("attention interval must be a nonnegative integer")
+    return result
+
+
+def resolve_logging(cfg, log_every=None, progress_every_seconds=None, attention_every=None):
     """Resolve execution controls without mutating the checkpointed configuration."""
     return {
         "log_every": positive_log_every(cfg["training"]["log_every"] if log_every is None else log_every),
         "progress_every_seconds": None
         if progress_every_seconds is None
         else positive_progress_seconds(progress_every_seconds),
+        "attention_every": nonnegative_attention_every(10 if attention_every is None else attention_every),
     }

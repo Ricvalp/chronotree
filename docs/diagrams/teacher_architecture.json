@@ -1,4 +1,9 @@
 {
+  "attention_diagnostics": {
+    "capture_flow_time": 0.875,
+    "changes_model_parameters": false,
+    "default_interval_optimizer_steps": 10
+  },
   "center_sampling": {
     "cell_size": 0.1,
     "foreground_fraction": 0.75,
@@ -109,6 +114,7 @@
     "src/stmem/data/prepare.py": "883cc6bcc039bed9739f8fc84f99b8883d9d3d1fb5633cdde6cef361293a21d3",
     "src/stmem/evaluation/robomme_adapter.py": "33648a71430dbee9bcf153b07b5bc0d522ce126abcfe2c1aa90ca1128211e76c",
     "src/stmem/models/action_flow.py": "0f4e91469f7ff1726e2835ae5d370eee7a4fc75b7c76b3683c5c37df0976db6e",
+    "src/stmem/models/attention_diagnostics.py": "1456e5645ccc4706e4615bf7b87b42e5cdf0105c8dcd3d57b686c7afa17ba5bd",
     "src/stmem/models/batched_policy.py": "4f5df918c593343b092d13edd8c56651f6068370bbd5e27fcd71c2868430ac47",
     "src/stmem/models/batched_spacetime.py": "1604c2fd2f98362c83f4769fd1f8e4358833e5ae5ee4c36731ab5440839ad04e",
     "src/stmem/models/event_encoder.py": "d6c3ba46076882cfb87821c12e8b0f4b9902ade2f595b8d103acb98f00a173b7",
@@ -116,9 +122,13 @@
     "src/stmem/models/policy.py": "9815775b5d7dd14f520c1782094282062f152e87070889138e4cd34eafd1834b",
     "src/stmem/models/spacetime_encoder.py": "41e5b4dfa42950f0d87e393fdce140621fd37b3bc856875da4748a186dd2aab9",
     "src/stmem/models/text_encoder.py": "84fafb56b901b9883e0f6ef548574a885f77f35d5960dfb2d6df5290b4a5e503",
-    "src/stmem/train.py": "ff4636b51c576cb33ed18e34baebbb204e1c14d25b4d53a1c6a0a245cca52c75",
+    "src/stmem/tracking.py": "711933bc1ee2d15babec3d579c46121165337f80688fcbc632c5e9fef0f3ca02",
+    "src/stmem/train.py": "61b9ecb4162224e633729a772c80456e807f759250f9a09649269823c49008fa",
+    "src/stmem/training/attention.py": "1d9a578adaaaa5ddbea9d6bbdebc7032fcf23c47d6a40610d15b90dad39c59b0",
     "src/stmem/training/data.py": "a5b22a0d3242de69e83e52122fc588f2a1b989bb10ecc1c84941160856431799",
-    "src/stmem/training/loader.py": "5d8908bb07cc2c5daaa6df62ad1f243077674a649be16e43f5a23a1558f4af33"
+    "src/stmem/training/loader.py": "5d8908bb07cc2c5daaa6df62ad1f243077674a649be16e43f5a23a1558f4af33",
+    "src/stmem/training/logging_options.py": "9ce7fd895a3f28de3b0c2fcbf566c24d0bdc59119e1657f6a7db3093ab554d67",
+    "src/stmem/visualization/diagnostics.py": "55c5e34f43127f0465d1d2a288e97c8d38badef5044648bf84d595663dd1dfa2"
   },
   "total_parameters": 6098698,
   "trainable_parameters": 6098698,
