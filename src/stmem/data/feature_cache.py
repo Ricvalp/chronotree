@@ -2,8 +2,9 @@
 
 The cache stores pre-projection FP16 descriptors in contiguous HDF5 datasets.
 Training workers pass small row references instead of placing whole episodes of
-descriptors in the multiprocessing queue. Only the local encoder's next block
-batch is materialized. No HDF5 handle or mmap object crosses a process boundary.
+descriptors in the multiprocessing queue. Only a bounded set of the local
+encoder's upcoming block batches is materialized. No HDF5 handle or mmap object
+crosses a process boundary.
 """
 
 from __future__ import annotations
@@ -81,23 +82,49 @@ def load_feature_rows(
     released. Returned tensors own their storage; no writable aliases to the
     cache remain. This is also the common materializer for online tensors.
     """
-    if point_count is None:
-        point_count = max((row.shape[0] for row in rows if row is not None), default=0)
-    if point_count < 0:
-        raise ValueError("point_count cannot be negative")
-    result = torch.zeros((len(rows), point_count, FEATURE_DIM), dtype=torch.float16)
-    array = result.numpy()
-    maps = {}
-    try:
+    with FeatureRowReader() as reader:
+        result = reader.read(rows, point_count=point_count)
+    return result.to(device)
+
+
+class FeatureRowReader:
+    """Process/thread-local immutable mappings and caller-owned CPU buffers.
+
+    The prefetch producer keeps one reader alive for its bounded sequence of
+    chunks. Only padding is zeroed: complete descriptor rows overwrite every
+    byte. No mapped storage is returned, and no handle crosses a process.
+    """
+
+    def __init__(self):
+        self.maps = {}
+
+    def read(self, rows, *, point_count=None, out=None):
+        if point_count is None:
+            point_count = max((row.shape[0] for row in rows if row is not None), default=0)
+        if point_count < 0:
+            raise ValueError("point_count cannot be negative")
+        shape = (len(rows), point_count, FEATURE_DIM)
+        result = torch.empty(shape, dtype=torch.float16) if out is None else out
+        if (
+            tuple(result.shape) != shape
+            or result.dtype != torch.float16
+            or result.device.type != "cpu"
+            or not result.is_contiguous()
+        ):
+            raise ValueError("Descriptor output must be a contiguous CPU FP16 buffer of the exact shape")
+        array = result.numpy()
         for index, row in enumerate(rows):
             if row is None:
+                result[index].zero_()
                 continue
+            if not isinstance(row, (FeatureRow, torch.Tensor)):
+                raise TypeError("Expected a FeatureRow, descriptor Tensor, or padded None")
             if row.ndim != 2 or row.shape[1] != FEATURE_DIM or row.shape[0] > point_count:
                 raise ValueError("Frozen descriptors must be [N,256] within the point padding")
             if isinstance(row, FeatureRow):
-                mapping = maps.get(row.path)
+                mapping = self.maps.get(row.path)
                 if mapping is None:
-                    mapping = maps[row.path] = np.memmap(row.path, mode="r", dtype=np.uint8)
+                    mapping = self.maps[row.path] = np.memmap(row.path, mode="r", dtype=np.uint8)
                 byte_count = row.point_count * FEATURE_DIM * np.dtype("f2").itemsize
                 if row.offset < 0 or row.offset + byte_count > mapping.nbytes:
                     raise ValueError(f"Truncated descriptor cache: {row.path}")
@@ -106,13 +133,20 @@ def load_feature_rows(
                 del value
             elif isinstance(row, torch.Tensor):
                 result[index, : len(row)].copy_(row.detach().to(device="cpu", dtype=torch.float16))
-            else:
-                raise TypeError("Expected a FeatureRow, descriptor Tensor, or padded None")
-    finally:
-        # Explicit close is safe because the copy above owns every output byte.
-        for mapping in maps.values():
+            if row.shape[0] < point_count:
+                result[index, row.shape[0] :].zero_()
+        return result
+
+    def close(self):
+        for mapping in self.maps.values():
             mapping._mmap.close()
-    return result.to(device)
+        self.maps.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
 
 
 def feature_cache_manifest(path: Path, prepared: dict, config: dict) -> dict:

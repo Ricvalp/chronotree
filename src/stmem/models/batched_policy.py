@@ -9,6 +9,8 @@ shared with that reference path.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import contextmanager
+from itertools import repeat
 import math
 
 import torch
@@ -266,15 +268,26 @@ def _feature_cache_state(frames):
 
 
 def _load_features(encoder, rows, signature, point_count, device):
+    with _feature_batches(encoder, [rows], signature, point_count, device) as batches:
+        return next(batches)
+
+
+@contextmanager
+def _feature_batches(encoder, groups, signature, point_count, device):
     if not encoder.visual_feature_dim:
         if signature is not None:
             raise ValueError("XYZRGB policy cannot consume frozen-feature inputs")
-        return None
+        yield repeat(None, len(groups))
+        return
     if signature != encoder.visual_feature_signature:
         raise ValueError("Packed frozen-feature identity differs from the policy")
-    from stmem.data.feature_cache import load_feature_rows
+    from stmem.data.feature_cache import FeatureRow
+    from stmem.data.feature_prefetch import DescriptorPrefetch
 
-    return load_feature_rows(rows, point_count=point_count, device=device)
+    if any(isinstance(row, FeatureRow) and row.signature != signature for group in groups for row in group):
+        raise ValueError("Frozen-feature row identity differs from the policy")
+    with DescriptorPrefetch(groups, point_count=point_count, device=device) as batches:
+        yield batches
 
 
 def pack_blocks(decisions, block_size, *, center_sampling=None, centers_per_frame=None):
@@ -501,62 +514,62 @@ def encode_history_bank(policy, decisions, clocks, *, packed=None):
         )
         return tuple(getattr(result, field) for field in EncodedLeaves.__dataclass_fields__)
 
-    for start in range(0, k, chunk_size):
-        end = min(start + chunk_size, k)
-        points = packed.points[start:end].to(device)
-        valid = packed.valid[start:end].to(device)
-        times = packed.times[start:end].to(device)
-        indices = None if prepared_centers is None else prepared_centers[start:end].to(device)
-        descriptors = _load_features(
-            encoder.visual,
-            [row for part in packed.visual_features[start:end] for row in part],
-            packed.visual_feature_signature,
-            points.shape[-2],
-            device,
-        )
-        if descriptors is not None:
-            descriptors = descriptors.reshape(end - start, encoder.block_size, points.shape[-2], 256)
-        if encoder.checkpoint_blocks and encoder.training and torch.is_grad_enabled():
-            visual = EncodedLeaves(
-                *checkpoint(pool, points, valid, times, indices, descriptors, use_reentrant=False)
+    groups = [
+        [row for part in packed.visual_features[start : start + chunk_size] for row in part]
+        for start in range(0, k, chunk_size)
+    ]
+    with _feature_batches(
+        encoder.visual, groups, packed.visual_feature_signature, packed.points.shape[-2], device
+    ) as descriptor_batches:
+        for start, descriptors in zip(range(0, k, chunk_size), descriptor_batches):
+            end = min(start + chunk_size, k)
+            points = packed.points[start:end].to(device)
+            valid = packed.valid[start:end].to(device)
+            times = packed.times[start:end].to(device)
+            indices = None if prepared_centers is None else prepared_centers[start:end].to(device)
+            if descriptors is not None:
+                descriptors = descriptors.reshape(end - start, encoder.block_size, points.shape[-2], 256)
+            if encoder.checkpoint_blocks and encoder.training and torch.is_grad_enabled():
+                visual = EncodedLeaves(
+                    *checkpoint(pool, points, valid, times, indices, descriptors, use_reentrant=False)
+                )
+            else:
+                visual = EncodedLeaves(*pool(points, valid, times, indices, descriptors))
+            source = packed.source[start:end].to(device)
+            owner = packed.owner[start:end].to(device)
+            now = clocks[owner, source][:, None]
+            done = packed.completed[start:end].to(device)[:, None]
+            visual_meta = _leaf_metadata(
+                visual.anchor,
+                visual.bounds_min,
+                visual.bounds_max,
+                visual.time_min.detach(),
+                visual.time_max.detach(),
+                now,
+                source[:, None],
+                True,
+                done,
             )
-        else:
-            visual = EncodedLeaves(*pool(points, valid, times, indices, descriptors))
-        source = packed.source[start:end].to(device)
-        owner = packed.owner[start:end].to(device)
-        now = clocks[owner, source][:, None]
-        done = packed.completed[start:end].to(device)[:, None]
-        visual_meta = _leaf_metadata(
-            visual.anchor,
-            visual.bounds_min,
-            visual.bounds_max,
-            visual.time_min.detach(),
-            visual.time_max.detach(),
-            now,
-            source[:, None],
-            True,
-            done,
-        )
-        if encoder.history_events_enabled:
-            state = packed.state[start:end].to(device)
-            events = encoder.event(
-                state, packed.action[start:end].to(device), packed.available[start:end].to(device)
-            )
-            anchor = (
-                state[..., 7:10]
-                if encoder.proprioception_mode == "all"
-                else torch.zeros_like(state[..., 7:10])
-            )
-            event_meta = _leaf_metadata(
-                anchor, anchor, anchor, times, times, now, source[:, None], False, done
-            )
-            contents.append(torch.cat([visual.content, events], dim=1))
-            metas.append(torch.cat([visual_meta, event_meta], dim=1))
-            masks.append(torch.cat([visual.valid, packed.frame_valid[start:end].to(device)], dim=1))
-        else:
-            contents.append(visual.content)
-            metas.append(visual_meta)
-            masks.append(visual.valid)
+            if encoder.history_events_enabled:
+                state = packed.state[start:end].to(device)
+                events = encoder.event(
+                    state, packed.action[start:end].to(device), packed.available[start:end].to(device)
+                )
+                anchor = (
+                    state[..., 7:10]
+                    if encoder.proprioception_mode == "all"
+                    else torch.zeros_like(state[..., 7:10])
+                )
+                event_meta = _leaf_metadata(
+                    anchor, anchor, anchor, times, times, now, source[:, None], False, done
+                )
+                contents.append(torch.cat([visual.content, events], dim=1))
+                metas.append(torch.cat([visual_meta, event_meta], dim=1))
+                masks.append(torch.cat([visual.valid, packed.frame_valid[start:end].to(device)], dim=1))
+            else:
+                contents.append(visual.content)
+                metas.append(visual_meta)
+                masks.append(visual.valid)
     tokens = encoder.visual_tokens + (encoder.block_size if encoder.history_events_enabled else 0)
     max_length = max(packed.blocks_per_example) * tokens
     indices = (

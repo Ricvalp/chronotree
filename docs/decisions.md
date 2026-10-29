@@ -1099,3 +1099,121 @@
     doctor, Ruff, generated architecture snapshot/XML and visual layout checks
     pass. A planner dry-run requests four untyped GPUs in `aiq`, 64 CPUs, 128G
     host RAM and 48 hours, with a separate run root. No Slurm jobs were submitted.
+
+41. **Frozen-feature training throughput investigation (29 October 2026).**
+    W&B run `9cb42f0d49592774` (job 63462, four B200s on ainode05,
+    FV-NoProp at 10 Hz) reported 70--230 seconds per update over its first
+    twelve updates. The older XYZRGB H32 run `5caa7c32fc1dff11` on ainode01
+    had a median 3.63 seconds over 300 sampled updates. These are observations
+    of different runs/nodes, not a controlled hardware comparison. In the first
+    telemetry snapshot, 71--90% of sampled GPU utilization values were zero
+    for the new run, versus median 95--96% utilization in the older run.
+
+    The descriptor path exposes a concrete accounting and scheduling problem:
+    loader workers return `FeatureRow` references, and `encode_history_bank`
+    materializes their payloads synchronously inside forward. Thus the measured
+    approximately 0.026-second loader wait excludes descriptor reads/copies and
+    host-to-device transfers. Each retained frame adds 1 MiB of FP16 descriptors
+    (2048 points x 256 dimensions), versus 48 KiB of FP32 XYZRGB. Step 9's
+    rank-zero history implies 4.41 GiB of logical descriptor reads per rank per
+    update, or about 17.65 GiB across four ranks if histories are comparable.
+    These are logical payload estimates, not measured filesystem traffic.
+
+    Bounded local diagnostics on RTX 5000 Ada isolate the overhead. For 32
+    repeated real-data blocks with inputs already on GPU, encoder forward plus
+    backward took 146 ms for XYZRGB and 171 ms with frozen features. For the
+    full model with eight copies of a fixed real VideoUnmask training decision
+    (95 retained history frames), CPU-resident descriptors and ordinary CPU
+    copies/device transfers, forward plus backward took 0.484 versus 0.829
+    seconds. These checks exclude distributed synchronization, optimizer work,
+    varying histories and cold storage; they do not predict B200 throughput.
+    A separate CPU reader check copied 256 MiB in about 0.100 seconds from the
+    warm local filesystem cache, with zero major faults. The actual-device
+    doctor passed. Scripts and detailed results are retained under ignored
+    `runs/inspection/fv_performance_20261029/`; W&B snapshots are under ignored
+    `runs/inspection/fv_speed_20261029/`.
+
+    The earlier B200 FV long-history profile `7460b744fd5dc6e0` recorded warmup
+    updates of 383, 95, 18.6, 17.7 and 18.0 seconds, then one measured update
+    of 18.23 seconds. This supports cache sensitivity, but is not a streaming
+    full-dataset throughput guarantee. Attention diagnostics cost 4.45 seconds
+    at update 10 of the new run and occur outside `train/step_seconds`, as do
+    checkpoint and scene logging. They do not explain the per-update slowdown.
+
+    Prioritize bounded descriptor prefetch, reusable pinned buffers, overlapped
+    device transfer, and separate per-rank descriptor-read/transfer/compute
+    timing. Stage immutable sidecars on node-local storage if actual capacity
+    and access permit; `STMEM_SCRATCH_ROOT` alone does not implement staging.
+    More geometry-loader workers or a larger microbatch do not remove the
+    foreground descriptor path or its bytes per effective batch. The exact HPC
+    storage/communication breakdown remains unmeasured, and no speedup is
+    promised. This investigation changes no model, sampler, training settings,
+    checkpoint or dataset; it submits no jobs.
+
+42. **Bounded frozen-descriptor I/O pipeline (29 October 2026).**
+    Frozen-vision packed history now loads actual raw descriptors on a rank-local
+    producer thread, overlapping upcoming encoder chunks with computation.
+    `STMEM_FEATURE_PREFETCH_CHUNKS` defaults to two; zero selects synchronous
+    loading for comparison. CUDA uses reusable pinned CPU slots and a separate
+    copy stream. A slot waits for its previous transfer before reuse; each GPU
+    result has independent storage and a consumer stream dependency, so autograd
+    and activation recomputation never see overwritten descriptors. Read-only
+    file mappings are reused across chunks within a bank. CPU consumers keep
+    owned outputs and never initialize CUDA. Errors propagate to the consumer,
+    and context exit joins the producer. A blocked filesystem read still has
+    to return before that thread can finish.
+
+    This preserves point order, descriptors, padding, sampling, full causal
+    history, targets, trainable projection and model shapes. The bounded queue
+    is separate from the geometry DataLoader queue; it does not preload entire
+    episode descriptor tensors. At 32 eight-frame blocks, 2048 points and
+    depth two, pinned buffers use at most 512 MiB per rank. GPU descriptors
+    already consumed by the encoder may remain live until backward, as before.
+    Runtime settings are recorded in the manifest and W&B summary but excluded
+    from scientific checkpoint compatibility. Training logs read walltime,
+    exposed host queue wait, CUDA transfer-event time, logical descriptor bytes,
+    padded transfer bytes and chunks; max-rank times expose slower readers.
+    These overlapping phases must not be added into an update duration. Timing
+    events are collected only when explicitly enabled by a measurement interval.
+
+    Optional `stmem.data.stage_features` stages finalized task sidecars once
+    before torchrun, under an explicit existing `STMEM_SCRATCH_ROOT`. It checks
+    identities and capacity, locks concurrent copies, verifies SHA256 readback,
+    publishes atomically and recovers a completed copy whose record publication
+    was interrupted. Unchanged verified copies are reused via stat fingerprints,
+    without full rehashing on every launch/rank. `STMEM_FEATURE_CACHE_ROOT`
+    redirects readers without altering scientific configuration or data identity.
+    No other data are evicted. The user has not identified local scratch and
+    requested that staging remain disabled; both site defaults remain empty.
+
+    A CPU end-to-end stop/resume diagnostic changed prefetch from zero to two
+    and relocated sidecars, preserving model, optimizer, scheduler, sampler,
+    RNG and provenance exactly. Focused CUDA tests preserve packed predictions
+    and parameter gradients exactly, including activation checkpointing and a
+    nondefault consumer stream. They also check pinned-slot reuse with retained
+    GPU inputs, padding, ordered reads, bounded lookahead and failure cleanup.
+    Staging tests cover concurrent copies, insufficient capacity, altered
+    identities, interrupted publication and exact reader/data identity parity.
+
+    A bounded production-shape BF16 diagnostic on RTX 5000 Ada used eight copies
+    of one real VideoUnmask decision with 95 retained history frames, actual
+    FeatureRow reads, 32-block encoder chunks and warm local files. Median
+    forward-plus-backward time was 0.985 and 0.988 seconds in two synchronous
+    baseline repetitions, versus 0.608 seconds with prefetch depth two. Peak
+    CUDA allocation stayed near 14.25 GB in all three runs. Predictions and loss
+    were bitwise identical. Relative gradient L2 difference was 0.000773 with
+    prefetch, compared with 0.000823 between synchronous repetitions (maximum
+    absolute difference 0.0009765625 in both), consistent with existing BF16
+    backward nondeterminism. This excludes optimizer work, distributed
+    synchronization, varying histories and cold/shared storage, and is not an
+    HPC throughput guarantee. Evidence is under ignored
+    `runs/inspection/feature_io_20261029/`. No Slurm jobs or full-data copies
+    were performed; no dataset preparation or new training run is required.
+
+    Final CPU-safe suite: 806 passed and four skipped (three CUDA-only tests
+    were separately exercised on the actual GPU; the optional real-subset
+    test lacked its expected fixture location). The actual-device doctor,
+    focused CUDA tests, Ruff, architecture snapshot/XML check and browser
+    layout inspection pass. An earlier suite attempt observed one DataLoader
+    worker abort during shutdown; the loader/resume subset (11 tests) and the
+    subsequent complete suite passed without changing loader shutdown code.

@@ -18,6 +18,11 @@ cd "$STMEM_REPO_ROOT"
 STMEM_STOP_FILE="$STMEM_RUN_ROOT/stops/${SLURM_JOB_ID:-local_$$}.stop"
 export STMEM_STOP_FILE STMEM_RUN_ROOT
 stmem_train() {
+  if [[ -n "${STMEM_SCRATCH_ROOT:-}" ]]; then
+    STMEM_FEATURE_CACHE_ROOT=$("$STMEM_PYTHON" -m stmem.data.stage_features \
+      --config "$2" --scratch-root "$STMEM_SCRATCH_ROOT" --print-path)
+    export STMEM_FEATURE_CACHE_ROOT
+  fi
   exec "$STMEM_REPO_ROOT/hpc/run_job.sh" "$STMEM_STOP_FILE" \
     srun --ntasks=1 "$STMEM_PYTHON" -m torch.distributed.run --standalone --nnodes=1 \
     --nproc-per-node="$STMEM_NPROC" -m stmem.train --stage "$1" --config "$2" --stop-file "$STMEM_STOP_FILE" "${@:3}"

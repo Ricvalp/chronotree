@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 
 from stmem.config import load_config
 from stmem.data.center_sampling import CENTER_SAMPLING_VERSION, center_sampler_settings
+from stmem.data.feature_prefetch import DEFAULT_FEATURE_PREFETCH_CHUNKS
 from stmem.data.pointcloud import POINT_SAMPLING_VERSION, point_sampler_settings
 from stmem.models.policy import MemoryPolicy
 from stmem.training.logging_options import resolve_logging
@@ -63,6 +64,8 @@ SOURCES = [
     "src/stmem/data/prepare_features.py",
     "src/stmem/data/dataset.py",
     "src/stmem/data/feature_cache.py",
+    "src/stmem/data/feature_prefetch.py",
+    "src/stmem/data/stage_features.py",
     "src/stmem/vision/frozen.py",
     "src/stmem/evaluation/robomme_adapter.py",
     "src/stmem/evaluation/runner.py",
@@ -159,6 +162,16 @@ def snapshot():
                 "default_interval_optimizer_steps": resolve_logging(cfg)["attention_every"],
                 "capture_flow_time": (cfg["model"]["flow_steps"] - 1) / cfg["model"]["flow_steps"],
                 "changes_model_parameters": False,
+            },
+            "frozen_feature_io": {
+                "prefetch_control": "STMEM_FEATURE_PREFETCH_CHUNKS",
+                "default_prefetch_chunks_per_rank": DEFAULT_FEATURE_PREFETCH_CHUNKS,
+                "synchronous_prefetch_chunks": 0,
+                "cuda_host_buffers": "reusable pinned CPU buffers",
+                "cuda_transfer": "separate copy stream with consumer dependency",
+                "staging_control": "STMEM_SCRATCH_ROOT",
+                "physical_cache_override": "STMEM_FEATURE_CACHE_ROOT",
+                "changes_model_parameters_or_causal_history": False,
             },
             "variants": {
                 **frozen_variants,
@@ -1203,7 +1216,7 @@ def frozen_vision(file, facts):
         "frozen",
         "Frozen RGB features · matched state-input experiment",
         "FV-Prop and FV-NoProp share visual evidence, initial shared weights, clocks, action cadence and training budget",
-        height=2160,
+        height=2570,
     )
     p.section(48, 225, 1704, "01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS")
     source = p.card(
@@ -1364,7 +1377,7 @@ def frozen_vision(file, facts):
         "Resource and interpretation boundaries",
         [
             f"External frozen image encoder: {prop['external_frozen_encoder_parameters']:,} parameters",
-            "FP16 descriptors: 1 MiB/frame before HDF5 compression.",
+            "FP16 descriptors: 1 MiB/frame, stored uncompressed.",
             "Two full FP32 feature maps: 8 MiB transient/frame.",
             "Cache I/O and online CLIP latency must be measured.",
             "FV-NoProp vs FV-Prop isolates explicit state removal",
@@ -1413,6 +1426,63 @@ def frozen_vision(file, facts):
         size=18,
         parent="notes",
     )
+    p.section(48, 2085, 1704, "05  TRAINING I/O · SAME RAW FEATURES, MODEL AND CAUSAL CONTEXT")
+    storage = p.card(
+        48,
+        2145,
+        500,
+        300,
+        "Immutable descriptor sidecars",
+        [
+            "Shared storage works by default.",
+            "Optional explicit node-local scratch:",
+            "locked, verified, atomic staging.",
+            "Physical path override only; same identity.",
+            "No geometry, weights or learned cache copied.",
+            "Checkpoints/logs keep the durable run root.",
+        ],
+        tone="data",
+        size=18,
+        tooltip="data/stage_features.py. STMEM_SCRATCH_ROOT must name an available writable site-provided location. STMEM_FEATURE_CACHE_ROOT redirects raw sidecar readers without mutating scientific configuration. Dry-run generation never stages data; insufficient storage is reported before training.",
+    )
+    producer = p.card(
+        640,
+        2145,
+        500,
+        300,
+        "Bounded descriptor producer · CPU",
+        [
+            "DataLoader sends lightweight row references.",
+            "Producer reads upcoming encoder chunks.",
+            f"Default queue: {facts['frozen_feature_io']['default_prefetch_chunks_per_rank']} chunks per training rank.",
+            "Reusable pinned host buffers on CUDA.",
+            "Separate from geometry worker prefetch.",
+            "No whole-episode descriptor queue.",
+        ],
+        tone="visual",
+        size=18,
+        tooltip="data/feature_prefetch.py and models/batched_policy.py. STMEM_FEATURE_PREFETCH_CHUNKS=0 selects synchronous loading. Queued bytes follow the existing packed row indices; fetching later work early does not expose future frames to the current decision.",
+    )
+    transfer = p.card(
+        1232,
+        2145,
+        520,
+        300,
+        "Asynchronous transfer → same encoder",
+        [
+            "CUDA copy stream overlaps H2D with work.",
+            "Consumer waits for its own copy event.",
+            "Host buffers reused after copy completes.",
+            "GPU descriptors stay valid through backward.",
+            "Projection and full-history encoding trained.",
+            "No change to masks, loss or checkpoint shape.",
+        ],
+        tone="visual",
+        size=18,
+        tooltip="The I/O pipeline never caches learned projection outputs, drops historical leaves or reuses mutable GPU storage needed by autograd. A CUDA event orders each consuming stream after its copy; pinned host storage is not overwritten during transfer. These are runtime controls, not a new scientific experiment.",
+    )
+    p.edge(storage, producer, "raw FP16", tone="visual")
+    p.edge(producer, transfer, "pinned CPU", tone="visual")
 
 
 def validate_xml(xml):

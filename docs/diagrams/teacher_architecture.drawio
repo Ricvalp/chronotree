@@ -666,7 +666,7 @@
     </mxGraphModel>
   </diagram>
   <diagram id="frozen" name="05 · Frozen vision">
-    <mxGraphModel dx="1800" dy="2160" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="2160" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
+    <mxGraphModel dx="1800" dy="2570" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="2570" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
       <root>
         <mxCell id="0" />
         <mxCell id="1" value="Architecture" parent="0" />
@@ -703,7 +703,7 @@
           </mxCell>
         </object>
         <mxCell id="frozen-8" value="CHRONOTREE  /  Matched FV-Prop / FV-NoProp experiment     •     Click page tabs or linked blocks · hover for details · all shapes are editable" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=14;fontColor=#64748B;fontStyle=0;spacing=0;" vertex="1" parent="1">
-          <mxGeometry as="geometry" x="48" y="2112" width="1690" height="30" />
+          <mxGeometry as="geometry" x="48" y="2522" width="1690" height="30" />
         </mxCell>
         <mxCell id="frozen-9" value="01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
           <mxGeometry as="geometry" x="48" y="225" width="1704" height="35" />
@@ -760,7 +760,7 @@
             <mxGeometry as="geometry" x="48" y="1225" width="1704" height="190" />
           </mxCell>
         </object>
-        <object id="frozen-22" label="&lt;b&gt;Resource and interpretation boundaries&lt;/b&gt;&lt;br&gt;&lt;br&gt;External frozen image encoder: 244,576 parameters&lt;br&gt;FP16 descriptors: 1 MiB/frame before HDF5 compression.&lt;br&gt;Two full FP32 feature maps: 8 MiB transient/frame.&lt;br&gt;Cache I/O and online CLIP latency must be measured.&lt;br&gt;FV-NoProp vs FV-Prop isolates explicit state removal&lt;br&gt;under frozen vision, not the benefit of visual pretraining." tooltip="Resource and interpretation boundaries&#10;External frozen image encoder: 244,576 parameters&#10;FP16 descriptors: 1 MiB/frame before HDF5 compression.&#10;Two full FP32 feature maps: 8 MiB transient/frame.&#10;Cache I/O and online CLIP latency must be measured.&#10;FV-NoProp vs FV-Prop isolates explicit state removal&#10;under frozen vision, not the benefit of visual pretraining.">
+        <object id="frozen-22" label="&lt;b&gt;Resource and interpretation boundaries&lt;/b&gt;&lt;br&gt;&lt;br&gt;External frozen image encoder: 244,576 parameters&lt;br&gt;FP16 descriptors: 1 MiB/frame, stored uncompressed.&lt;br&gt;Two full FP32 feature maps: 8 MiB transient/frame.&lt;br&gt;Cache I/O and online CLIP latency must be measured.&lt;br&gt;FV-NoProp vs FV-Prop isolates explicit state removal&lt;br&gt;under frozen vision, not the benefit of visual pretraining." tooltip="Resource and interpretation boundaries&#10;External frozen image encoder: 244,576 parameters&#10;FP16 descriptors: 1 MiB/frame, stored uncompressed.&#10;Two full FP32 feature maps: 8 MiB transient/frame.&#10;Cache I/O and online CLIP latency must be measured.&#10;FV-NoProp vs FV-Prop isolates explicit state removal&#10;under frozen vision, not the benefit of visual pretraining.">
           <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="notes">
             <mxGeometry as="geometry" x="48" y="1465" width="804" height="230" />
           </mxCell>
@@ -778,6 +778,30 @@
             <mxGeometry as="geometry" x="930" y="1465" width="822" height="230" />
           </mxCell>
         </object>
+        <mxCell id="frozen-26" value="05  TRAINING I/O · SAME RAW FEATURES, MODEL AND CAUSAL CONTEXT" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="2085" width="1704" height="35" />
+        </mxCell>
+        <object id="frozen-27" label="&lt;b&gt;Immutable descriptor sidecars&lt;/b&gt;&lt;br&gt;&lt;br&gt;Shared storage works by default.&lt;br&gt;Optional explicit node-local scratch:&lt;br&gt;locked, verified, atomic staging.&lt;br&gt;Physical path override only; same identity.&lt;br&gt;No geometry, weights or learned cache copied.&lt;br&gt;Checkpoints/logs keep the durable run root." tooltip="data/stage_features.py. STMEM_SCRATCH_ROOT must name an available writable site-provided location. STMEM_FEATURE_CACHE_ROOT redirects raw sidecar readers without mutating scientific configuration. Dry-run generation never stages data; insufficient storage is reported before training.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="2145" width="500" height="300" />
+          </mxCell>
+        </object>
+        <object id="frozen-28" label="&lt;b&gt;Bounded descriptor producer · CPU&lt;/b&gt;&lt;br&gt;&lt;br&gt;DataLoader sends lightweight row references.&lt;br&gt;Producer reads upcoming encoder chunks.&lt;br&gt;Default queue: 2 chunks per training rank.&lt;br&gt;Reusable pinned host buffers on CUDA.&lt;br&gt;Separate from geometry worker prefetch.&lt;br&gt;No whole-episode descriptor queue." tooltip="data/feature_prefetch.py and models/batched_policy.py. STMEM_FEATURE_PREFETCH_CHUNKS=0 selects synchronous loading. Queued bytes follow the existing packed row indices; fetching later work early does not expose future frames to the current decision.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="640" y="2145" width="500" height="300" />
+          </mxCell>
+        </object>
+        <object id="frozen-29" label="&lt;b&gt;Asynchronous transfer → same encoder&lt;/b&gt;&lt;br&gt;&lt;br&gt;CUDA copy stream overlaps H2D with work.&lt;br&gt;Consumer waits for its own copy event.&lt;br&gt;Host buffers reused after copy completes.&lt;br&gt;GPU descriptors stay valid through backward.&lt;br&gt;Projection and full-history encoding trained.&lt;br&gt;No change to masks, loss or checkpoint shape." tooltip="The I/O pipeline never caches learned projection outputs, drops historical leaves or reuses mutable GPU storage needed by autograd. A CUDA event orders each consuming stream after its copy; pinned host storage is not overwritten during transfer. These are runtime controls, not a new scientific experiment.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1232" y="2145" width="520" height="300" />
+          </mxCell>
+        </object>
+        <mxCell id="frozen-30" value="raw FP16" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="frozen-27" target="frozen-28">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="frozen-31" value="pinned CPU" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="frozen-28" target="frozen-29">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>

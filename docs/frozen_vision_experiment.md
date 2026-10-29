@@ -94,9 +94,12 @@ Raw FP16 descriptors cost **1 MiB/frame** at 2,048 points; provenance adds about
 10 KiB/frame. Budget approximately **98.6 GiB per 100,000 frames**, plus small
 HDF5 headers. Estimate the actual dataset below before allocating storage.
 Descriptors are contiguous and uncompressed for bounded memory-mapped reads.
-Workers enqueue lightweight row references; only the next encoder block batch
-is materialized. Whole descriptor episodes are not retained in the prefetch
-queue.
+DataLoader workers enqueue lightweight row references. A separate bounded
+producer in each training rank reads the actual descriptor chunks while the GPU
+processes earlier chunks. On CUDA, reusable pinned CPU buffers and a separate
+copy stream overlap transfers with computation. Neither queue materializes whole
+descriptor episodes. The trainable projection still runs on every forward pass;
+only immutable raw CLIP descriptors are read from the cache.
 
 Writers use `<task>.partial.h5` and completed-row counters. A matching partial
 file resumes. Completed files are immutable: `--skip-existing` verifies/reuses
@@ -338,6 +341,83 @@ The separate output directories are
 capacity measurement is wanted, use `teacher_fv_prop_10hz.yaml` with
 `hpc/profile_memory.py` and a fresh `--name`; this is not another preparation
 step. Keep the checkpoint's cadence settings when evaluating it.
+
+### 5b. Descriptor prefetch and optional node-local staging
+
+The descriptor I/O pipeline is enabled by default for frozen-vision training.
+It preserves the same points, raw FP16 descriptors, causal history, batch size,
+loss and model parameters. Existing teacher checkpoints can resume with it; no feature
+preparation or new training run is needed.
+
+`STMEM_FEATURE_PREFETCH_CHUNKS=2` bounds the background descriptor queue per
+training rank. It is separate from `training.workers` and `prefetch_factor`,
+which control the geometry/row-reference DataLoader. Add
+`STMEM_FEATURE_PREFETCH_CHUNKS=0` to the site file and regenerate the job for a
+synchronous comparison; no setting is needed for the default depth two. This
+is a runtime setting, so changing it does not change checkpoint compatibility
+or the scientific configuration.
+
+For the first resumed HPC run, leave `STMEM_SCRATCH_ROOT=` empty in
+`hpc/site_b200_4gpu.env`. This enables descriptor prefetch and asynchronous
+transfers while continuing to read the shared sidecars. A local scratch path
+has not been established for this site, so staging remains disabled.
+
+Pinned CPU capacity is bounded by queue depth × the largest chunk's number of
+frames × points/frame × 256 FP16 values. With depth two, 32 eight-frame blocks
+and 2,048 points/frame, this is up to **512 MiB per rank** (2 GiB over four ranks),
+in addition to geometry DataLoader memory. Prefetched GPU chunks add bounded
+lookahead storage; descriptor tensors already consumed by the trainable encoder
+can remain live until backward, just as before.
+
+To also stage immutable feature sidecars, set `STMEM_SCRATCH_ROOT` in the site
+file to an existing absolute, writable node-local SSD directory supplied by
+your HPC site. Do not substitute a guessed mount point. If the setting is empty, training
+reads the shared feature directory and prefetch still operates. Staging copies
+the selected completed feature sidecars before training starts, checks the
+feature/geometry identities, verifies copy readback SHA256 and publishes files
+atomically under a lock. It does not copy raw task archives, prepared point
+clouds, CLIP weights or learned teacher caches.
+
+The launcher sets `STMEM_FEATURE_CACHE_ROOT` to the verified physical copy for
+the job. This overrides where readers find the sidecars without changing
+`visual_features.cache_dir`, feature identity or checkpoint hashes. Durable
+checkpoints, logs and W&B state stay under the original `STMEM_RUN_ROOT`.
+Staged files live under
+`$STMEM_SCRATCH_ROOT/chronotree_features/uid_<uid>/<source-identity>/`.
+Verified copies can be reused by jobs on that node while their source identity
+and file fingerprints still match. Staging needs enough local space for the
+selected files and introduces a copy cost before the first update; assess the
+steady-state benefit separately. Insufficient space or validation failure stops
+the launch with a diagnostic; it does not delete other jobs' data or silently
+fall back to shared storage. Progress appears in the Slurm error log as
+`feature_staging` JSON events, including copied/reused bytes and elapsed time.
+
+Pull the updated code before restarting a job. For an existing 10 Hz FV-NoProp
+run, retain its configuration and run root, stop its old allocation before
+resuming, and regenerate the launch script with `--resume`:
+
+```bash
+"$STMEM_PYTHON" hpc/plan.py \
+  --site hpc/site_b200_4gpu.env --profile b200_4gpu \
+  --teacher-config configs/teacher_fv_no_prop_10hz.yaml \
+  --run-root runs/teacher_fv_no_prop_10hz \
+  --output-dir hpc/generated/teacher_fv_no_prop_10hz \
+  --plan core_seed0 --only seed0_teacher --resume \
+  --log-every 1 --attention-every 10 --progress-every-seconds 30 --submit
+```
+
+The normal planner resume path keeps the checkpoint and W&B run. For a fresh
+experiment, use the commands in step 5 or 5a with a new run root. A dry run only
+generates the plan; it does not stage features on the login node. Compare
+completed `train/step_seconds` after startup using similar sampled history
+lengths. `train/feature_read_seconds_rank`,
+`train/feature_wait_seconds_rank` and `train/feature_transfer_seconds_rank`
+separate producer reads, exposed host queue waits and CUDA copy duration. Their
+`_max_rank` variants expose a slower rank; `train/step_seconds_max_rank` reports
+the slowest completed update. These phases overlap, so do not add the three
+durations. See [timing interpretation](hpc.md#diagnosing-slow-training).
+Prefetch can hide I/O latency but cannot create shared-storage bandwidth or
+remove the model's full-history computation.
 
 ### 6. Evaluate both snapshots on one H200 each, saving ten videos
 

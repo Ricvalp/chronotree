@@ -140,8 +140,15 @@ def _train_policy(
 ):
     from stmem.doctor import choose_precision
     from stmem.data.cache import FrozenCache
+    from stmem.data.feature_prefetch import (
+        feature_io_metrics,
+        reset_feature_io_metrics,
+        runtime_feature_io_settings,
+    )
 
     startup_started = time.perf_counter()
+    feature_io_settings = runtime_feature_io_settings()
+    feature_io_settings["cache_root_override"] = os.environ.get("STMEM_FEATURE_CACHE_ROOT") or None
     device, rank, world = distributed_setup()
     seed_all(cfg["seed"] + rank)
     if device.type == "cpu":
@@ -179,6 +186,12 @@ def _train_policy(
     data_seconds = time.perf_counter() - data_started
     startup_progress("model_initializing", data_seconds=data_seconds)
     policy = MemoryPolicy(cfg)
+    feature_io_enabled = bool(policy.encoder.visual.visual_feature_dim)
+    feature_io_settings["active"] = feature_io_enabled
+    for option in ("pinned_host_buffers", "asynchronous_transfer"):
+        feature_io_settings[option] = bool(
+            feature_io_settings[option] and feature_io_enabled and device.type == "cuda"
+        )
     dependencies = {}
     cache = None
     normalizer_seconds = None
@@ -288,6 +301,7 @@ def _train_policy(
                 "synthetic": data.synthetic,
                 "logging": logging,
                 "fork": fork,
+                "feature_io": feature_io_settings,
             },
             directory / "manifest.json",
         )
@@ -316,6 +330,7 @@ def _train_policy(
             "provenance": provenance,
             "environment": environment_manifest(),
             "logging": logging,
+            "training/feature_io": feature_io_settings,
         }
     )
     records_seen = torch.zeros((), device=device, dtype=torch.long)
@@ -412,6 +427,7 @@ def _train_policy(
     total_overflows = 0
     while step < steps:
         update_started = time.perf_counter()
+        reset_feature_io_metrics()
         optimizer.zero_grad(set_to_none=True)
         local_loss = torch.zeros((), device=device)
         update_leaves = torch.zeros((), device=device, dtype=torch.long)
@@ -546,6 +562,27 @@ def _train_policy(
             if world > 1:
                 torch.distributed.all_reduce(loss_tensor)
                 loss_tensor /= world
+            feature_metrics = {}
+            if feature_io_enabled:
+                io = feature_io_metrics()
+                feature_metrics = {f"feature_{key}_rank": value for key, value in io.items()}
+                # Descriptor reads run on producer threads and overlap compute.
+                # Report exposed waits and stream-copy durations separately;
+                # these components must not be added to obtain step duration.
+                # Rank-zero waits alone can hide a slow reader on another GPU.
+                maximum_keys = ("read_seconds", "wait_seconds", "transfer_seconds")
+                maxima = torch.tensor(
+                    [io[key] for key in maximum_keys] + [step_seconds],
+                    dtype=torch.float64,
+                    device=device,
+                )
+                if world > 1:
+                    torch.distributed.all_reduce(maxima, op=torch.distributed.ReduceOp.MAX)
+                values = maxima.tolist()
+                feature_metrics.update(
+                    {f"feature_{key}_max_rank": value for key, value in zip(maximum_keys, values[:-1])}
+                )
+                feature_metrics["step_seconds_max_rank"] = values[-1]
             elapsed = time.perf_counter() - started
             record = {
                 "step": current_step,
@@ -575,6 +612,7 @@ def _train_policy(
                 "gradient_norm_before_clip": float(grad_norm),
                 "amp_scale": scaler.get_scale(),
                 "amp_overflows_this_attempt": total_overflows,
+                **feature_metrics,
                 "gpu_peak_allocated_bytes_rank": torch.cuda.max_memory_allocated(device)
                 if device.type == "cuda"
                 else 0,

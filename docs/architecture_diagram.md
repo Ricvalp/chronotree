@@ -26,7 +26,7 @@ contains explanatory cards; hiding it leaves the main architecture visible.
 | Encoders | Prepared point sampling and center indices, point and edge MLPs, Gaussian pooling, historical event branches, and the byte-level text Transformer. |
 | Action decoder | Query projections, each residual attention/FFN sublayer, and the distinction between training flow matching and inference Euler integration. |
 | Context & size | The shared metadata adapter, current auxiliary branches, valid versus allocated context lengths, parameter counts, and core batching settings. |
-| Frozen vision | The shared frozen CLIP feature path, source-pixel correspondence/cache, and matched FV-Prop versus FV-NoProp state-input paths. |
+| Frozen vision | The shared frozen CLIP feature path, source-pixel correspondence/cache, matched FV-Prop versus FV-NoProp state-input paths, and training descriptor I/O. |
 
 Blue blocks represent visual/history processing, teal represents state and
 current evidence, violet represents goal text, and amber represents action
@@ -112,8 +112,26 @@ RGB, and the projected descriptor. Gaussian pooling, metadata, all visual
 quotas and causal history boundaries remain the same. The frozen RGB encoder
 has 244,576 parameters outside the policy optimizer; live evaluation executes
 it once per available observed frame, while training reads aligned sidecars.
-The cache contains 1 MiB of descriptor payload per full 2,048-point frame before
-compression, so full-data cache size and I/O throughput must be measured.
+The cache contains 1 MiB of contiguous, uncompressed descriptor payload per full
+2,048-point frame, so full-data cache size and I/O throughput must be measured.
+
+The training I/O section distinguishes lightweight row references prepared by
+DataLoader workers from the actual raw descriptors. Each training rank has a
+bounded background descriptor queue; CUDA execution uses reusable pinned CPU
+buffers and a separate copy stream. The current consumer waits for its own
+copy before encoding it. Reading a later chunk early does not expose its frames
+to an earlier decision: the packed row indices and strict causal history masks
+are unchanged. GPU descriptors needed for projection gradients remain valid
+through backward. Trainable projections and full-history activations are not
+cached by this pipeline.
+
+`STMEM_FEATURE_PREFETCH_CHUNKS` defaults to two; zero selects the synchronous
+path. Optional `STMEM_SCRATCH_ROOT` staging changes the physical sidecar location
+through `STMEM_FEATURE_CACHE_ROOT`, after verification. It does not change cache
+identity, model parameters, scientific configuration or resume compatibility.
+The diagram records these as runtime I/O controls, separate from model batching.
+See the [HPC workflow](frozen_vision_experiment.md#5b-descriptor-prefetch-and-optional-node-local-staging)
+for the directory and restart procedure.
 
 **FV-Prop** retains measured state, with one current state token and one event
 token per historical frame. **FV-NoProp** removes those tokens entirely,
@@ -141,8 +159,8 @@ the benefit of pretraining. Optional `current_only` keeps current measured state
 and removes historical measured state, but it is not a third required run.
 
 The optional 10 Hz variants are recorded separately as
-`teacher_fv_prop_10hz.yaml` and `teacher_fv_no_prop_10hz.yaml`. Their section at
-the bottom of the frozen-vision page retains eight **sampled frames per block**,
+`teacher_fv_prop_10hz.yaml` and `teacher_fv_no_prop_10hz.yaml`. Their separate
+section on the frozen-vision page retains eight **sampled frames per block**,
 not a window of eight blocks. It keeps source-local frames 0, 2, 4, … with their
 original timestamps and still provides 32 centers per retained frame. The H16
 decoder predicts targets held for two native 20 Hz simulator steps each;
@@ -276,3 +294,13 @@ explicit. Chromium rendered all five pages without overflowing text bounds,
 and the changed page was visually reviewed. Ruff and the snapshot/XML check
 passed. Local layout evidence is in `runs/architecture_diagram/temporal_10hz/`;
 this does not measure the new training recipe's performance.
+
+Later on 2026-10-29, the frozen-vision page gained a separate training I/O
+section for bounded descriptor prefetch, pinned host buffers, asynchronous
+transfers and optional verified staging. Model shapes and parameter counts
+remain unchanged; runtime controls are recorded separately in the JSON snapshot.
+Chromium opened the final HTML, navigated all five pages and found no overflowing
+text bounds; the new section was visually inspected. The snapshot/XML check,
+Ruff and diff whitespace check passed. Layout evidence is in
+`runs/architecture_diagram/feature_io/`. This verifies documentation consistency,
+not HPC storage bandwidth or a training-speed improvement.

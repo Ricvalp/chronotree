@@ -670,6 +670,15 @@ def render_job(
     for command in job.commands:
         launch = list(command)
         if job.stage in ("teacher", "compact", "router", "perceiver"):
+            config_path = command[command.index("--config") + 1]
+            lines += [
+                'if [[ -n "${STMEM_SCRATCH_ROOT:-}" ]]; then',
+                "  STMEM_FEATURE_CACHE_ROOT=$("
+                + shlex.join([python, "-m", "stmem.data.stage_features", "--config", config_path])
+                + ' --scratch-root "$STMEM_SCRATCH_ROOT" --print-path)',
+                "  export STMEM_FEATURE_CACHE_ROOT",
+                "fi",
+            ]
             launch = [
                 python,
                 "-m",

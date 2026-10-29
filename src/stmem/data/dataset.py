@@ -100,6 +100,7 @@ class EpisodeDataset:
             visual_feature_signature,
         )
         from .feature_cache import feature_cache_manifest
+        from .stage_features import consumer_feature_cache_root
 
         spec = resolve_visual_features(config)
         if spec["mode"] == "xyzrgb":
@@ -114,7 +115,7 @@ class EpisodeDataset:
         for ref in self.episodes:
             if ref.task in self.feature_paths:
                 continue
-            path = Path(spec["cache_dir"]) / f"{ref.task}.h5"
+            path = consumer_feature_cache_root(config) / f"{ref.task}.h5"
             self.feature_manifests[ref.task] = feature_cache_manifest(path, ref.metadata, spec)
             self.feature_paths[ref.task] = path
         self.feature_identity = identity

@@ -73,7 +73,11 @@ def test_render_forwards_nonsecret_settings_and_keeps_scientific_identity(planne
         f"WANDB_MODE=offline\nWANDB_PROJECT=chronotree\nWANDB_ENTITY=\nWANDB_DIR={shlex.quote(directory)}\n"
     )
     site = planner.read_site(site_path)
-    job = planner.Job("seed0_teacher", "teacher", [[sys.executable, "-m", "stmem.train"]])
+    config = tmp_path / "teacher.yaml"
+    config.write_text("model: {}\ntraining: {}\n")
+    job = planner.Job("seed0_teacher", "teacher", [[
+        sys.executable, "-m", "stmem.train", "--stage", "teacher", "--config", str(config),
+    ]])
     options = dict(
         repo=tmp_path,
         generated=tmp_path / "generated",

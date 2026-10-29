@@ -598,15 +598,35 @@ diagnostics. `train/data_wait_seconds_rank` measures how long the reporting rank
 waits for packed CPU microbatches; `train/data_loading_seconds_rank` is retained
 as an alias. With `training.workers: 0`, this includes synchronous reading and
 packing. With workers enabled, it measures exposed wait after background work
-overlaps previous GPU work. Frozen-cache reads remain outside this counter.
+overlaps previous GPU work. Frozen descriptor/cache reads remain outside this
+DataLoader counter.
 `train/data_worker_load_seconds_rank` and `train/data_worker_pack_seconds_rank`
 sum reading and packing durations for consumed batches. Those durations can
 overlap each other and GPU work; do not add them to update time.
 `train/data_prefetch_workers_rank` and `train/data_prefetch_capacity_rank`
 record the actual process count and outstanding microbatch bound.
-The cumulative `train/examples_per_second` includes
-overhead from previous checkpoints and diagnostics. Under DDP, per-update timing
-and heartbeat fields describe rank zero, not a reduction of all ranks' timings.
+Frozen-vision runs separately report descriptor I/O:
+
+| W&B metric | Meaning |
+| --- | --- |
+| `train/feature_read_seconds_rank` | Time the reporting rank spends reading raw descriptors into CPU buffers. |
+| `train/feature_wait_seconds_rank` | Exposed host wait for the background descriptor queue; excludes CUDA stream waits. |
+| `train/feature_transfer_seconds_rank` | CUDA event duration of descriptor copies, rather than host enqueue time. |
+| `train/feature_bytes_rank`, `train/feature_transfer_bytes_rank` | Descriptor bytes materialized and padded bytes transferred in the update. |
+| `train/feature_chunks_rank` | Number of materialized descriptor chunks. |
+
+Reads, transfers and compute overlap; these durations are **not additive**.
+An event wait on the consuming CUDA stream can delay GPU work without increasing
+the host queue-wait counter. The three duration metrics also have `_max_rank`
+variants, and `train/step_seconds_max_rank` reports the slowest rank's completed
+update. Use these to detect a storage/transfer straggler hidden by rank-zero
+metrics. Queue depth, physical cache override and transfer settings are recorded
+in the run manifest and `training/feature_io` summary.
+
+The cumulative `train/examples_per_second` includes overhead from previous
+checkpoints and diagnostics. Under DDP, ordinary per-update timing and heartbeat
+fields describe rank zero; only fields explicitly ending in `_max_rank` are
+reduced across ranks.
 
 `--progress-every-seconds 30` enables a small background thread that writes a
 flushed JSON heartbeat to stdout and `<stage>/progress.jsonl` even while the main
@@ -806,8 +826,13 @@ rank trains on the current one. HDF5 reads take place independently in each
 worker; no open HDF5 handle or CUDA context is passed to a worker. The existing
 decision index is reused, so workers do not repeat the full startup data scan.
 Model execution, random flow draws, context selection and all trainable encoding
-stay in the training process. Compact/Perceiver frozen feature-cache reads
-also remain there; the workers prepare raw observations and CPU input tensors.
+stay in the training process. Compact/Perceiver frozen learned-feature cache
+reads also remain there; the workers prepare raw observations and CPU input
+tensors. Frozen-vision teachers additionally use a bounded producer thread per
+rank to load the actual raw CLIP descriptors referenced by those CPU batches.
+Its queue is separate from the DataLoader queue. CUDA consumers use pinned CPU
+buffers and a separate transfer stream; raw descriptors are still passed through
+the trainable projection on every forward pass.
 
 `prefetch_factor` is the number of outstanding microbatches allowed per worker.
 The default of one means at most eight queued or in-flight microbatches per rank,
@@ -868,11 +893,23 @@ select `h200_1gpu`, and retain the same global batch and microbatch settings.
 No downloads run inside these jobs. Stage the locked environment, pinned benchmark
 and simulator, task archives, prepared training data, assets and caches beforehand.
 `CUDA_VISIBLE_DEVICES` remains under Slurm's control. Durable checkpoints and results
-always use `STMEM_RUN_ROOT`. Node-local scratch is optional; the current launcher
-does not copy caches automatically. If a site stages immutable caches, point
-`STMEM_CACHE_ROOT` at that verified copy in a site activation script and preserve
-the original cache manifest/hashes. `STMEM_SCRATCH_ROOT` documents the available
-location but does not infer a mount or silently stage the dataset.
+always use `STMEM_RUN_ROOT`. Node-local scratch is optional. For frozen-vision
+jobs, an explicit `STMEM_SCRATCH_ROOT` enables verified staging of completed raw
+CLIP descriptor sidecars before training. Use a writable node-local location
+provided by your site; the launcher does not guess a mount. It sets
+`STMEM_FEATURE_CACHE_ROOT` to the physical copy while retaining the original
+feature recipe, cache identity and checkpoint configuration. Raw archives,
+prepared geometry, CLIP weights and learned teacher caches stay in their
+configured locations. A dry run does not stage files. With an empty scratch
+setting, reads use shared storage and descriptor prefetch still works.
+
+`STMEM_FEATURE_PREFETCH_CHUNKS` defaults to `2` per rank; `0` disables background
+descriptor prefetch for comparison. This runtime control does not alter the
+batch size or limit historical evidence. See the
+[frozen-vision I/O workflow](frozen_vision_experiment.md#5b-descriptor-prefetch-and-optional-node-local-staging)
+for staging details and a resume command. Compare steady-state timings after
+startup; the first staging copy can take time, and parallel reads cannot exceed
+the storage system's available bandwidth.
 
 ## Checkpoint selection and resume
 
