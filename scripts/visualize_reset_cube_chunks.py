@@ -43,6 +43,8 @@ MODEL_LABELS = {
     "control": "Control continuation",
     "continuation_no_commands": "Continuation without previous joint commands",
     "fresh_no_commands": "From scratch without previous joint commands",
+    "h16": "H16 without previous joint commands",
+    "h32": "H32 without previous joint commands",
 }
 
 
@@ -174,6 +176,13 @@ def generate(args):
     started = time.perf_counter()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    requested_placements = getattr(args, "placements", None)
+    placements = (
+        [next(p for p in PLACEMENTS if p[0] == name) for name in requested_placements]
+        if requested_placements else PLACEMENTS
+    )
+    if placements[0][0] != "baseline" or len({p[0] for p in placements}) != len(placements):
+        raise ValueError("Placements must be unique and start with baseline")
     if (output / "payload.json").exists():
         raise FileExistsError("Use a new output directory, or --render-only to rebuild HTML")
     models, online_models, reference_cfg = [], {}, None
@@ -242,7 +251,7 @@ def generate(args):
     basestate = None
     baseline_reset = None
     with torch.no_grad(), episode_timeout(args.timeout_seconds):
-        for name, label, shift in PLACEMENTS:
+        for name, label, shift in placements:
             adapter = make_adapter(cfg, args.episode, args.split, feature_extractor)
             try:
                 if any(shift):
@@ -317,7 +326,8 @@ def generate(args):
                 displacement = np.linalg.norm(delta, axis=-1) * 1000
                 prediction["metrics"] = {
                     "first4_tcp_change_mean_mm": float(displacement[:payload["execute_steps"]].mean()),
-                    "full16_tcp_change_mean_mm": float(displacement.mean()),
+                    "full16_tcp_change_mean_mm": float(displacement[:16].mean()),
+                    "first16_tcp_change_mean_mm": float(displacement[:16].mean()),
                     "full_chunk_tcp_change_mean_mm": float(displacement.mean()),
                     "max_tcp_change_mm": float(displacement.max()),
                     "tcp_change_by_target_mm": displacement,
@@ -331,7 +341,7 @@ def generate(args):
         "actual_cube_translation_matches_requested_within_m": 1e-4,
         "fk_matches_observed_tcp_within_m": 1e-5,
         "finite_action_chunks": True,
-        "predicted_chunks": len(models) * len(PLACEMENTS) * len(args.seeds),
+        "predicted_chunks": len(models) * len(placements) * len(args.seeds),
         "predicted_commands_executed": 0,
     }
     payload["elapsed_seconds"] = time.perf_counter() - started
@@ -350,6 +360,8 @@ def main():
     parser.add_argument("--split", choices=("train", "val"), default="val")
     parser.add_argument("--episode", type=int, default=0)
     parser.add_argument("--seeds", nargs="+", type=int, default=[2701, 2702, 2703, 2704])
+    parser.add_argument("--placements", nargs="+", choices=[p[0] for p in PLACEMENTS],
+                        help="Ordered cube placements; must start with baseline (default: all five)")
     parser.add_argument("--timeout-seconds", type=int, default=600)
     parser.add_argument("--render-only", action="store_true")
     parser.add_argument("--data-only", action="store_true")
