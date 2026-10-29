@@ -152,8 +152,15 @@ def test_true_batches_and_short_remainder_match_accumulated_example_gradients(tm
     assert row["gradient_norm_before_clip"] > 0
 
 
-def test_batched_training_checkpoint_resume_is_bitwise_deterministic(tmp_path):
+@pytest.mark.parametrize("history_mode", ["full", "none"])
+def test_batched_training_checkpoint_resume_is_bitwise_deterministic(tmp_path, history_mode):
     cfg = _config(tmp_path / "complete")
+    if history_mode == "none":
+        cfg["model"].update(
+            history_mode="none",
+            proprioception_mode="none",
+            condition_on_previous_commands=False,
+        )
     complete_cfg = _write_config(tmp_path / "complete.yaml", cfg)
     resumed_cfg = deepcopy(cfg)
     resumed_cfg["paths"]["run_root"] = str(tmp_path / "resumed")
@@ -180,10 +187,21 @@ def test_batched_training_checkpoint_resume_is_bitwise_deterministic(tmp_path):
 
 
 @pytest.mark.skipif(not torch.distributed.is_available(), reason="PyTorch distributed is unavailable")
-def test_two_rank_cpu_ddp_runs_true_microbatches_and_writes_one_checkpoint(tmp_path):
+@pytest.mark.parametrize("history_mode", ["full", "none"])
+def test_two_rank_cpu_ddp_runs_true_microbatches_and_writes_one_checkpoint(tmp_path, history_mode):
     from stmem.models.policy import MemoryPolicy
 
-    cfg = _config(tmp_path / "ddp", batch=8, steps=2)
+    batch = 128 if history_mode == "none" else 8
+    cfg = _config(tmp_path / "ddp", batch=batch, steps=2)
+    if history_mode == "none":
+        cfg["model"].update(
+            history_mode="none",
+            proprioception_mode="none",
+            condition_on_previous_commands=False,
+        )
+        # Exact requested allocation semantics: 64 examples/rank, two ranks,
+        # one microbatch each, therefore 128 examples per optimizer update.
+        cfg["training"]["microbatch"] = 64
     cfg["training"]["weight_decay"] = 0  # Encoder changes must come from gradients.
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(cfg["seed"])
@@ -195,14 +213,22 @@ def test_two_rank_cpu_ddp_runs_true_microbatches_and_writes_one_checkpoint(tmp_p
     state = torch.load(directory / "last.pt", weights_only=False, map_location="cpu")
     assert state["step"] == 2 and state["provenance"]["world_size"] == 2
     assert len(state["rng_by_rank"]) == 2
-    assert state["sampler"]["next_global_position"] == 16
+    assert state["sampler"]["next_global_position"] == batch * 2
     assert all(torch.isfinite(value).all() for value in state["model"].values())
-    for name in ("encoder.visual.point_mlp.0.weight", "encoder.event.state.0.weight"):
+    learned = ["encoder.visual.point_mlp.0.weight"]
+    if history_mode == "full":
+        learned.append("encoder.event.state.0.weight")
+    for name in learned:
         assert not torch.equal(state["model"][name], initial[name]), name
     rows = _rows(directory / "metrics.jsonl")
     assert [row["step"] for row in rows] == [1, 2]
-    assert all(row["effective_batch"] == 8 for row in rows)
-    assert all(row["microbatch_size_rank"] == row["microbatches_per_update_rank"] == 2 for row in rows)
+    assert all(row["effective_batch"] == batch for row in rows)
+    if history_mode == "none":
+        assert all(row["microbatch_size_rank"] == 64 for row in rows)
+        assert all(row["microbatches_per_update_rank"] == 1 for row in rows)
+        assert not any(name.startswith(("encoder.event.", "proprio.", "clock.")) for name in state["model"])
+    else:
+        assert all(row["microbatch_size_rank"] == row["microbatches_per_update_rank"] == 2 for row in rows)
     assert all(
         np.isfinite(row["training_action_loss"]) and row["gradient_norm_before_clip"] > 0 for row in rows
     )

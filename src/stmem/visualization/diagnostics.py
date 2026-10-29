@@ -21,13 +21,17 @@ def fixed_policy_examples(data, count=2):
             by_episode.setdefault(episode, []).append(index)
     episodes = list(by_episode)
     chosen = episodes[:1] if count == 1 else episodes[:: max(1, len(episodes) - 1)]
-    examples = []
-    for episode in chosen:
-        candidates = by_episode[episode]
-        # Same early-prefix rule as the point-cloud diagnostics, independent of
-        # model results. Keep every conditioning and preceding execution frame.
-        index = next((i for i in candidates if i >= 2 * data.horizon), candidates[0])
-        if data.synthetic:
+    history_enabled = getattr(data, "history_enabled", True)
+    loaded_episode = None
+    loaded_index = None
+
+    def example(episode, index):
+        nonlocal loaded_episode, loaded_index
+        if not history_enabled and not data.synthetic:
+            return data.dataset.load_current_decisions(data.refs[episode], [index], data.horizon)[0]
+        if loaded_index == episode:
+            loaded = loaded_episode
+        elif data.synthetic:
             from stmem.data.dataset import synthetic_episode
 
             task, number, seed = data.refs[episode]
@@ -39,13 +43,25 @@ def fixed_policy_examples(data, count=2):
                 seed,
             )
             loaded.task, loaded.episode_id = task, f"episode_{number}"
+            loaded.observation_stride = getattr(data, "observation_stride", 1)
+            loaded.action_stride = getattr(data, "action_stride", 1)
         else:
             loaded = data.dataset.load_episode(data.refs[episode])
-        examples.append(loaded.decision(index, data.horizon))
+        loaded_episode, loaded_index = loaded, episode
+        decision = loaded.decision(index, data.horizon)
+        return decision if history_enabled else replace(decision, conditioning=[], execution_prefix=[])
+
+    examples = []
+    for episode in chosen:
+        candidates = by_episode[episode]
+        # Fixed early decision, independent of model results. Full-history models
+        # retain every available frame; current-only models read just this row.
+        index = next((i for i in candidates if i >= 2 * data.horizon), candidates[0])
+        examples.append(example(episode, index))
     if len(examples) < count and len(episodes) == 1:
         alternatives = [i for i in by_episode[episodes[0]] if i != examples[0].index]
         if alternatives:
-            examples.append(loaded.decision(alternatives[0], data.horizon))
+            examples.append(example(episodes[0], alternatives[0]))
     return examples
 
 

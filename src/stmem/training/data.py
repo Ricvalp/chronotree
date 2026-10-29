@@ -1,6 +1,7 @@
 """Deterministic task-balanced sampling, with disjoint rank positions."""
 
 from __future__ import annotations
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 import random
@@ -41,6 +42,7 @@ class TrainingData:
         self.cfg = cfg
         self.tasks = list(cfg["data"]["tasks"])
         self.synthetic = cfg["data"].get("synthetic", False)
+        self.history_enabled = cfg["model"].get("history_mode", "full") != "none"
         self.refs = []
         self.by_task = {task: [] for task in self.tasks}
         self.horizon = cfg["model"]["horizon"]
@@ -121,7 +123,7 @@ class TrainingData:
                     episode = self.dataset.load_episode_actions(self.refs[index])
                     execution_length = episode.execution_length
                     conditioning_length = episode.conditioning_length
-                if (
+                if self.history_enabled and (
                     execution_length > cfg["model"]["max_execution_frames"]
                     or conditioning_length > cfg["model"]["max_conditioning_frames"]
                 ):
@@ -175,7 +177,10 @@ class TrainingData:
         return episode
 
     def decision(self, index, time):
-        return self.episode(index).decision(time, self.horizon)
+        if not self.history_enabled and not self.synthetic:
+            return self.dataset.load_current_decisions(self.refs[index], [time], self.horizon)[0]
+        decision = self.episode(index).decision(time, self.horizon)
+        return decision if self.history_enabled else replace(decision, conditioning=[], execution_prefix=[])
 
     @lru_cache(maxsize=32)
     def _permutation(self, task, epoch):
@@ -212,6 +217,17 @@ class TrainingData:
             grouped.setdefault(episode_index, []).append((size - 1, decision_time))
         decisions = [None] * size
         for episode_index, requested in grouped.items():
+            if not self.history_enabled:
+                current = (
+                    self.dataset.load_current_decisions(
+                        self.refs[episode_index], [t for _, t in requested], self.horizon
+                    )
+                    if not self.synthetic
+                    else [self.decision(episode_index, t) for _, t in requested]
+                )
+                for (output_index, _), decision in zip(requested, current):
+                    decisions[output_index] = decision
+                continue
             episode = self.episode(episode_index)
             for output_index, decision_time in requested:
                 decisions[output_index] = episode.decision(decision_time, self.horizon)

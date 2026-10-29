@@ -190,3 +190,49 @@ class StreamingMemory:
             "encoding_calls": self.encoding_calls,
             "encoded_frames_including_prefix_reencodes": self.encoded_frames,
         }
+
+
+class CurrentObservationMemory:
+    """Explicit history ablation: retain one observation and no encoded archive."""
+
+    def __init__(self):
+        self._archive = Archive()
+        self.current = None
+        self.execution_observations = 0
+        self._seen = set()
+
+    def reset(self, conditioning=(), current=None):
+        # Supplied conditioning is deliberately excluded in this ablation.
+        self._archive.clear()
+        self.current = None
+        self.execution_observations = 0
+        self._seen.clear()
+        if current is not None:
+            self.observe(current)
+
+    def observe(self, frame):
+        key = (frame.source, frame.event_id)
+        if key in self._seen:
+            return False
+        if frame.source != "execution":
+            raise ValueError("Current-only observations must belong to execution")
+        if self.current is not None and frame.time <= self.current.time:
+            raise ValueError("New execution frames must have increasing source-local timestamps")
+        self.current = frame
+        self.execution_observations += 1
+        self._seen.add(key)
+        return True
+
+    @property
+    def archive(self):
+        return self._archive
+
+    @property
+    def storage(self):
+        return {
+            "archive_payload_bytes": 0,
+            "pending_raw_bytes": 0,
+            "event_identity_bytes": sum(len(s.encode()) + len(i.encode()) for s, i in self._seen),
+            "encoding_calls": 0,
+            "encoded_frames_including_prefix_reencodes": 0,
+        }

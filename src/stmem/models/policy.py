@@ -34,10 +34,22 @@ class MemoryPolicy(nn.Module):
         self.condition_on_previous_joint_commands = m.get("condition_on_previous_joint_commands", True)
         self.condition_on_previous_commands = m.get("condition_on_previous_commands", True)
         self.proprioception_mode = m.get("proprioception_mode", "all")
+        self.history_mode = m.get("history_mode", "full")
+        if self.history_mode not in ("full", "none"):
+            raise ValueError("model.history_mode must be full or none")
+        self.history_enabled = self.history_mode == "full"
+        self.clock_enabled = self.history_enabled
         if self.proprioception_mode not in ("all", "current_only", "none"):
             raise ValueError("model.proprioception_mode must be all, current_only, or none")
         if not isinstance(self.condition_on_previous_commands, bool):
             raise ValueError("model.condition_on_previous_commands must be boolean")
+        if not self.history_enabled and (
+            self.proprioception_mode != "none" or self.condition_on_previous_commands
+        ):
+            raise ValueError(
+                "Current-only policies require proprioception_mode=none and "
+                "condition_on_previous_commands=false"
+            )
         self.current_state_enabled = self.proprioception_mode != "none" or self.condition_on_previous_commands
         self.encoder = BlockEncoder(
             width=m["width"],
@@ -49,6 +61,7 @@ class MemoryPolicy(nn.Module):
             condition_on_previous_joint_commands=self.condition_on_previous_joint_commands,
             condition_on_previous_commands=self.condition_on_previous_commands,
             proprioception_mode=self.proprioception_mode,
+            history_enabled=self.history_enabled,
             visual_features=resolve_visual_features(config),
             **m.get("encoder_options", {}),
         )
@@ -56,9 +69,14 @@ class MemoryPolicy(nn.Module):
             m["width"], m["heads"], m.get("text_layers", 2), m.get("max_text_bytes", 256)
         )
         self.adapter = MetadataAdapter(m["width"])
-        self.proprio = nn.Sequential(nn.Linear(24, m["width"]), nn.SiLU(), nn.Linear(m["width"], m["width"]))
-        self.proprio.requires_grad_(self.current_state_enabled)
-        self.clock = nn.Linear(2, m["width"])
+        self.proprio = (
+            nn.Sequential(nn.Linear(24, m["width"]), nn.SiLU(), nn.Linear(m["width"], m["width"]))
+            if self.history_enabled
+            else None
+        )
+        if self.proprio is not None:
+            self.proprio.requires_grad_(self.current_state_enabled)
+        self.clock = nn.Linear(2, m["width"]) if self.clock_enabled else None
         decoder = RegressionHead if m.get("decoder") == "regression" else ActionFlow
         self.decoder = decoder(m["width"], m["heads"], m["layers"], m["horizon"])
         self.normalizer = ActionNormalizer()
@@ -89,7 +107,11 @@ class MemoryPolicy(nn.Module):
     def encode(self, decision, archive=None, current_records=None, text=None):
         from stmem.memory.streaming import build_archive
 
-        if archive is None:
+        if not self.history_enabled:
+            from stmem.memory.hierarchy import Archive
+
+            archive = Archive()
+        elif archive is None:
             archive = build_archive(
                 decision.conditioning,
                 decision.execution_prefix,
@@ -101,8 +123,10 @@ class MemoryPolicy(nn.Module):
         if text is None:
             text = self.text_encoder(decision.goal)
         clocks = {
-            "conditioning": decision.conditioning[-1].time if decision.conditioning else 0.0,
-            "execution": decision.current.time,
+            "conditioning": decision.conditioning[-1].time
+            if self.history_enabled and decision.conditioning
+            else 0.0,
+            "execution": decision.current.time if self.history_enabled else 0.0,
         }
         return Evidence(archive, current_records, text, decision.current, clocks)
 
@@ -148,7 +172,14 @@ class MemoryPolicy(nn.Module):
         return self.proprio(state)
 
     def context(self, evidence, records, *, perceiver=False):
-        current = self.adapter(evidence.current_records, evidence.clocks, self.device)
+        current = self.adapter(
+            evidence.current_records, evidence.clocks, self.device, timeless=not self.history_enabled
+        )
+        if not self.history_enabled:
+            if perceiver:
+                raise ValueError("Current-only policies have no history to resample")
+            current = torch.cat([current, evidence.text.to(self.device)[None]], 0)
+            return current, torch.zeros(len(current), device=self.device)
         f = evidence.current
         state = torch.cat(
             [

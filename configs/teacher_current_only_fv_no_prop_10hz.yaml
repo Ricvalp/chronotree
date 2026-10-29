@@ -1,0 +1,21 @@
+extends: teacher_fv_no_prop_10hz.yaml
+# Separately trained diagnostic: only the current visual observation and goal.
+# The supplied conditioning video and all execution history are deliberately
+# excluded. This is not the full-history teacher or its CURRENT readout baseline.
+profile: h200_2gpu
+model:
+  history_mode: none
+  proprioception_mode: none
+  condition_on_previous_commands: false
+  condition_on_previous_joint_commands: false
+  checkpoint_blocks: false
+training:
+  steps: 100000
+  effective_batch: 128
+  # Two GPUs, 64 examples on each device, one microbatch per optimizer update.
+  microbatch: 64
+  # Only current frames are encoded; no historical block batches are constructed.
+  encoder_block_batch_size: 64
+  workers: 8
+  lr: 0.0001
+  checkpoint_steps: [25000, 50000, 100000]

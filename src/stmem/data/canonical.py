@@ -55,6 +55,24 @@ def retained_observations(frames, stride: int):
     return [frame for frame in frames if frame.source_index % stride == 0]
 
 
+def aligned_action_chunk(actions, action_valid, index, horizon, alignment, action_stride=1):
+    """Shared supervision for full-history and selective current-frame readers."""
+    offset = action_alignment_offset(alignment)
+    if not 0 <= index < len(actions) or horizon < 1 or action_stride < 1:
+        raise IndexError("invalid decision index, horizon, or action stride")
+    target = actions.new_zeros((horizon, ACTION_DIM))
+    valid = torch.zeros_like(target, dtype=torch.bool)
+    start = index + offset
+    available = min(horizon, max(0, (len(actions) - start) // action_stride))
+    if available > 0:
+        end = start + available * action_stride
+        target[:available] = actions[start:end:action_stride]
+        valid[:available] = action_valid[start:end].reshape(available, action_stride, ACTION_DIM).all(1)
+        continuity = valid[:available, :7].all(-1).to(torch.int32).cumprod(0).bool()
+        valid[:available] &= continuity[:, None]
+    return target, valid
+
+
 @dataclass
 class Frame:
     points: Tensor
@@ -197,26 +215,16 @@ class Episode:
 
     def decision(self, index: int, horizon: int) -> Decision:
         # Unresolved samples are never made available to a substantive trainer.
-        offset = action_alignment_offset(self.alignment)
+        action_alignment_offset(self.alignment)
         if not 0 <= index < len(self.execution) or horizon < 1:
             raise IndexError("invalid decision index or horizon")
         if self.execution[index].source_index % self.observation_stride:
             raise IndexError("decision must lie on the retained observation cadence")
-        target = self.actions.new_zeros((horizon, ACTION_DIM))
-        valid = torch.zeros_like(target, dtype=torch.bool)
-        start = index + offset
         # Predict the first native command of each hold interval. Every native
         # command in that interval must exist: a final half interval is padding.
-        available = min(horizon, max(0, (len(self.actions) - start) // self.action_stride))
-        if available > 0:
-            end = start + available * self.action_stride
-            target[:available] = self.actions[start : end : self.action_stride]
-            valid[:available] = (
-                self.action_valid[start:end].reshape(available, self.action_stride, ACTION_DIM).all(1)
-            )
-            # A missing primitive command breaks chunk continuity; do not hop over it.
-            continuity = valid[:available, :7].all(-1).to(torch.int32).cumprod(0).bool()
-            valid[:available] &= continuity[:, None]
+        target, valid = aligned_action_chunk(
+            self.actions, self.action_valid, index, horizon, self.alignment, self.action_stride
+        )
         return Decision(
             self.execution[index],
             retained_observations(self.conditioning, self.observation_stride),

@@ -108,6 +108,19 @@ def validate_config(cfg: dict) -> None:
         if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
             raise ValueError(f"tracking.scenes.{key} must be an integer in [{low}, {high}]")
     m, t = cfg["model"], cfg["training"]
+    history_mode = m.get("history_mode", "full")
+    if history_mode not in ("full", "none"):
+        raise ValueError("model.history_mode must be full or none")
+    if history_mode == "none":
+        if m.get("proprioception_mode", "all") != "none" or m.get(
+            "condition_on_previous_commands", True
+        ) is not False:
+            raise ValueError(
+                "model.history_mode=none requires proprioception_mode=none and "
+                "condition_on_previous_commands=false (current vision and task text only)"
+            )
+        if cfg.get("stage", "teacher") != "teacher":
+            raise ValueError("model.history_mode=none is a separately trained teacher-stage ablation")
     if not isinstance(m.get("condition_on_previous_joint_commands", True), bool):
         raise ValueError("model.condition_on_previous_joint_commands must be boolean")
     if not isinstance(m.get("condition_on_previous_commands", True), bool):
@@ -170,6 +183,7 @@ def validate_config(cfg: dict) -> None:
     from stmem.memory.hierarchy import maximum_root_count
 
     # Checked again against actual archives at every read.
-    required = maximum_root_count(m["max_execution_frames"], m["max_conditioning_frames"], m["block_size"])
-    if min(m["budgets"]) < required:
-        raise ValueError(f"Budget {min(m['budgets'])} cannot cover worst-case {required} roots")
+    if history_mode != "none":
+        required = maximum_root_count(m["max_execution_frames"], m["max_conditioning_frames"], m["block_size"])
+        if min(m["budgets"]) < required:
+            raise ValueError(f"Budget {min(m['budgets'])} cannot cover worst-case {required} roots")

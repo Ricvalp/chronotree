@@ -1217,3 +1217,85 @@
     layout inspection pass. An earlier suite attempt observed one DataLoader
     worker abort during shutdown; the loader/resume subset (11 tests) and the
     subsequent complete suite passed without changing loader shutdown code.
+
+43. **Fresh current-visual-and-goal policy (29 October 2026).**
+    The requested visual-grounding experiment uses `model.history_mode: none`,
+    while existing configurations default to `full`. It is separately trained
+    from scratch, not the compact policy's history-dropout `CURRENT` readout.
+    The current visual encoder and conditional flow decoder remain the same;
+    the context is at most 32 observed current visual tokens plus one task-goal
+    token. Historical event, numerical state and source-clock modules are not
+    instantiated. No preceding command field, including gripper/availability,
+    is consumed. Current visual metadata retains observed spatial geometry and
+    constant type/resolution fields, but all four absolute/relative time fields
+    are zeroed. The inactive temporal Gaussian bandwidth is frozen because the
+    current encoder processes a single frame. The policy has 5,887,881 active
+    trainable parameters plus that one inactive scalar; the 244,576-parameter
+    external CLIP image encoder remains frozen and outside the optimizer.
+
+    The selective training reader loads current-frame geometry/features and
+    aligned action targets without materializing point-cloud histories. Online
+    deployment retains the latest current frame and skips encoding the supplied
+    initial conditioning video. It therefore does not compute a full history
+    merely to discard its output. Target construction retains the verified
+    revision-level alignment, held-action interval masking and terminal masks.
+    Existing full-rate `prepared_balanced_v2` geometry and CLIP sidecars are
+    reused without another preparation pass.
+
+    The isolated `teacher_current_only_fv_no_prop_10hz.yaml` recipe retains the
+    latest frozen-vision no-proprioception experiment's H16/10 Hz targets,
+    two-target execution/replanning, 1e-4 peak learning rate and 100k updates.
+    It requests two H200s, effective batch 128 and microbatch 64 per rank.
+    `site_h200_2gpu.env` selects `gpuq` with untyped `--gres=gpu:2`, 32 CPU cores,
+    128 GB host RAM and 48 hours. This resource request is not a measured H200
+    memory or throughput result. The planner allows the standalone teacher and
+    its checkpoint-selection evaluation while preventing this diagnostic from
+    entering the main compact TREE/FLAT training pipeline.
+
+    Discarding supplied conditioning and past events is an intentional
+    user-requested deviation from the benchmark's full-information contract.
+    Some tasks are not solvable from current observation and text alone. The
+    diagnostic therefore emphasizes first approach/grasp and cube-position
+    sensitivity, with full task success reported separately. It neither weakens
+    exact memory coverage nor changes matched TREE/FLAT supervision in the main
+    method. Failure would not prove that this architecture cannot learn visual
+    grounding; optimization, supervision and visibility still matter.
+
+    The architecture generator adds a separate sixth page, leaving the core
+    full-history pages and parameter counts intact. All three artifacts are
+    regenerated from code/configuration, and the new experiment workflow is in
+    `docs/current_only_experiment.md`. No HPC job is submitted by implementation
+    or diagram generation, and no learned result is claimed.
+
+    The actual HTML rendered all six pages in Chromium with no overflowing
+    text bounds; the new page and navigation were visually inspected. The
+    generated snapshot/XML check, Ruff and whitespace checks passed. Layout
+    evidence is retained under `runs/architecture_diagram/current_only/`.
+
+    Bounded hardware verification on the available NVIDIA RTX 5000 Ada (32 GB):
+    `uv run python -m stmem.doctor` passed FP32/BF16/FP16 attention/matmul backward
+    checks. Two real-data VideoUnmask training updates used microbatch 64, two
+    loader workers and BF16, with 1,494,844,928 bytes (1.39 GiB) peak allocated
+    GPU memory. Every sample had zero history frames/leaves/context tokens.
+    The two fixed probes each had 33 context tokens, zero history/clock attention
+    mass, and produced point-cloud diagnostics. The local update batch was 64
+    on one GPU; the separate two-process CPU/Gloo test exercised global batch
+    128 with 64 samples per rank. Distributed gradients matched the reference,
+    including visual parameters unused by the final accumulated microbatch.
+    Stop/resume matched uninterrupted model, optimizer, scheduler, scaler, RNG
+    and sampler state bit-for-bit.
+
+    A real VideoUnmask validation reset/rollout with this two-update diagnostic
+    checkpoint executed five native commands and reached its deliberately short
+    step limit with no errors (requested limit 4; wrapper-reported effective
+    limit 6); conditioning features and all history tokens
+    were omitted. This is an interface/rendering check, not a task-success
+    result. Logs and local configurations are retained under
+    `runs/inspection/current_only_20261029/`. The two-H200 planner dry-run and
+    generated shell syntax passed, with `--gres=gpu:2` and one two-worker
+    torchrun agent. H200 training/throughput remains unmeasured.
+
+    Final CPU-safe regression run: `CUDA_VISIBLE_DEVICES='' uv run pytest -q`
+    passed 849 tests, with three CUDA-only tests and one optional small-data
+    fixture skipped. The real-data GPU training and simulator checks above ran
+    separately. Ruff and `generate_teacher_diagram.py --check` also passed.

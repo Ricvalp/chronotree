@@ -77,6 +77,8 @@ def train_policy(
         raise ValueError("Choose either resume or fork_from, not both")
     if fork_sha256 and not fork_from:
         raise ValueError("fork_sha256 requires fork_from")
+    if cfg["model"].get("history_mode", "full") == "none" and stage != "teacher":
+        raise ValueError("Current-only ablation training supports the teacher stage only")
     if fork_from and stage != "teacher":
         raise ValueError("Only teacher checkpoints support matched continuations")
     logging = resolve_logging(cfg, log_every, progress_every_seconds, attention_every)
@@ -341,7 +343,14 @@ def _train_policy(
     from stmem.training.attention import PolicyAttention
 
     attention = PolicyAttention(
-        cfg, policy, tracker, scenes, stage=stage, every=logging["attention_every"], cache=cache, precision=precision
+        cfg,
+        policy,
+        tracker,
+        scenes,
+        stage=stage,
+        every=logging["attention_every"],
+        cache=cache,
+        precision=precision,
     )
     startup_progress(
         "loader_starting",

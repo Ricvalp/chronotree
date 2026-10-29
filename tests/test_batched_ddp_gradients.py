@@ -5,14 +5,18 @@ import subprocess
 import sys
 from textwrap import dedent
 
+import pytest
 
-def test_ddp_accumulation_reduces_parameters_unused_in_final_microbatch(tmp_path):
+
+@pytest.mark.parametrize("history_mode", ["full", "none"])
+def test_ddp_accumulation_reduces_parameters_unused_in_final_microbatch(tmp_path, history_mode):
     script = tmp_path / "ddp_unused.py"
     script.write_text(
         dedent(
             """
             from contextlib import nullcontext
             from copy import deepcopy
+            import sys
             import torch
             import torch.distributed as dist
             from torch.nn.parallel import DistributedDataParallel
@@ -33,6 +37,11 @@ def test_ddp_accumulation_reduces_parameters_unused_in_final_microbatch(tmp_path
                 encoder_options={"neighbor_cap": 4, "center_chunk": 2},
             )
             cfg["training"]["encoder_block_batch_size"] = 2
+            if sys.argv[1] == "none":
+                cfg["model"].update(
+                    history_mode="none", proprioception_mode="none",
+                    condition_on_previous_commands=False,
+                )
             policy = MemoryPolicy(cfg)
             reference = deepcopy(policy)
             model = DistributedDataParallel(policy, find_unused_parameters=True)
@@ -88,6 +97,7 @@ def test_ddp_accumulation_reduces_parameters_unused_in_final_microbatch(tmp_path
             "--nnodes=1",
             "--nproc-per-node=2",
             str(script),
+            history_mode,
         ],
         env=env,
         capture_output=True,

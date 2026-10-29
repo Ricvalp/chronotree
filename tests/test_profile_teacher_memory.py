@@ -117,15 +117,20 @@ def assert_identical(left, right):
 
 
 @pytest.mark.parametrize("trace_steps", [0, 1])
+@pytest.mark.parametrize("history_mode", ["full", "none"])
 def test_profile_updates_match_uninstrumented_teacher_and_leave_training_artifacts(
     profiler,
     tmp_path,
     monkeypatch,
     trace_steps,
+    history_mode,
 ):
     from stmem import train
 
     cfg = tiny_config(tmp_path)
+    cfg["model"]["history_mode"] = history_mode
+    if history_mode == "none":
+        cfg["model"].update(proprioception_mode="none", condition_on_previous_commands=False)
     cfg["training"]["steps"] += trace_steps
     cfg["training"]["checkpoint_every"] = cfg["training"]["steps"]
     original_cfg = deepcopy(cfg)
@@ -187,7 +192,8 @@ def test_profile_updates_match_uninstrumented_teacher_and_leave_training_artifac
         assert result["ranks"][0]["trace"]["updates"] == 1
         trace = json.loads(trace_path.read_text())
         labels = {item["name"] for item in trace["traceEvents"] if "name" in item}
-        assert {"teacher/history_encoder", "teacher/decoder", "teacher/backward"} <= labels
+        assert {"teacher/current_encoder", "teacher/decoder", "teacher/backward"} <= labels
+        assert ("teacher/history_encoder" in labels) == (history_mode == "full")
     else:
         assert not trace_path.exists()
         assert "trace" not in result["ranks"][0]

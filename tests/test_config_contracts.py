@@ -12,6 +12,52 @@ from stmem.data.prepare import prepare_task
 from stmem.training.runtime import validate_policy_config
 
 
+def test_current_only_ablation_is_explicit_and_does_not_require_a_history_budget():
+    cfg = load_config("configs/teacher_current_only_fv_no_prop_10hz.yaml")
+    validate_config(cfg)
+    assert cfg["model"]["history_mode"] == "none"
+    assert cfg["model"]["proprioception_mode"] == "none"
+    assert cfg["model"]["condition_on_previous_commands"] is False
+    assert cfg["model"]["horizon"] == 16 and cfg["model"]["action_stride"] == 2
+    assert cfg["data"]["observation_stride"] == 2
+    cfg["model"]["budgets"] = [1]
+    validate_config(cfg)
+    cfg["model"]["history_mode"] = "full"
+    with pytest.raises(ValueError, match="cannot cover worst-case"):
+        validate_config(cfg)
+
+
+@pytest.mark.parametrize("invalid", ["current", "", None, True, 0])
+def test_invalid_history_mode_is_rejected(invalid):
+    cfg = load_config("configs/debug/teacher.yaml")
+    cfg["model"]["history_mode"] = invalid
+    with pytest.raises(ValueError, match="model.history_mode"):
+        validate_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"proprioception_mode": "all"},
+        {"proprioception_mode": "current_only"},
+        {"condition_on_previous_commands": True},
+    ],
+)
+def test_current_only_ablation_rejects_additional_state_inputs(changes):
+    cfg = load_config("configs/teacher_current_only_fv_no_prop_10hz.yaml")
+    cfg["model"].update(changes)
+    with pytest.raises(ValueError, match="current vision and task text only"):
+        validate_config(cfg)
+
+
+@pytest.mark.parametrize("stage", ["compact", "perceiver", "router"])
+def test_current_only_ablation_cannot_replace_compact_reader_training(stage):
+    cfg = load_config("configs/teacher_current_only_fv_no_prop_10hz.yaml")
+    cfg["stage"] = stage
+    with pytest.raises(ValueError, match="separately trained teacher-stage ablation"):
+        validate_config(cfg)
+
+
 def test_policy_loader_defaults_and_debug_override():
     for path in ("configs/teacher.yaml", "configs/compact.yaml", "configs/perceiver.yaml"):
         cfg = load_config(path)

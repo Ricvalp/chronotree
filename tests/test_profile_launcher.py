@@ -60,7 +60,7 @@ def profile_launcher(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize(
     "profile, gpus",
-    [("h200_1gpu", 1), ("h200_4gpu", 4), ("b200_4gpu", 4), ("b200_8gpu", 8)],
+    [("h200_1gpu", 1), ("h200_2gpu", 2), ("h200_4gpu", 4), ("b200_4gpu", 4), ("b200_8gpu", 8)],
 )
 def test_dry_run_isolated_paths_config_and_single_agent(profile_launcher, monkeypatch, profile, gpus):
     launcher, invoke, repo, run_root, _ = profile_launcher

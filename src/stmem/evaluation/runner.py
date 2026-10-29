@@ -9,7 +9,7 @@ import time
 import traceback
 import numpy as np
 import torch
-from stmem.memory.streaming import StreamingMemory
+from stmem.memory.streaming import StreamingMemory, CurrentObservationMemory
 from stmem.models.policy import Evidence, choose_records
 from stmem.models.router import CachedScorer
 from stmem.evaluation.timing import DecisionTimer, latency_summary, accelerator_memory, process_memory
@@ -66,12 +66,19 @@ class OnlinePolicy:
                 "PERCEIVER requires its adapted checkpoint and exactly its trained latent budget"
             )
         m = cfg["model"]
-        self.memory = StreamingMemory(
-            policy.encoder,
-            m["block_size"],
-            archive_device=m["archive_device"],
-            max_execution_frames=m["max_execution_frames"],
-            max_conditioning_frames=m["max_conditioning_frames"],
+        self.history_enabled = m.get("history_mode", "full") != "none"
+        if not self.history_enabled and method not in ("FULL", "CURRENT"):
+            raise ValueError("A current-only checkpoint supports FULL/CURRENT evaluation only")
+        self.memory = (
+            StreamingMemory(
+                policy.encoder,
+                m["block_size"],
+                archive_device=m["archive_device"],
+                max_execution_frames=m["max_execution_frames"],
+                max_conditioning_frames=m["max_conditioning_frames"],
+            )
+            if self.history_enabled
+            else CurrentObservationMemory()
         )
         if method not in ("FULL", "CURRENT", "PERCEIVER"):
             self.memory.validate_budget(budget)
@@ -89,9 +96,11 @@ class OnlinePolicy:
     @torch.no_grad()
     def reset(self, reset, seed):
         with DecisionTimer(self.policy.device) as timer:
-            conditioning = [
-                frame for frame in reset.conditioning if frame.source_index % self.observation_stride == 0
-            ]
+            conditioning = (
+                [frame for frame in reset.conditioning if frame.source_index % self.observation_stride == 0]
+                if self.history_enabled
+                else []
+            )
             if reset.current.source_index % self.observation_stride:
                 raise ValueError("Reset current observation must lie on the declared sampling phase")
             self.memory.reset(conditioning, reset.current)
@@ -99,7 +108,7 @@ class OnlinePolicy:
             self.text = self.policy.text_encoder(reset.goal)
             self.clocks = {
                 "conditioning": conditioning[-1].time if conditioning else 0.0,
-                "execution": reset.current.time,
+                "execution": reset.current.time if self.history_enabled else 0.0,
             }
             self.generator = torch.Generator(device=self.policy.device).manual_seed(seed)
             self.selection_rng = random.Random(seed)
@@ -132,7 +141,7 @@ class OnlinePolicy:
             with timer.component("prefix_and_current_encoding"):
                 archive = memory.archive
                 current = policy.encoder.current(memory.current)
-                self.clocks["execution"] = memory.current.time
+                self.clocks["execution"] = memory.current.time if self.history_enabled else 0.0
                 evidence = Evidence(archive, current, self.text, memory.current, self.clocks.copy())
                 if self.intervention != "none":
                     from stmem.analyze import intervene_evidence
@@ -193,6 +202,7 @@ class OnlinePolicy:
                     if r.content_sum.device != policy.device
                 ),
                 "archive_fine_leaves": len(archive.leaves),
+                "history_mode": "full" if self.history_enabled else "none",
                 "observation_update_seconds": self.update_seconds,
                 "complete_online_seconds": timer.seconds + self.update_seconds,
                 "decision_index": self.decision_index,

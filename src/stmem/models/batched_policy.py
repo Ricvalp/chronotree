@@ -8,7 +8,7 @@ shared with that reference path.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from contextlib import contextmanager
 from itertools import repeat
 import math
@@ -371,6 +371,11 @@ def pack_policy_batch(decisions, block_size, *, model_config=None):
     decisions = list(decisions)
     if not decisions:
         raise ValueError("A policy batch must contain at least one decision")
+    history_enabled = model_config is None or model_config.get("history_mode", "full") == "full"
+    if not history_enabled:
+        # Drop raw banks before validation, collation or feature-row access.
+        # The ablation's worker payload is bounded by the current frame alone.
+        decisions = [replace(d, conditioning=[], execution_prefix=[]) for d in decisions]
     center_sampling = (
         None if model_config is None else model_config.get("encoder_options", {}).get("center_sampling")
     )
@@ -407,7 +412,7 @@ def pack_policy_batch(decisions, block_size, *, model_config=None):
         current_points=points,
         current_valid=valid,
         current_state=states,
-        clocks=_clocks(decisions, "cpu"),
+        clocks=_clocks(decisions, "cpu") if history_enabled else torch.zeros(len(decisions), 2),
         target_chunk=torch.stack([d.target_chunk for d in decisions]).cpu(),
         target_valid=torch.stack([d.target_valid for d in decisions]).cpu(),
         metadata=[
@@ -727,7 +732,43 @@ def batch_context(
             raise ValueError("Packed history uses a different encoder block size")
         clocks = packed_batch.clocks.to(device)
     else:
-        clocks = _clocks(decisions, device)
+        clocks = (
+            _clocks(decisions, device)
+            if policy.history_enabled
+            else torch.zeros(len(decisions), 2, device=device)
+        )
+    if not policy.history_enabled:
+        # Never consult/encode even an explicitly supplied history bank. This
+        # also protects callers that packed inputs with a generic old collator.
+        clocks = torch.zeros_like(clocks)
+        if perceiver:
+            raise ValueError("Current-only policies have no history to resample")
+        if evidences is None:
+            current = encode_current_bank(policy, decisions, clocks, packed_batch=packed_batch)
+            text = policy.text_encoder(
+                [d.goal for d in (decisions if packed_batch is None else packed_batch.metadata)]
+            )
+        else:
+            if len(evidences) != len(decisions):
+                raise ValueError("One cached evidence bank is required per decision")
+            current = records_bank(policy, [e.current_records for e in evidences], clocks)
+            text = torch.stack([e.text for e in evidences]).to(device)
+        current.metadata[..., 9:13] = 0
+        context = torch.cat([current.adapt(policy.adapter), text[:, None]], dim=1)
+        valid = torch.cat(
+            [current.valid, torch.ones(len(decisions), 1, device=device, dtype=torch.bool)], dim=1
+        )
+        if progress is not None:
+            progress.update("forward")
+        return (
+            context,
+            torch.zeros_like(valid, dtype=torch.float32).masked_fill(~valid, -torch.inf),
+            {
+                "history_leaves": torch.zeros(len(decisions), device=device, dtype=torch.long),
+                "history_context_tokens": torch.zeros(len(decisions), device=device, dtype=torch.long),
+                "current_visual_tokens": current.valid.sum(dim=1),
+            },
+        )
     if evidences is None:
         if progress is not None:
             progress.update("encoding_history")

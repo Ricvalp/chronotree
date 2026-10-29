@@ -268,7 +268,8 @@ def instrument(policy, probe):
                 (policy.encoder.visual.edge_mlp, "visual/edge_mlp"),
                 (policy.encoder.event, "events"),
             ):
-                stack.enter_context(patch.object(module, "forward", wrap(module.forward, label, major=False)))
+                if module is not None:
+                    stack.enter_context(patch.object(module, "forward", wrap(module.forward, label, major=False)))
             # These functions are imported by forward_batched in their own module.
             from stmem.models import batched_spacetime
 
@@ -357,6 +358,9 @@ def run_update(policy, model, loader, optimizer, scheduler, scaler, probe, cfg, 
     history_counts, current_counts = [], []
     examples, done = [], 0
     padded_max = 0
+    # Task text is always present. State and clock tokens follow the same
+    # explicit input contract as batched_policy, including current-only runs.
+    auxiliary_tokens = 1 + int(policy.current_state_enabled) + int(policy.clock_enabled)
     with instrument(policy, probe):
         while done < local_n:
             with probe.phase("data_wait"):
@@ -368,7 +372,7 @@ def run_update(policy, model, loader, optimizer, scheduler, scaler, probe, cfg, 
                 max(packed.history.blocks_per_example)
                 * (policy.encoder.visual_tokens + policy.encoder.block_size)
                 + policy.encoder.current_tokens
-                + 3
+                + auxiliary_tokens
             )
             padded_max = max(padded_max, padded)
             examples.extend(
@@ -401,7 +405,7 @@ def run_update(policy, model, loader, optimizer, scheduler, scaler, probe, cfg, 
                     scaler.scale(loss * (n / local_n)).backward()
             local_loss += loss.detach() * (n / local_n)
             history_counts.append(stats["history_context_tokens"].detach())
-            current_counts.append(stats["current_visual_tokens"].detach() + 3)
+            current_counts.append(stats["current_visual_tokens"].detach() + auxiliary_tokens)
             done += n
         with probe.phase("optimizer"):
             scaler.unscale_(optimizer)
@@ -514,7 +518,7 @@ def run_profile(cfg, options):
     options.validate()
     validate_config(cfg)
     if cfg.get("stage", "teacher") != "teacher":
-        raise ValueError("This profiler supports the full-history teacher stage only.")
+        raise ValueError("This profiler supports teacher-stage policies only.")
     if cfg["data"].get("split", "train") != "train":
         raise ValueError("Profiling uses training episodes only, never validation/test seeds.")
     tracking = cfg.get("tracking", {})

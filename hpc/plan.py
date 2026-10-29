@@ -21,6 +21,7 @@ REPO = Path(__file__).resolve().parents[1]
 PROFILES = {
     "a5000_debug": 1,
     "h200_1gpu": 1,
+    "h200_2gpu": 2,
     "h200_4gpu": 4,
     "b200_1gpu": 1,
     "b200_4gpu": 4,
@@ -938,6 +939,22 @@ def main() -> None:
     selected = [job for job in jobs if not args.only or job.name in args.only or job.stage in args.only]
     if args.only and not selected:
         parser.error("--only did not match any stage or job")
+    if resolved_config(teacher_config)["model"].get("history_mode", "full") == "none":
+        allowed = {
+            name
+            for seed in manifest["seeds"]
+            for name in (
+                f"seed{seed}_teacher",
+                f"seed{seed}_select_teacher",
+                *(f"seed{seed}_teacher_val_{step}" for step in manifest["teacher_candidates"]),
+            )
+        }
+        if any(job.name not in allowed for job in selected):
+            parser.error(
+                "Current-only teacher configurations support only teacher training and its "
+                "checkpoint-selection evaluation; use --only seed0_teacher to train. "
+                "The full memory/compact-reader pipeline requires a full-history teacher."
+            )
     skipped = [job.name for job in selected if args.resume and completed(job)]
     selected = [job for job in selected if job.name not in skipped]
     if args.resume:

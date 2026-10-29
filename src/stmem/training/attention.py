@@ -14,13 +14,15 @@ from stmem.models.policy import choose_records
 from stmem.tracking import _preserve_rng
 
 
-def context_groups(evidence, records, device, *, current_state_enabled=True):
+def context_groups(evidence, records, device, *, current_state_enabled=True, clock_enabled=True):
     """Exactly the token order produced by MemoryPolicy.context, without padding."""
     ids = {name: index for index, name in enumerate(GROUP_NAMES)}
     groups = [ids["current_visual"]] * len(evidence.current_records)
     if current_state_enabled:
         groups.append(ids["current_state"])
-    groups.extend(ids[name] for name in ("goal", "clock"))
+    groups.append(ids["goal"])
+    if clock_enabled:
+        groups.append(ids["clock"])
     groups.extend(
         ids["history_visual" if record.modality == "visual" else "history_event"] for record in records
     )
@@ -98,6 +100,7 @@ class PolicyAttention:
                             records,
                             policy.device,
                             current_state_enabled=policy.current_state_enabled,
+                            clock_enabled=policy.clock_enabled,
                         )
                         noise_seed = self.cfg["seed"] * 1009 + index
                         noise = torch.randn(

@@ -46,9 +46,13 @@ class MetadataAdapter(nn.Module):
         self.meta = nn.Sequential(nn.Linear(METADATA_DIM, width), nn.SiLU(), nn.Linear(width, width))
         self.norm = nn.LayerNorm(width)
 
-    def forward(self, records: list, clocks: dict, device) -> torch.Tensor:
+    def forward(self, records: list, clocks: dict, device, *, timeless=False) -> torch.Tensor:
         if not records:
             return torch.empty(0, self.content.out_features, device=device)
         latent = torch.stack([r.content.to(device).float() for r in records])
         meta = torch.stack([metadata(r, clocks, device=device) for r in records])
+        if timeless:
+            # Current-only ablations keep observed geometry and token type,
+            # but cannot infer episode progress from absolute clocks or ages.
+            meta[:, 9:13] = 0
         return self.norm(self.content(latent) + self.meta(meta))

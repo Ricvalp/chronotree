@@ -120,7 +120,11 @@ def validate_policy_config(checkpoint_cfg: dict, cfg: dict) -> None:
             mismatches.append(f"{section}.{name}: checkpoint={recorded!r}, requested={requested!r}")
     from stmem.vision.frozen import visual_feature_identity, resolve_visual_features
 
-    for key, default in (("proprioception_mode", "all"), ("condition_on_previous_commands", True)):
+    for key, default in (
+        ("proprioception_mode", "all"),
+        ("condition_on_previous_commands", True),
+        ("history_mode", "full"),
+    ):
         recorded = checkpoint_cfg.get("model", {}).get(key, default)
         requested = cfg.get("model", {}).get(key, default)
         if key == "condition_on_previous_commands" and (
@@ -132,6 +136,8 @@ def validate_policy_config(checkpoint_cfg: dict, cfg: dict) -> None:
             or requested not in ("all", "current_only", "none")
         ):
             raise ValueError("model.proprioception_mode must be all, current_only, or none")
+        if key == "history_mode" and (recorded not in ("full", "none") or requested not in ("full", "none")):
+            raise ValueError("model.history_mode must be full or none")
         if recorded != requested:
             mismatches.append(f"model.{key}: checkpoint={recorded!r}, requested={requested!r}")
     if visual_feature_identity(checkpoint_cfg) != visual_feature_identity(cfg):

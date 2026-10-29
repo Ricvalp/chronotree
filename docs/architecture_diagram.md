@@ -13,7 +13,7 @@ installation is needed to view or edit the saved diagram.
 
 ## Reading the diagram
 
-Use the five navigation tabs at the top of a page, or the viewer's page selector.
+Use the six navigation tabs at the top of a page, or the viewer's page selector.
 Hover over the diagram to reveal the toolbar. Zoom, drag to pan, and hover over
 blocks for source references and implementation notes. Linked blocks open a more
 detailed page. The toolbar also offers layers and a larger lightbox; the lightbox
@@ -27,6 +27,7 @@ contains explanatory cards; hiding it leaves the main architecture visible.
 | Action decoder | Query projections, each residual attention/FFN sublayer, and the distinction between training flow matching and inference Euler integration. |
 | Context & size | The shared metadata adapter, current auxiliary branches, valid versus allocated context lengths, parameter counts, and core batching settings. |
 | Frozen vision | The shared frozen CLIP feature path, source-pixel correspondence/cache, matched FV-Prop versus FV-NoProp state-input paths, and training descriptor I/O. |
+| Current only | A separately trained current-visual-and-goal policy, with no history, numerical robot state, previous commands or clock inputs. |
 
 Blue blocks represent visual/history processing, teal represents state and
 current evidence, violet represents goal text, and amber represents action
@@ -170,6 +171,37 @@ CLIP sidecars are reused. The four earlier pages and the baseline H32 section
 retain their original cadence. The JSON snapshot records both optional cadence
 configurations and their parameter counts explicitly.
 
+## Current-observation-only diagnostic
+
+The sixth page describes
+[`teacher_current_only_fv_no_prop_10hz.yaml`](../configs/teacher_current_only_fv_no_prop_10hz.yaml),
+a fresh experiment with `model.history_mode: none`. It retains the frozen
+CLIP-augmented current visual encoder and the same conditional flow decoder.
+The decoder sees at most **32 current visual tokens plus one goal token**.
+There is no historical block encoding, event encoder, current state MLP or
+clock projection. All previous commands and numerical proprioception are
+excluded. The current metadata adapter retains observed spatial geometry and
+constant token type/resolution fields; its four absolute/relative time fields
+are fixed to zero. Visible robot pixels, depth and camera calibration remain.
+
+The loader reads the current prepared frame and its aligned descriptors,
+instead of loading entire historical point-cloud prefixes. Online execution
+retains only the latest observation and skips conditioning-video encoding.
+Training targets still use the same verified action alignment and masks.
+The recipe predicts 16 absolute joint/gripper targets at 10 Hz, executes two
+targets (four native 20 Hz simulator steps) before replanning, and uses effective
+batch 128 with microbatch 64 on each of two H200s. The proposed allocation does
+not constitute a measured H200 memory or throughput result.
+
+There are **5,887,881 active trainable policy parameters**, plus one inactive
+temporal-bandwidth scalar and the external 244,576-parameter frozen RGB encoder.
+The full-history core and frozen-vision parameter counts remain unchanged.
+This deliberately discards the reference video and episode history that some
+RoboMME tasks require, so it is a visual-grounding diagnostic, not a replacement
+for the full-history benchmark or the compact policy's `CURRENT` reader.
+See [the experiment workflow](current_only_experiment.md) for submission and
+interpretation.
+
 ## Prepared geometry and token counts
 
 The revised preparation writes `prepared_balanced_v2/`, preserving the previous
@@ -304,3 +336,14 @@ text bounds; the new section was visually inspected. The snapshot/XML check,
 Ruff and diff whitespace check passed. Layout evidence is in
 `runs/architecture_diagram/feature_io/`. This verifies documentation consistency,
 not HPC storage bandwidth or a training-speed improvement.
+
+The current-only update on 2026-10-29 adds a sixth linked page and a separate
+configuration/parameter snapshot, preserving the full-history pages. The new
+page explicitly shows a single current observation, spatial-only metadata,
+one goal token and the unchanged flow decoder. Chromium opened the actual HTML,
+navigated all six pages and found no overflowing text bounds. The current-only
+layout and the narrower navigation tabs were visually inspected; an initial
+connector crossing a card was rerouted before the final check. Ruff,
+the snapshot/XML check and whitespace checks passed. Local layout evidence is
+in `runs/architecture_diagram/current_only/`. These checks do not establish
+H200 memory fit or learned policy performance.

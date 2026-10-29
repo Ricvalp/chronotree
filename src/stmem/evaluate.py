@@ -350,6 +350,7 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
                 center_counts=center_counts(cfg),
                 feature_extractor=feature_extractor,
                 observation_stride=cfg["data"].get("observation_stride", 1),
+                include_conditioning=cfg["model"].get("history_mode", "full") != "none",
             )
             if args.targeting_diagnostics:
                 from stmem.evaluation.targeting import TargetingAdapter

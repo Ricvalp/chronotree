@@ -202,7 +202,7 @@ def feature_cache_manifest(path: Path, prepared: dict, config: dict) -> dict:
         ) from error
 
 
-def episode_feature_rows(path: Path, key: str, prepared_group, signature: str):
+def episode_feature_rows(path: Path, key: str, prepared_group, signature: str, *, selected_rows=None):
     """Return lazy feature rows and small camera/UV sidecars for one episode."""
     with h5py.File(path, "r") as handle:
         if key not in handle:
@@ -219,12 +219,14 @@ def episode_feature_rows(path: Path, key: str, prepared_group, signature: str):
         if offset is None or values.chunks is not None or values.dtype != np.dtype("<f2"):
             raise ValueError("Frozen descriptors must use contiguous FP16 storage")
         stride = points * FEATURE_DIM * np.dtype("f2").itemsize
+        selected = range(rows) if selected_rows is None else selected_rows
         refs = [
             FeatureRow(str(path.resolve()), key, row, points, signature, offset + row * stride)
-            for row in range(rows)
+            for row in selected
         ]
         # Provenance is small (~10KiB/frame). Unlike descriptor tensors, it can
         # be retained in the ordinary two-episode CPU geometry LRU.
-        cameras = torch.from_numpy(np.asarray(group["point_camera"], dtype=np.int64))
-        uv = torch.from_numpy(np.asarray(group["point_uv"], dtype=np.int64))
+        selection = slice(None) if selected_rows is None else selected_rows
+        cameras = torch.from_numpy(np.asarray(group["point_camera"][selection], dtype=np.int64))
+        uv = torch.from_numpy(np.asarray(group["point_uv"][selection], dtype=np.int64))
     return refs, cameras, uv

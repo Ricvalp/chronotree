@@ -13,6 +13,7 @@ third_party/checkouts/
 hpc/site.env
 hpc/site_*.env
 !hpc/site_b200_4gpu.env
+!hpc/site_h200_2gpu.env
 hpc/generated/
 hpc/logs/*
 !hpc/logs/.gitkeep

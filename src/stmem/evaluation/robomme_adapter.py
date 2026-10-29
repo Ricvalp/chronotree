@@ -120,6 +120,7 @@ class RoboMMEAdapter:
         center_counts=(32,),
         feature_extractor=None,
         observation_stride=1,
+        include_conditioning=True,
     ):
         if split not in ("train", "val", "test"):
             raise ValueError("Unknown official split")
@@ -130,6 +131,7 @@ class RoboMMEAdapter:
         ):
             raise ValueError("observation_stride must be a positive integer")
         self.observation_stride = observation_stride
+        self.include_conditioning = include_conditioning
         self.task = task
         self.episode_idx = episode_idx
         self.split = split
@@ -235,7 +237,9 @@ class RoboMMEAdapter:
             self.last_rgb.append(
                 np.concatenate([allowed["front_rgb"], allowed["wrist_rgb"]], axis=1).astype(np.uint8)
             )
-            if index % self.observation_stride:
+            if index % self.observation_stride or (
+                source == "conditioning" and not self.include_conditioning
+            ):
                 continue
             cloud = (
                 rgbd_to_points_with_provenance if self.feature_extractor is not None else rgbd_to_points
@@ -306,6 +310,7 @@ class RoboMMEAdapter:
         self.metadata = self._runtime_metadata()
         self.metadata["conditioning_frames"] = len(frames) - 1
         self.metadata["conditioning_frames_recorded"] = self._clock["conditioning"]
+        self.metadata["conditioning_included"] = self.include_conditioning
         self.last_raw_observation = obs
         return ResetResult(frames[:-1], frames[-1], self.goal, self.metadata.copy())
 

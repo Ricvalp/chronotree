@@ -75,6 +75,54 @@ def option(command, name):
     return command[command.index(name) + 1]
 
 
+def test_current_only_teacher_renders_two_h200s_without_affecting_other_runs(planning, tmp_path):
+    planner, invoke, repo, run_root, generated = planning
+    site = tmp_path / "site.env"
+    site.write_text(
+        site.read_text()
+        + "STMEM_PARTITION=gpuq\nSTMEM_GPU_TYPE=\nSTMEM_CPUS=32\nSTMEM_MEM=128G\n"
+        + "STMEM_WALLTIME=48:00:00\nWANDB_MODE=online\nWANDB_PROJECT=chronotree\n"
+    )
+    config = repo / "configs/teacher_current_only_fv_no_prop_10hz.yaml"
+    original_config = config.read_bytes()
+    plan = invoke(
+        "--plan", "core_seed0", "--profile", "h200_2gpu", "--only", "seed0_teacher",
+        "--teacher-config", str(config), "--log-every", "1", "--attention-every", "10",
+    )
+    assert plan["job_count"] == 1 and plan["profile"] == "h200_2gpu"
+    job = plan["jobs"][0]
+    assert job["gpus"] == 2 and job["deps"] == [] and job["inputs"] == []
+    assert job["walltime"] == "48:00:00"
+    cfg = planner.resolved_config(Path(option(job["commands"][0], "--config")))
+    validate_config(cfg)
+    assert cfg["model"]["history_mode"] == cfg["model"]["proprioception_mode"] == "none"
+    assert cfg["model"]["condition_on_previous_commands"] is False
+    assert cfg["training"]["effective_batch"] == 128
+    assert cfg["training"]["microbatch"] == 64
+    assert cfg["training"]["microbatch"] * job["gpus"] == cfg["training"]["effective_batch"]
+    assert cfg["paths"]["run_root"] == str(run_root)
+    assert option(job["commands"][0], "--attention-every") == "10"
+    script = Path(job["script"]).read_text()
+    assert "#SBATCH --gres=gpu:2" in script and "gpu:h200" not in script
+    assert "#SBATCH --partition=gpuq" in script and "#SBATCH --cpus-per-task=32" in script
+    assert "#SBATCH --ntasks=1" in script and script.count("--nproc-per-node=2") == 1
+    assert "export WANDB_MODE=online" in script
+    assert config.read_bytes() == original_config
+    assert not run_root.exists() and not (generated / "submitted.json").exists()
+    subprocess.run(["bash", "-n", job["script"]], check=True)
+
+
+def test_current_only_teacher_cannot_launch_full_memory_pipeline(planning):
+    _, invoke, repo, _, _ = planning
+    config = repo / "configs/teacher_current_only_fv_no_prop_10hz.yaml"
+    for extra in ((), ("--only", "seed0_compact")):
+        with pytest.raises(SystemExit) as error:
+            invoke("--teacher-config", str(config), *extra)
+        assert error.value.code == 2
+    plan = invoke("--teacher-config", str(config), "--only", "seed0_teacher_val_50000", "seed0_select_teacher")
+    assert {job["name"] for job in plan["jobs"]} == {"seed0_teacher_val_50000", "seed0_select_teacher"}
+
+
 @pytest.mark.parametrize("plan_name", ("core_seed0", "central_3seed"))
 @pytest.mark.parametrize("profile, gpu_type", (("h200_4gpu", ""), ("b200_4gpu", "customgpu")))
 def test_teacher_plan_matches_training_budget_and_isolates_site_run_root(

@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "diagrams"
 STEM = "teacher_architecture"
 H32_CONFIG = "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml"
+CURRENT_ONLY_CONFIG = "configs/teacher_current_only_fv_no_prop_10hz.yaml"
 FV_CONFIGS = {
     "fv_prop": "configs/teacher_fv_prop.yaml",
     "fv_no_prop": "configs/teacher_fv_no_prop.yaml",
@@ -39,6 +40,7 @@ PAGES = (
     ("decoder", "03 · Action decoder"),
     ("context", "04 · Context & size"),
     ("frozen", "05 · Frozen vision"),
+    ("current", "06 · Current only"),
 )
 COLORS = {
     "data": ("#F1F5F9", "#64748B"),
@@ -56,6 +58,7 @@ SOURCES = [
     "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands.yaml",
     H32_CONFIG,
     *FV_CONFIGS.values(),
+    CURRENT_ONLY_CONFIG,
     "src/stmem/config.py",
     "src/stmem/data/pointcloud.py",
     "src/stmem/data/center_sampling.py",
@@ -119,6 +122,28 @@ def snapshot():
             "current_state_token": variant_policy.current_state_enabled,
             "historical_event_tokens": variant_policy.encoder.history_events_enabled,
         }
+    current_cfg = load_config(ROOT / CURRENT_ONLY_CONFIG)
+    current_policy = MemoryPolicy(current_cfg)
+    current_only = {
+        "configuration": CURRENT_ONLY_CONFIG,
+        "data": current_cfg["data"],
+        "model": current_cfg["model"],
+        "training": current_cfg["training"],
+        "total_policy_parameters": count(current_policy),
+        "trainable_policy_parameters": sum(p.numel() for p in current_policy.parameters() if p.requires_grad),
+        "inactive_policy_parameters": sum(
+            p.numel() for p in current_policy.parameters() if not p.requires_grad
+        ),
+        "external_frozen_encoder_parameters": count(_CLIPLayer1()),
+        "visual_feature_identity": visual_feature_identity(current_cfg),
+        "maximum_context_tokens": current_cfg["model"]["current_tokens"] + 1,
+        "context": ["current_visual", "goal_text"],
+        "history_encoder": False,
+        "current_state_token": current_policy.current_state_enabled,
+        "clock_token": current_policy.clock_enabled,
+        "temporal_metadata": False,
+        "benchmark_role": "separately trained current-only diagnostic; supplied conditioning video is omitted",
+    }
     if cfg["model"]["encoder"] != "joint" or cfg["model"]["decoder"] != "flow":
         raise ValueError("Update the curated diagram for this encoder/decoder variant.")
     if cfg["model"]["visual_tokens"] % cfg["model"]["block_size"]:
@@ -175,6 +200,7 @@ def snapshot():
             },
             "variants": {
                 **frozen_variants,
+                "current_only_fv_no_prop_10hz": current_only,
                 "no_previous_joint_commands_h32": {
                     "configuration": H32_CONFIG,
                     "model": h32_cfg["model"],
@@ -242,7 +268,9 @@ class Page:
             1690,
             30,
             (
-                "CHRONOTREE  /  Matched FV-Prop / FV-NoProp experiment     •     "
+                "CHRONOTREE  /  Current-only diagnostic experiment     •     "
+                if key == "current"
+                else "CHRONOTREE  /  Matched FV-Prop / FV-NoProp experiment     •     "
                 if key == "frozen"
                 else "CHRONOTREE  /  Teacher · configs/teacher.yaml     •     "
             )
@@ -1485,6 +1513,204 @@ def frozen_vision(file, facts):
     p.edge(producer, transfer, "pinned CPU", tone="visual")
 
 
+def current_only(file, facts):
+    """Separately trained reactive control; not a full-history teacher variant."""
+    variant = facts["variants"]["current_only_fv_no_prop_10hz"]
+    m, t = variant["model"], variant["training"]
+    p = Page(
+        file,
+        "current",
+        "Current observation + task · no history or proprioception",
+        "A fresh visual-grounding diagnostic with the same flow decoder; distinct from FULL and the compact CURRENT reader",
+        height=1910,
+    )
+    p.section(48, 225, 1704, "01  ONE OBSERVED FRAME · CURRENT VISUAL ENCODING ONLY")
+    observed = p.card(
+        48,
+        285,
+        500,
+        300,
+        "Current front + wrist RGB-D",
+        [
+            "Only the latest observation at a decision.",
+            "Combine calibrated visible points from both views.",
+            "≤2048 XYZRGB points; same balanced sampler.",
+            "Frozen CLIP RN50 layer1 → 256 features/point.",
+            "Training reuses aligned FP16 feature sidecars.",
+            "Visible robot pixels and calibration remain.",
+        ],
+        tone="data",
+        size=18,
+        tooltip="One current frame is consumed. Previous execution observations and the reset conditioning video are omitted by this explicitly separate ablation. Simulator state and cube poses are not policy inputs.",
+    )
+    visual = p.card(
+        640,
+        285,
+        500,
+        300,
+        "Same current-scene visual encoder",
+        [
+            "Descriptor LayerNorm + Linear: 256 → 128.",
+            "XYZRGB + descriptor → 134-value point input.",
+            "Point MLP: 134 → 256 → 256.",
+            "Edge MLP + spatial Gaussian local pooling.",
+            f"≤{m['current_tokens']} balanced observed-point centers.",
+            "Single-frame offsets: Δt = 0; no temporal pool.",
+        ],
+        tone="visual",
+        size=18,
+        tooltip="The current branch reuses SpacetimeEncoder's point/edge machinery. No historical block is loaded, packed, encoded or read; raw_tau_t is inactive because every neighbor belongs to the current frame.",
+    )
+    metadata_box = p.card(
+        1232,
+        285,
+        520,
+        300,
+        "Current visual metadata",
+        [
+            "Keep observed anchor XYZ and spatial bounds.",
+            "Keep constant source/type/resolution metadata.",
+            "Absolute time and relative-age fields are zero.",
+            "No history length or episode clock reaches policy.",
+            "Shared content + metadata adapter, LayerNorm.",
+            f"Output: ≤{m['current_tokens']} × {m['width']} valid visual tokens.",
+        ],
+        tone="visual",
+        size=18,
+        tooltip="The 23-field metadata layout is retained, but its four absolute/relative temporal fields are fixed to zero. Spatial metadata comes solely from the observed point cloud. No measured TCP metadata is present.",
+    )
+    p.edge(observed, visual, "current points", tone="visual")
+    p.edge(visual, metadata_box, "pooled tokens", tone="visual")
+    p.section(48, 630, 1704, "02  SAME ACTION DECODER · FIXED-SIZE VISUAL + TASK CONTEXT")
+    task = p.card(
+        48,
+        690,
+        500,
+        300,
+        "Supplied task-goal text",
+        [
+            "The available instruction; no hidden task ID.",
+            "Same trainable byte-level text encoder.",
+            "Byte/position embeddings + two Transformer layers.",
+            f"One pooled goal token of width {m['width']}.",
+            "No subgoals, target poses or future observations.",
+        ],
+        tone="text",
+        size=18,
+    )
+    context_box = p.card(
+        640,
+        690,
+        500,
+        300,
+        "Decoder context",
+        [
+            f"≤{m['current_tokens']} current visual tokens + one goal token.",
+            f"At most {variant['maximum_context_tokens']} valid tokens per decision.",
+            "No state, command, event or clock token.",
+            "No conditioning or execution history tokens.",
+            "Padding excluded from cross-attention.",
+            "Context size does not grow with episode age.",
+        ],
+        tone="event",
+        size=18,
+    )
+    decoder_box = p.card(
+        1232,
+        690,
+        520,
+        300,
+        "Unchanged conditional action flow",
+        [
+            f"{m['layers']} decoder layers, {m['heads']} heads, width {m['width']}.",
+            "Action self-attention + context cross-attention + FFN.",
+            f"H={m['horizon']} absolute joint/gripper targets; [B, {m['horizon']}, 8].",
+            f"{m['flow_steps']} Euler evaluations from paired Gaussian noise.",
+            f"10 Hz targets: hold each for {m['action_stride']} native steps.",
+            f"Execute {m['execute']} targets, then acquire current and replan.",
+        ],
+        tone="decoder",
+        size=18,
+        link="decoder",
+    )
+    p.edge(
+        metadata_box,
+        context_box,
+        "current visual",
+        tone="visual",
+        entry="exitX=0.5;exitY=1;entryX=0.5;entryY=0;",
+    )
+    route = ET.SubElement(p.root.findall("mxCell")[-1].find("mxGeometry"), "Array", {"as": "points"})
+    ET.SubElement(route, "mxPoint", x="1492", y="615")
+    ET.SubElement(route, "mxPoint", x="890", y="615")
+    p.edge(task, context_box, "goal", tone="text")
+    p.edge(context_box, decoder_box, "≤33 tokens", tone="decoder")
+    p.card(
+        48,
+        1050,
+        804,
+        320,
+        "History and state removal are structural",
+        [
+            "model.history_mode = none (default elsewhere remains full).",
+            "No historical event encoder, state MLP or clock projection.",
+            "No historical blocks or frozen descriptors read by workers.",
+            "Online reset/step retains only the current observation.",
+            "All previous commands, including gripper/availability, excluded.",
+            "No measured joints, TCP pose or gripper state enters the model.",
+            "Changing history, clocks or numerical state must not change output.",
+        ],
+        tone="note",
+        size=18,
+        tooltip="The empty archive placeholder only preserves interface compatibility. This is not a full history encoder whose output is discarded. Training and deployment share the same current-only contract.",
+    )
+    p.card(
+        930,
+        1050,
+        822,
+        320,
+        "Separate two-H200 training recipe",
+        [
+            "Single node, one torchrun agent, two DDP workers.",
+            f"Effective batch {t['effective_batch']}; microbatch {t['microbatch']}/GPU.",
+            "One local pass per optimizer update with both GPUs.",
+            f"AdamW, peak LR {t['lr']:g}; {t['steps']:,} optimizer steps.",
+            "Activation checkpointing off; decoder and flow loss unchanged.",
+            "Reuse prepared_balanced_v2 and existing CLIP feature sidecars.",
+            "Memory/throughput on H200s must be measured after launch.",
+        ],
+        tone="decoder",
+        size=18,
+    )
+    p.card(
+        48,
+        1430,
+        1704,
+        180,
+        "Interpretation: visual grounding diagnostic, not a replacement for the memory benchmark",
+        [
+            "This fresh policy deliberately lacks the supplied conditioning video and all episode history. Some RoboMME tasks require that information.",
+            "Inspect first approach/grasp and sensitivity to cube position separately from full task success. Failure cannot by itself rule out the architecture.",
+            "The full-history teacher, exact TREE/FLAT leaf coverage and matched supervision stay unchanged. This is also distinct from the compact CURRENT reader.",
+        ],
+        tone="note",
+        size=18,
+    )
+    p.card(
+        48,
+        1660,
+        1704,
+        140,
+        "Parameter accounting",
+        [
+            f"{variant['trainable_policy_parameters']:,} active trainable policy parameters; {variant['inactive_policy_parameters']:,} inactive stored parameters; {variant['total_policy_parameters']:,} total.",
+            f"Frozen external RGB encoder: {variant['external_frozen_encoder_parameters']:,} parameters. Counts exclude optimizer state, activations and CUDA workspace.",
+        ],
+        tone="note",
+        size=18,
+    )
+
+
 def validate_xml(xml):
     """Check references and page bounds without requiring the draw.io renderer."""
     file = ET.fromstring(xml)
@@ -1551,7 +1777,7 @@ footer{{padding:0 24px 18px;font-size:13px;color:#64748b}}
 <body>
 <header><div><div class="eyebrow">CHRONOTREE / MODEL REFERENCE</div>
 <h1>The full-history teacher</h1>
-<p>{total:,} core trainable parameters · Five linked views · Frozen-vision experiment included</p></div>
+<p>{total:,} core trainable parameters · Six linked views · Frozen-vision and current-only experiments</p></div>
 <nav aria-label="Diagram files">
 <a class="button" href="teacher_architecture.drawio" download>Download editable .drawio</a>
 <a class="button" href="../architecture_diagram.md">Reading guide</a>
@@ -1607,6 +1833,7 @@ def build():
     decoder(file, cfg, policy, facts)
     context(file, cfg, policy, facts)
     frozen_vision(file, facts)
+    current_only(file, facts)
     ET.indent(file, space="  ")
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(file, encoding="unicode") + "\n"
     validate_xml(xml)

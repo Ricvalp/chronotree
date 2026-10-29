@@ -485,6 +485,7 @@ class BlockEncoder(nn.Module):
         condition_on_previous_joint_commands: bool = True,
         condition_on_previous_commands: bool = True,
         proprioception_mode: str = "all",
+        history_enabled: bool = True,
         **visual_kwargs: Any,
     ):
         super().__init__()
@@ -503,16 +504,25 @@ class BlockEncoder(nn.Module):
         if proprioception_mode not in ("all", "current_only", "none"):
             raise ValueError("proprioception_mode must be all, current_only, or none")
         self.proprioception_mode = proprioception_mode
-        self.history_events_enabled = proprioception_mode == "all" or condition_on_previous_commands
-        self.visual = SpacetimeEncoder(width, framewise=variant == "framewise", **visual_kwargs)
-        self.event = EventEncoder(
-            width,
-            proprio_dim,
-            action_dim,
-            condition_on_previous_joint_commands=condition_on_previous_joint_commands,
-            condition_on_previous_commands=condition_on_previous_commands,
-            condition_on_proprioception=proprioception_mode == "all",
+        self.history_enabled = history_enabled
+        self.history_events_enabled = history_enabled and (
+            proprioception_mode == "all" or condition_on_previous_commands
         )
+        self.visual = SpacetimeEncoder(width, framewise=variant == "framewise", **visual_kwargs)
+        if history_enabled:
+            self.event = EventEncoder(
+                width,
+                proprio_dim,
+                action_dim,
+                condition_on_previous_joint_commands=condition_on_previous_joint_commands,
+                condition_on_previous_commands=condition_on_previous_commands,
+                condition_on_proprioception=proprioception_mode == "all",
+            )
+        else:
+            self.event = None
+            # Only a single current frame is encoded, so every temporal offset
+            # is zero. Do not optimize an inactive temporal bandwidth.
+            self.visual.raw_tau_t.requires_grad_(False)
 
     def encode_frames(
         self,
@@ -523,6 +533,8 @@ class BlockEncoder(nn.Module):
         completed: bool = True,
         trace: VisualTrace | None = None,
     ) -> list[MemoryRecord]:
+        if not self.history_enabled:
+            raise RuntimeError("History encoding is disabled for this current-observation-only policy")
         if not frames:
             return []
         if len(frames) > self.block_size:
@@ -614,7 +626,7 @@ class BlockEncoder(nn.Module):
         pooled = self.visual(
             [frame.points],
             [frame.valid],
-            [frame.time],
+            [frame.time if self.history_enabled else 0.0],
             [self.current_tokens],
             trace=trace,
             center_indices=indices,

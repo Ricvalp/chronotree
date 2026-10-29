@@ -13,6 +13,8 @@ from .canonical import (
     PROPRIO_DIM,
     Frame,
     Episode,
+    Decision,
+    aligned_action_chunk,
     action_alignment_offset,
     valid_decision_indices,
 )
@@ -313,6 +315,98 @@ class EpisodeDataset:
 
     def get_decision(self, episode_index, decision_index, horizon=None):
         return self.load_episode(episode_index).decision(decision_index, horizon or self.horizon)
+
+    def load_current_decisions(self, index, decision_indices, horizon=None):
+        """Current-only ablation: read requested observations, never entire episodes.
+
+        Small action/source arrays retain the exact canonical alignment and masks.
+        Proprioception remains available to diagnostic plots; the current-only
+        policy excludes it from every model input.
+        """
+        from .center_sampling import center_sampling_signature
+
+        indices = list(decision_indices)
+        if not indices:
+            return []
+        ref = self.episodes[index]
+        self._require_feature_episode(ref)
+        alignment = self._alignment_for(ref)
+        action_alignment_offset(alignment)
+        horizon = self.horizon if horizon is None else horizon
+        with h5py.File(ref.path, "r") as handle:
+            group = handle[ref.key]
+            self._validate_episode_layout(group)
+            execution_rows = np.flatnonzero(~np.asarray(group["source"]))
+            if any(not 0 <= i < len(execution_rows) for i in indices):
+                raise IndexError("invalid decision index")
+            rows = sorted({int(execution_rows[i]) for i in indices})
+            positions = {row: pos for pos, row in enumerate(rows)}
+            actions = torch.from_numpy(np.asarray(group["actions"])[execution_rows])
+            masks = torch.from_numpy(np.asarray(group["action_valid"])[execution_rows])
+            source_indices = np.asarray(group["source_index"][rows])
+            if any(i % self.observation_stride for i in source_indices):
+                raise IndexError("decision must lie on the retained observation cadence")
+            raw_indices = np.asarray(group["raw_index"][rows])
+            points = torch.from_numpy(np.asarray(group["points"][rows]))
+            valid = torch.from_numpy(np.asarray(group["valid"][rows]))
+            proprio = torch.from_numpy(np.asarray(group["proprio"][rows]))
+            centers, signature = {}, None
+            if ref.metadata.get("format") == FORMAT_VERSION:
+                signature = center_sampling_signature(ref.metadata["center_sampling"])
+                centers = {
+                    int(count): torch.from_numpy(np.asarray(values[rows]))
+                    for count, values in group["center_indices"].items()
+                }
+            features, cameras, uv = None, None, None
+            if self.feature_identity is not None:
+                from .feature_cache import episode_feature_rows
+
+                features, cameras, uv = episode_feature_rows(
+                    self.feature_paths[ref.task],
+                    ref.key,
+                    group,
+                    self.feature_signature,
+                    selected_rows=rows,
+                )
+            frames = [
+                Frame(
+                    points[pos],
+                    valid[pos],
+                    proprio[pos],
+                    torch.zeros(ACTION_DIM),
+                    False,
+                    float(source_indices[pos]),
+                    "execution",
+                    f"{ref.task}/{ref.key}/{int(raw_indices[pos])}",
+                    int(source_indices[pos]),
+                    center_indices={count: values[pos] for count, values in centers.items()},
+                    center_sampling_signature=signature,
+                    visual_features=None if features is None else features[pos],
+                    point_camera=None if cameras is None else cameras[pos],
+                    point_uv=None if uv is None else uv[pos],
+                    visual_feature_signature=self.feature_signature,
+                )
+                for pos in range(len(rows))
+            ]
+            decisions = []
+            for i in indices:
+                target, target_valid = aligned_action_chunk(
+                    actions, masks, i, horizon, alignment, self.action_stride
+                )
+                decisions.append(
+                    Decision(
+                        frames[positions[int(execution_rows[i])]],
+                        [],
+                        [],
+                        target,
+                        target_valid,
+                        str(group.attrs["goal"]),
+                        ref.task,
+                        ref.key,
+                        i,
+                    )
+                )
+        return decisions
 
     def sample(self, rng=None):
         rng = rng or random

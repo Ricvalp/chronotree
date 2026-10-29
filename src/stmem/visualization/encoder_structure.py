@@ -163,7 +163,9 @@ def build_structure(
         raise ValueError("decision_index must select an existing execution observation")
     if isinstance(detail_blocks, bool) or not isinstance(detail_blocks, int) or detail_blocks < 0:
         raise ValueError("detail_blocks must be a nonnegative integer")
-    conditioning, execution = episode.conditioning, episode.execution[:decision_index]
+    conditioning, execution = (
+        (episode.conditioning, episode.execution[:decision_index]) if encoder.history_enabled else ([], [])
+    )
     current = episode.execution[decision_index]
     if current.source != "execution":
         raise ValueError("The current observation must belong to the execution source")
@@ -241,7 +243,10 @@ def build_structure(
                 "visual_tokens": encoder.visual_tokens,
                 "current_tokens": encoder.current_tokens,
                 "proprioception_mode": encoder.proprioception_mode,
-                "condition_on_previous_commands": encoder.event.condition_on_previous_commands,
+                "history_enabled": encoder.history_enabled,
+                "condition_on_previous_commands": (
+                    encoder.event.condition_on_previous_commands if encoder.event is not None else False
+                ),
                 "history_events_enabled": encoder.history_events_enabled,
                 "tau_x": float(visual.tau_x.detach()),
                 "tau_t": float(visual.tau_t.detach()),
@@ -271,8 +276,16 @@ def build_structure(
                 "point_index_space": "Concatenated valid finite points, canonically ordered within each frame",
                 "gaussian": "exp(-squared_xyz_distance/tau_x - squared_recorded_frame_distance/tau_t)",
                 "normalization": "Softmax over allowed capped neighbors; masked slots have zero weight",
-                "causality": "All conditioning and execution strictly before current; current stays outside archive",
-                "scope": "Full causal binary hierarchy; point details only for the last requested blocks per source and current",
+                "causality": (
+                    "All conditioning and execution strictly before current; current stays outside archive"
+                    if encoder.history_enabled
+                    else "Current observation only; both historical banks are omitted"
+                ),
+                "scope": (
+                    "Full causal binary hierarchy; point details only for the last requested blocks per source and current"
+                    if encoder.history_enabled
+                    else "Current visual pooling only; no history, clock, proprioception or previous-command tokens"
+                ),
                 "features": "Learned features, expert targets, and future execution observations are omitted",
                 "events": (
                     "Event tokens disabled; visual quotas are unchanged"
