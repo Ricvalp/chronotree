@@ -12,6 +12,7 @@ import torch
 from stmem.config import load_config, digest, dependency, source_revision, run_dir
 from stmem.training.checkpoints import file_sha256, atomic_json
 from stmem.training.runtime import environment_manifest
+from stmem.data.canonical import retained_observations
 
 FORMAT = 1
 
@@ -138,7 +139,7 @@ class FrozenCache:
             group = f[episode_key(decision.task, decision.episode_id)]
             for key in sorted(group["conditioning"], key=int):
                 archive.add_block(read_records(group["conditioning"][key]), f"conditioning/{key}")
-            nfull, pending = divmod(decision.index, fsize)
+            nfull, pending = divmod(len(decision.execution_prefix), fsize)
             for block in range(nfull):
                 archive.add_block(read_records(group["execution"][str(block * fsize)]), f"execution/{block}")
             if pending:
@@ -161,7 +162,9 @@ def write_episode_cache(group, episode, policy, stride, horizon):
         group.create_group(name)
     fsize = policy.encoder.block_size
     # BlockEncoder centralizes source boundaries, completion status, and IDs.
-    for source, frames in (("conditioning", episode.conditioning), ("execution", episode.execution)):
+    conditioning = retained_observations(episode.conditioning, episode.observation_stride)
+    execution = retained_observations(episode.execution, episode.observation_stride)
+    for source, frames in (("conditioning", conditioning), ("execution", execution)):
         for offset in range(0, len(frames), fsize):
             block = frames[offset : offset + fsize]
             if source == "execution" and len(block) < fsize:
@@ -169,19 +172,21 @@ def write_episode_cache(group, episode, policy, stride, horizon):
             leaves = policy.encoder.encode_frames(block, source=source, completed=True)
             write_records(group[source].create_group(str(offset)), leaves)
     for time_index in range(0, len(episode), stride):
-        if not episode.decision(time_index, horizon).target_valid.any():
+        decision = episode.decision(time_index, horizon)
+        if not decision.target_valid.any():
             continue
         write_records(
             group["current"].create_group(str(time_index)),
-            policy.encoder.current(episode.execution[time_index]),
+            policy.encoder.current(decision.current),
         )
-        offset = time_index // fsize * fsize
-        n = time_index % fsize
+        prefix_count = len(decision.execution_prefix)
+        offset = prefix_count // fsize * fsize
+        n = prefix_count % fsize
         if n:
             # completed=False determines identity as well as metadata. Changing
             # flags after encoding would incorrectly reuse completed-block IDs.
             leaves = policy.encoder.encode_frames(
-                episode.execution[offset:time_index], source="execution", completed=False
+                decision.execution_prefix[offset:], source="execution", completed=False
             )
             write_records(group["prefix"].create_group(f"{offset}_{n}"), leaves)
 

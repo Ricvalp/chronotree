@@ -110,6 +110,14 @@ def validate_policy_config(checkpoint_cfg: dict, cfg: dict) -> None:
         "mass_bias",
     )
     mismatches = []
+    for section, name in (("data", "observation_stride"), ("model", "action_stride")):
+        recorded = checkpoint_cfg.get(section, {}).get(name, 1)
+        requested = cfg.get(section, {}).get(name, 1)
+        for value in (recorded, requested):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{section}.{name} must be a positive integer")
+        if recorded != requested:
+            mismatches.append(f"{section}.{name}: checkpoint={recorded!r}, requested={requested!r}")
     from stmem.vision.frozen import visual_feature_identity, resolve_visual_features
 
     for key, default in (("proprioception_mode", "all"), ("condition_on_previous_commands", True)):

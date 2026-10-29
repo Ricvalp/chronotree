@@ -1,0 +1,4 @@
+extends: teacher_fv_prop_10hz.yaml
+# Same 10 Hz cadence and visual quotas; no measured state or previous commands.
+model:
+  proprioception_mode: none

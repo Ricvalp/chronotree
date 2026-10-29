@@ -234,34 +234,43 @@ def test_supported_budget_bound_accounts_for_intermediate_prefixes():
         )
 
 
-def test_hdf5_frozen_cache_matches_differentiable_and_streaming_prefixes(tmp_path):
+@pytest.mark.parametrize("observation_stride,action_stride", [(1, 1), (2, 2)])
+def test_hdf5_frozen_cache_matches_differentiable_and_streaming_prefixes(
+    tmp_path, observation_stride, action_stride
+):
     import h5py
     from stmem.data.cache import FrozenCache, episode_key, write_episode_cache
 
     torch.manual_seed(19)
     encoder = small_encoder().eval()
     episode = Episode(
-        [make_frame(i, "conditioning") for i in range(3)],
-        [make_frame(i) for i in range(8)],
-        torch.zeros(8, 8),
-        torch.ones(8, 8, dtype=torch.bool),
+        [make_frame(i, "conditioning") for i in range(3 * observation_stride)],
+        [make_frame(i) for i in range(8 * observation_stride)],
+        torch.zeros(8 * observation_stride, 8),
+        torch.ones(8 * observation_stride, 8, dtype=torch.bool),
         "pick the observed object",
         "synthetic",
         "0",
         alignment="synthetic_post_action_v1",
+        observation_stride=observation_stride,
+        action_stride=action_stride,
     )
     policy = SimpleNamespace(encoder=encoder, text_encoder=lambda goal: torch.arange(12).float())
     with torch.no_grad(), h5py.File(tmp_path / "synthetic.h5", "w") as f:
         write_episode_cache(
-            f.create_group(episode_key(episode.task, episode.episode_id)), episode, policy, 1, 2
+            f.create_group(episode_key(episode.task, episode.episode_id)),
+            episode,
+            policy,
+            observation_stride,
+            2,
         )
     # Test real frozen-cache read/reconstruction without requiring a training run.
     cache = FrozenCache.__new__(FrozenCache)
     cache.cfg = {"model": {"block_size": 2}}
     cache.root = tmp_path
     online = StreamingMemory(encoder)
-    online.reset(episode.conditioning, episode.execution[0])
-    for index in range(7):
+    online.reset(episode.decision(0, 2).conditioning, episode.execution[0])
+    for index in range(0, len(episode) - action_stride, observation_stride):
         if index:
             online.observe(episode.execution[index])
         decision = episode.decision(index, 2)

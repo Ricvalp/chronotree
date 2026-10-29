@@ -119,6 +119,38 @@ in RGB-D. Evaluation-only target poses/contact flags are kept outside `Frame`
 and policy inputs. See [the experiment workflow](frozen_vision_experiment.md)
 for preparation, matched training and diagnostic definitions.
 
+## Optional temporal subsampling
+
+The default has `data.observation_stride: 1` and `model.action_stride: 1`.
+The optional 10 Hz experiment sets both to two while retaining the native
+20 Hz simulator and recorded-frame clock. `data.process_every_observation`
+is false for that explicit subsampling recipe. Conditioning and execution keep
+source-local indices 0, 2, 4, … independently; indices and timestamps are never
+renumbered. The current retained frame remains outside its own history. Eight
+retained frames still form a local block, with 32 visual centers per retained
+frame; all available retained blocks remain available to the full teacher.
+
+Training decision indices remain native-frame indices. The existing
+`data.decision_stride: 4` samples starts every four native frames and is distinct
+from spacing inside action chunks. For a post-action decision `i`, action
+stride two selects `i+1, i+3, …`; a 16-target chunk covers 32 native command
+slots. All joint commands across each hold interval must be valid, including
+intervening unsampled commands, and an incomplete final hold interval is masked.
+An invalid primitive command breaks subsequent chunk continuity. Optional
+gripper validity also accounts for the full hold interval. No future observation
+or commanded target is added to available conditioning.
+
+Rollout repeats each predicted absolute target twice through the original
+20 Hz interface, checking termination at every step and recording every issued
+primitive command. Execute-two coarse targets therefore retains the original
+four-native-step replanning interval. Geometry/CLIP work is skipped for dropped
+observations, but source clocks and terminal outcomes advance on every native
+step. Videos remain at native cadence. The raw prepared geometry and frozen
+feature cache can be reused; learned evidence/checkpoint identities must record
+the temporal recipe. Mixing a 10 Hz checkpoint with a 20 Hz input/action contract
+is rejected. Holding downsampled expert targets changes motion/contact dynamics;
+this is a distinct experiment, not a claim of identical expert replay.
+
 ## Reproduce
 
 ```bash

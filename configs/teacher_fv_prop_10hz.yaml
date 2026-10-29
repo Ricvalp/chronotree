@@ -1,0 +1,14 @@
+extends: teacher_fv_prop.yaml
+# Separate cadence experiment: reuse full-rate prepared geometry/CLIP sidecars.
+# Source clocks and the simulator remain at native 20 Hz. Retain every second
+# observation, and hold each predicted target for two native simulator steps.
+data:
+  observation_stride: 2
+  process_every_observation: false
+model:
+  action_stride: 2
+  horizon: 16
+  execute: 2
+  # Eight RETAINED frames per block; all retained past blocks remain available.
+  block_size: 8
+  visual_tokens: 256

@@ -262,6 +262,83 @@ Use **`--only seed0_teacher`**. The generic core DAG has a different two-checkpo
 selection protocol and downstream cache/router stages. It does not implement
 this three-checkpoint FV comparison.
 
+### 5a. Optional 10 Hz history and action experiment
+
+The separate `teacher_fv_prop_10hz.yaml` and `teacher_fv_no_prop_10hz.yaml`
+configurations retain **eight sampled frames per history block**, with 32 visual
+centers per retained frame and 256 visual leaves per full block. They retain the
+entire available sampled history; this is not an eight-block history window.
+
+| Setting | Existing FV recipe | Optional 10 Hz recipe |
+| --- | --- | --- |
+| Native simulator/control clock | 20 Hz | 20 Hz |
+| Observation/history stride | 1 | 2 |
+| Retained observations | Every native frame | Source-local frames 0, 2, 4, … |
+| Action horizon | 32 native commands | 16 targets, each held for two native steps |
+| Targets executed before replanning | 4 | 2, still four native steps |
+| Frames per local history block | 8 | 8 retained frames |
+| Nominal action coverage / replanning interval | 1.6 s / 0.2 s | 1.6 s / 0.2 s |
+| Nominal duration per full history block | 0.4 s | 0.8 s |
+
+Both conditioning and execution are subsampled independently from source-local
+index zero. Original indices/timestamps remain unchanged: retained frames are
+timed 0, 2, 4, …, not relabeled 0, 1, 2, …. The current observation is included
+once and history strictly precedes it. Eight-frame blocks now span a longer
+period with unchanged spatial quotas and temporal-kernel settings. Sparse
+observations can miss short cues; this is an explicit temporal ablation.
+
+Under verified `post_action_v1` alignment, a native decision at index `i` predicts
+expert commands `i+1, i+3, …, i+31`. Rollout holds each absolute joint/gripper
+target for two native simulator steps. Target validity checks all intervening
+primitive commands, including the full hold interval; it never skips invalid
+commands or source/terminal boundaries. Termination and videos are handled on
+every native step. Simulator physics/control settings and step limits stay at
+their original values. The intended 10 Hz rates are nominal for the recorded
+training clock, whose gaps are still not asserted physically continuous.
+
+Use the existing prepared XYZRGB and frozen-feature sidecars; no preparation is
+needed again. These runs start freshly because their action and observation
+contract differs from the 20 Hz checkpoints. Effective batch 128, microbatch
+eight, encoder block batch 32, LR 0.0001, 100k steps, seed and state-input switches
+are inherited. Action-normalizer statistics still use all valid native commands
+once, keeping their scale comparable to the existing recipe. A shorter context
+reduces work but does not promise a twofold wall-time speedup.
+
+After loading the site environment as in step 1, submit **FV-NoProp at 10 Hz**:
+
+```bash
+"$STMEM_PYTHON" hpc/plan.py \
+  --site hpc/site_b200_4gpu.env --profile b200_4gpu \
+  --teacher-config configs/teacher_fv_no_prop_10hz.yaml \
+  --run-root runs/teacher_fv_no_prop_10hz \
+  --output-dir hpc/generated/teacher_fv_no_prop_10hz \
+  --plan core_seed0 --only seed0_teacher \
+  --log-every 1 --attention-every 10 --progress-every-seconds 30 --submit
+```
+
+Alternatively, this loop submits **both matched 10 Hz arms** (use this instead
+of the single-arm command if both are wanted):
+
+```bash
+for arm in prop no_prop; do
+  "$STMEM_PYTHON" hpc/plan.py \
+    --site hpc/site_b200_4gpu.env --profile b200_4gpu \
+    --teacher-config "configs/teacher_fv_${arm}_10hz.yaml" \
+    --run-root "runs/teacher_fv_${arm}_10hz" \
+    --output-dir "hpc/generated/teacher_fv_${arm}_10hz" \
+    --plan core_seed0 --only seed0_teacher \
+    --log-every 1 --attention-every 10 --progress-every-seconds 30 --submit || break
+done
+```
+
+Each job requests four untyped GPUs on `aiq`, 64 CPUs, 128 GB RAM and 48 hours.
+The separate output directories are
+`runs/teacher_fv_{prop,no_prop}_10hz/seed0/teacher/`. Replace `--submit` with
+`--dry-run` to inspect the resolved configuration first. If another bounded
+capacity measurement is wanted, use `teacher_fv_prop_10hz.yaml` with
+`hpc/profile_memory.py` and a fresh `--name`; this is not another preparation
+step. Keep the checkpoint's cadence settings when evaluating it.
+
 ### 6. Evaluate both snapshots on one H200 each, saving ten videos
 
 This submits both 25k checkpoints on the same fixed validation episodes 0 and 1

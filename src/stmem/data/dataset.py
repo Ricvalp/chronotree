@@ -8,7 +8,14 @@ import random
 import h5py
 import numpy as np
 import torch
-from .canonical import ACTION_DIM, PROPRIO_DIM, Frame, Episode, action_alignment_offset
+from .canonical import (
+    ACTION_DIM,
+    PROPRIO_DIM,
+    Frame,
+    Episode,
+    action_alignment_offset,
+    valid_decision_indices,
+)
 from .prepare import numeric_keys, FORMAT_VERSION, PREPARED_SUBDIR
 
 
@@ -45,6 +52,8 @@ class EpisodeDataset:
     ):
         self.root = Path(root)
         self.horizon = horizon
+        self.observation_stride = 1
+        self.action_stride = 1
         self.episodes = []
         self.by_task = {}
         data_root = self.root.parent.parent if self.root.is_file() else self.root.parent
@@ -74,7 +83,15 @@ class EpisodeDataset:
         self.feature_manifests = {}
         self.feature_signature = None
         if visual_features_config is not None:
+            self._configure_temporal_sampling(visual_features_config)
             self._configure_features(visual_features_config)
+
+    def _configure_temporal_sampling(self, config):
+        for name, section in (("observation_stride", "data"), ("action_stride", "model")):
+            value = config.get(section, {}).get(name, 1)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{section}.{name} must be a positive integer")
+            setattr(self, name, value)
 
     def _configure_features(self, config):
         from stmem.vision.frozen import (
@@ -147,6 +164,7 @@ class EpisodeDataset:
                     raise ValueError(
                         f"{ref.task}: prepared {key}={observed} differs from configuration {value}; re-run prepare with matching config"
                     )
+        self._configure_temporal_sampling(config)
         self._configure_features(config)
 
     def __len__(self):
@@ -288,6 +306,8 @@ class EpisodeDataset:
                 ref.key,
                 ref.metadata,
                 alignment,
+                observation_stride=self.observation_stride,
+                action_stride=self.action_stride,
             )
 
     def get_decision(self, episode_index, decision_index, horizon=None):
@@ -299,7 +319,13 @@ class EpisodeDataset:
         idx = rng.choice(self.by_task[task])
         episode = self.load_episode(idx)
         # No supervised decisions beyond the final real expert command.
-        candidates = [i for i in range(len(episode)) if episode.decision(i, self.horizon).target_valid.any()]
+        candidates = valid_decision_indices(
+            episode.action_valid,
+            episode.alignment,
+            horizon=self.horizon,
+            stride=episode.observation_stride,
+            action_stride=episode.action_stride,
+        )
         if not candidates:
             raise ValueError(f"No valid action targets in {episode.episode_id}")
         return episode.decision(rng.choice(candidates), self.horizon)

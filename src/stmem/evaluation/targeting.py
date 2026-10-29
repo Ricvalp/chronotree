@@ -125,7 +125,11 @@ class TargetingAdapter:
                         "observation_available": bool(result.frames),
                         "terminal": bool(result.done),
                         "command": None if result.command is None else np.asarray(result.command).tolist(),
-                        "excluded_reason": "terminal_auto_step" if result.done else "missing_observation",
+                        "excluded_reason": "terminal_auto_step"
+                        if result.done
+                        else "temporal_subsampling"
+                        if getattr(result, "observation_skipped", False)
+                        else "missing_observation",
                     }
                 )
             else:

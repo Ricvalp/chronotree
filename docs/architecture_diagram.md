@@ -140,6 +140,18 @@ explicit state under a common frozen visual representation; it does not isolate
 the benefit of pretraining. Optional `current_only` keeps current measured state
 and removes historical measured state, but it is not a third required run.
 
+The optional 10 Hz variants are recorded separately as
+`teacher_fv_prop_10hz.yaml` and `teacher_fv_no_prop_10hz.yaml`. Their section at
+the bottom of the frozen-vision page retains eight **sampled frames per block**,
+not a window of eight blocks. It keeps source-local frames 0, 2, 4, … with their
+original timestamps and still provides 32 centers per retained frame. The H16
+decoder predicts targets held for two native 20 Hz simulator steps each;
+execute-two therefore replans after four native steps. Conditioning/execution
+remain separate and current stays outside history. Prepared point clouds and
+CLIP sidecars are reused. The four earlier pages and the baseline H32 section
+retain their original cadence. The JSON snapshot records both optional cadence
+configurations and their parameter counts explicitly.
+
 ## Prepared geometry and token counts
 
 The revised preparation writes `prepared_balanced_v2/`, preserving the previous
@@ -257,3 +269,10 @@ page and updated navigation were visually inspected. Ruff and the snapshot/XML
 check passed. Local layout evidence is in
 `runs/architecture_diagram/frozen_vision/`. This checks the diagram, not the
 experiment's learned behavior or cluster performance.
+
+On 2026-10-29, the frozen-vision page gained a separately labeled 10 Hz section
+and two additional configuration snapshots. The baseline 20 Hz recipe remains
+explicit. Chromium rendered all five pages without overflowing text bounds,
+and the changed page was visually reviewed. Ruff and the snapshot/XML check
+passed. Local layout evidence is in `runs/architecture_diagram/temporal_10hz/`;
+this does not measure the new training recipe's performance.

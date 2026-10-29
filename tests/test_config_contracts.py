@@ -107,6 +107,39 @@ def test_policy_rejects_geometry_and_encoder_options():
         validate_policy_config(cfg, changed)
 
 
+@pytest.mark.parametrize("section,name", [("data", "observation_stride"), ("model", "action_stride")])
+def test_temporal_stride_defaults_and_checkpoint_contract(section, name):
+    cfg = load_config("configs/debug/teacher.yaml")
+    unchanged = deepcopy(cfg)
+    unchanged[section][name] = 1
+    validate_policy_config(cfg, unchanged)
+    changed = deepcopy(cfg)
+    changed[section][name] = 2
+    with pytest.raises(ValueError, match=f"{section}.{name}"):
+        validate_policy_config(cfg, changed)
+    for invalid in (0, -1, True, 1.5, "2"):
+        changed[section][name] = invalid
+        with pytest.raises(ValueError, match=f"{section}.{name}"):
+            validate_config(changed)
+
+
+def test_temporal_stride_rejects_inconsistent_observation_and_replanning_grids():
+    cfg = load_config("configs/debug/teacher.yaml")
+    cfg["data"].update(observation_stride=2, decision_stride=4)
+    with pytest.raises(ValueError, match="process_every_observation"):
+        validate_config(cfg)
+    cfg["data"]["process_every_observation"] = False
+    cfg["model"].update(action_stride=2, execute=2)
+    validate_config(cfg)
+    cfg["data"]["decision_stride"] = 3
+    with pytest.raises(ValueError, match="decision_stride"):
+        validate_config(cfg)
+    cfg["data"]["decision_stride"] = 4
+    cfg["model"].update(action_stride=1, execute=1)
+    with pytest.raises(ValueError, match="retained observation"):
+        validate_config(cfg)
+
+
 @pytest.mark.parametrize("missing", ["point_sampling", "center_sampling"])
 def test_old_resolved_sampling_defaults_are_rejected_even_if_checkpoint_matches(missing):
     cfg = load_config("configs/teacher.yaml")

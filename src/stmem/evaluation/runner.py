@@ -50,6 +50,7 @@ class OnlinePolicy:
         self.cfg = cfg
         self.method = method
         self.budget = budget
+        self.observation_stride = cfg.get("data", {}).get("observation_stride", 1)
         from stmem.doctor import choose_precision
 
         self.precision = cfg["training"]["precision"]
@@ -88,11 +89,16 @@ class OnlinePolicy:
     @torch.no_grad()
     def reset(self, reset, seed):
         with DecisionTimer(self.policy.device) as timer:
-            self.memory.reset(reset.conditioning, reset.current)
+            conditioning = [
+                frame for frame in reset.conditioning if frame.source_index % self.observation_stride == 0
+            ]
+            if reset.current.source_index % self.observation_stride:
+                raise ValueError("Reset current observation must lie on the declared sampling phase")
+            self.memory.reset(conditioning, reset.current)
             self.goal = reset.goal
             self.text = self.policy.text_encoder(reset.goal)
             self.clocks = {
-                "conditioning": reset.conditioning[-1].time if reset.conditioning else 0.0,
+                "conditioning": conditioning[-1].time if conditioning else 0.0,
                 "execution": reset.current.time,
             }
             self.generator = torch.Generator(device=self.policy.device).manual_seed(seed)
@@ -107,6 +113,11 @@ class OnlinePolicy:
 
     @torch.no_grad()
     def observe(self, frame, preprocessing_seconds=0.0):
+        if frame.source_index % self.observation_stride:
+            # Full-rate injected adapters are supported without inserting their
+            # dropped observations into the memory. Count their actual cost.
+            self.update_seconds += preprocessing_seconds
+            return
         with DecisionTimer(self.policy.device) as timer:
             self.memory.observe(frame)
         self.update_seconds += timer.seconds + preprocessing_seconds
@@ -236,6 +247,28 @@ def run_episode(
             reset = adapter.reset()
             online.reset(reset, seed)
             result["environment"] = reset.metadata
+            action_stride = online.cfg["model"].get("action_stride", 1)
+            observation_stride = online.cfg.get("data", {}).get("observation_stride", 1)
+            native_hz = reset.metadata.get("control_hz")
+            result["temporal_sampling"] = {
+                "native_control_hz": native_hz,
+                "action_stride": action_stride,
+                "observation_stride": observation_stride,
+                "action_hz": None if native_hz is None else native_hz / action_stride,
+                "observation_hz": None if native_hz is None else native_hz / observation_stride,
+                "predicted_actions_per_chunk": online.cfg["model"]["horizon"],
+                "replan_primitive_steps": online.cfg["model"]["execute"] * action_stride,
+                "command_interpolation": "zero_order_hold",
+                "clock": "native_source_local_recorded_frame",
+            }
+            nominal_hz = online.cfg.get("data", {}).get("nominal_control_hz")
+            if (
+                (action_stride > 1 or observation_stride > 1)
+                and native_hz is not None
+                and nominal_hz is not None
+            ):
+                if not np.isclose(native_hz, nominal_hz):
+                    raise ValueError("Runtime control rate differs from the sampled training-data contract")
             result["startup_seconds"] = time.perf_counter() - started
             result["reset_encoding_seconds"] = online.reset_encoding_seconds
             if video:
@@ -249,7 +282,10 @@ def run_episode(
                 if chunk.shape != (online.cfg["model"]["horizon"], 8) or not torch.isfinite(chunk).all():
                     raise ValueError("Policy emitted nonfinite or incorrectly shaped action chunk")
                 result["decisions"].append(timing)
-                for action in chunk[: online.cfg["model"]["execute"]]:
+                # The simulator keeps its native cadence. Coarse absolute
+                # joint/gripper targets are held for action_stride native steps.
+                commands = chunk[: online.cfg["model"]["execute"]].repeat_interleave(action_stride, dim=0)
+                for action in commands:
                     step = adapter.step(action)
                     result["actions"].append(
                         np.asarray(step.command if step.command is not None else action.cpu()).tolist()
@@ -276,8 +312,12 @@ def run_episode(
                         result["terminal_status"] = step.status
                         result["error"] = step.error
                         return result
-                    if not step.frames:
+                    if not step.frames and not getattr(step, "observation_skipped", False):
                         raise RuntimeError("Ongoing simulator step returned no allowed observation")
+                    if not step.frames:
+                        online.update_seconds = getattr(online, "update_seconds", 0.0) + getattr(
+                            adapter, "last_preprocess_seconds", 0.0
+                        )
                     for frame in step.frames:
                         online.observe(
                             frame, getattr(adapter, "last_preprocess_seconds", 0.0) / len(step.frames)

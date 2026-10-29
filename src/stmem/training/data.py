@@ -45,6 +45,14 @@ class TrainingData:
         self.by_task = {task: [] for task in self.tasks}
         self.horizon = cfg["model"]["horizon"]
         self.stride = cfg["data"]["decision_stride"]
+        self.observation_stride = cfg["data"].get("observation_stride", 1)
+        self.action_stride = cfg["model"].get("action_stride", 1)
+        for name in ("observation_stride", "action_stride"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        if self.stride % self.observation_stride:
+            raise ValueError("data.decision_stride must be a multiple of data.observation_stride")
         if self.synthetic:
             if not cfg.get("debug"):
                 raise ValueError("Synthetic input requires debug: true")
@@ -86,6 +94,14 @@ class TrainingData:
                     ),
                 }
             )
+        if self.observation_stride != 1 or self.action_stride != 1:
+            self.identity = digest(
+                {
+                    "native_data": self.identity,
+                    "observation_stride": self.observation_stride,
+                    "action_stride": self.action_stride,
+                }
+            )
         self.candidates = {}
         self._action_count = torch.zeros(8, dtype=torch.long)
         self._action_total = torch.zeros(8, dtype=torch.float64)
@@ -113,7 +129,11 @@ class TrainingData:
                 items.extend(
                     (index, t)
                     for t in valid_decision_indices(
-                        episode.action_valid, episode.alignment, horizon=self.horizon, stride=self.stride
+                        episode.action_valid,
+                        episode.alignment,
+                        horizon=self.horizon,
+                        stride=self.stride,
+                        action_stride=self.action_stride,
                     )
                 )
                 # Each issued execution command contributes once, independent of
@@ -150,6 +170,8 @@ class TrainingData:
         )
         episode.task = task
         episode.episode_id = f"episode_{i}"
+        episode.observation_stride = self.observation_stride
+        episode.action_stride = self.action_stride
         return episode
 
     def decision(self, index, time):

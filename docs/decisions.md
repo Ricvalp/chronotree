@@ -1045,3 +1045,57 @@
     Evidence is retained under the ignored directory
     `runs/inspection/fv_geometry_backend_audit/`. The full 16-task HPC cache
     remains unrun locally; no Slurm jobs were submitted.
+
+40. **Optional matched 10 Hz observation/action cadence (29 October 2026).**
+    Add fresh `teacher_fv_prop_10hz.yaml` and `teacher_fv_no_prop_10hz.yaml`
+    variants. Keep eight retained frames per local block and 32 visual centers
+    per retained frame; do not truncate history to eight blocks. The simulator
+    remains at native 20 Hz, while `data.observation_stride=2` retains source-local
+    indices 0,2,4,... independently in conditioning and execution. Original
+    source indices/timestamps are not renumbered. The retained eight-frame block
+    covers twice the nominal time of the full-rate block; temporal-kernel units
+    remain native recorded-frame units. Current-only input remains distinct from
+    strictly preceding retained history.
+
+    `model.action_stride=2`, H16 and execute=2 predict the first aligned expert
+    command of each two-native-step interval (post-action targets i+1,i+3,...).
+    Every command of the interval must exist; joint validity gaps invalidate the
+    remaining chunk, including gaps at unselected intervening commands. Gripper
+    validity covers the whole corresponding hold interval. Rollout holds each
+    target for two native steps, inspects termination on each step, and replans
+    after four native steps. Skipped observation frames bypass cloud/CLIP/center
+    processing while retaining native clocks and full-rate video/command records.
+    Intentional skips are distinguished from missing simulator observations.
+
+    Reuse prepared geometry and CLIP sidecars. The current episode reader still
+    reads native geometry rows; sampling reduces encoded history and descriptor
+    materialization, not all geometry I/O. Native-action normalization is retained
+    for a matched scale. Data identity and checkpoint validation record both
+    strides, preventing silent changes when resuming/evaluating. Frozen encoder
+    caches count retained-prefix frames rather than native decision indices;
+    TREE/FLAT retain identical leaf coverage. Config validation requires training
+    decision and rollout replanning boundaries to fall on retained observations.
+    Existing configurations default to stride one and remain unchanged.
+
+    Verification: 775 CPU tests pass, with one legacy-path real-data check skipped.
+    Tests cover alignment, intervening invalid commands, causal subsampling,
+    native clocks, frozen-cache/offline/streaming parity, held targets, immediate
+    termination and actual skipped feature work. Both full-size model variants
+    completed one real-data GPU update with microbatch/effective batch one on the
+    local RTX 5000 Ada; this does not establish four-B200 capacity/throughput.
+    The one-update FV-NoProp checkpoint completed a deliberately short official
+    validation rollout with H16, 10 Hz sampling, 33 retained conditioning frames,
+    three replans and nine native commands; it reached the short timeout without
+    policy/infrastructure errors. This is execution evidence, not task learning.
+
+    On fixed released VideoUnmask training episodes 0 and 1, native-rate expert
+    replay succeeded at 161 and 152 issued commands. The held 10 Hz replay
+    grasped the target in both but exhausted its available full hold intervals
+    at 160 and 152 commands before success. A separate bounded settling check
+    held the final target for up to one extra second; success occurred after
+    two and one extra native steps respectively. This establishes small timing
+    changes on those two scenes, not general preservation of demonstrations.
+    Evidence is under `runs/inspection/temporal_10hz_20261029/`. The actual-device
+    doctor, Ruff, generated architecture snapshot/XML and visual layout checks
+    pass. A planner dry-run requests four untyped GPUs in `aiq`, 64 CPUs, 128G
+    host RAM and 48 hours, with a separate run root. No Slurm jobs were submitted.

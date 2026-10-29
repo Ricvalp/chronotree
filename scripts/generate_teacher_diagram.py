@@ -26,7 +26,12 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "diagrams"
 STEM = "teacher_architecture"
 H32_CONFIG = "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml"
-FV_CONFIGS = {"fv_prop": "configs/teacher_fv_prop.yaml", "fv_no_prop": "configs/teacher_fv_no_prop.yaml"}
+FV_CONFIGS = {
+    "fv_prop": "configs/teacher_fv_prop.yaml",
+    "fv_no_prop": "configs/teacher_fv_no_prop.yaml",
+    "fv_prop_10hz": "configs/teacher_fv_prop_10hz.yaml",
+    "fv_no_prop_10hz": "configs/teacher_fv_no_prop_10hz.yaml",
+}
 PAGES = (
     ("overview", "01 · Overview"),
     ("encoders", "02 · Encoders"),
@@ -60,6 +65,7 @@ SOURCES = [
     "src/stmem/data/feature_cache.py",
     "src/stmem/vision/frozen.py",
     "src/stmem/evaluation/robomme_adapter.py",
+    "src/stmem/evaluation/runner.py",
     "src/stmem/models/policy.py",
     "src/stmem/models/spacetime_encoder.py",
     "src/stmem/models/batched_spacetime.py",
@@ -94,6 +100,7 @@ def snapshot():
         variant_policy = MemoryPolicy(variant_cfg)
         frozen_variants[name] = {
             "configuration": path,
+            "data": variant_cfg["data"],
             "model": variant_cfg["model"],
             "training": variant_cfg["training"],
             "total_policy_parameters": count(variant_policy),
@@ -1196,7 +1203,7 @@ def frozen_vision(file, facts):
         "frozen",
         "Frozen RGB features · matched state-input experiment",
         "FV-Prop and FV-NoProp share visual evidence, initial shared weights, clocks, action cadence and training budget",
-        height=1800,
+        height=2160,
     )
     p.section(48, 225, 1704, "01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS")
     source = p.card(
@@ -1338,7 +1345,7 @@ def frozen_vision(file, facts):
         1225,
         1704,
         190,
-        "03  SAME DECODER, FRESH TRAINING AND DEVELOPMENT PROTOCOL",
+        "03  BASE 20 Hz RECIPE · SAME DECODER, FRESH TRAINING AND DEVELOPMENT PROTOCOL",
         [
             "FULL teacher reads every causal visual leaf. Action flow predicts H=32 native 20 Hz joint commands; execute K=4, then replan.",
             f"4 B200s · effective batch {t['effective_batch']} · microbatch {t['microbatch']}/GPU · encoder block batch {t['encoder_block_batch_size']} · activation checkpointing off",
@@ -1366,6 +1373,27 @@ def frozen_vision(file, facts):
         tone="note",
         size=18,
         parent="notes",
+    )
+    p.section(48, 1745, 1704, "04  OPTIONAL 10 Hz OBSERVATION + ACTION EXPERIMENT")
+    temporal = facts["variants"]["fv_prop_10hz"]
+    tm, td = temporal["model"], temporal["data"]
+    p.card(
+        48,
+        1805,
+        1704,
+        230,
+        "teacher_fv_prop_10hz.yaml / teacher_fv_no_prop_10hz.yaml · fresh, separate runs",
+        [
+            f"Retain every {td['observation_stride']}nd source frame; original clocks remain 0, 2, 4, … in native 20 Hz units. Conditioning/execution phases stay separate.",
+            f"History blocks retain {tm['block_size']} sampled frames and ≤{tm['visual_tokens']} visual leaves. The full retained history remains available; no eight-block truncation.",
+            f"Predict H={tm['horizon']} absolute targets at 10 Hz; hold each for {tm['action_stride']} native simulator steps. Execute {tm['execute']} targets = 4 native steps, then replan.",
+            "Post-action target phase: a[t+1], a[t+3], …; mask all intervening invalid commands and incomplete hold intervals. Check termination every native step.",
+            "Reuse full-rate XYZRGB and CLIP caches. Same per-frame centers, optimizer and batch settings. Fewer history frames, not fewer centers per retained frame.",
+            "This changes the temporal experiment: nominal chunk coverage stays ~1.6 s; eight-frame blocks cover ~0.8 s. Preserve original time metadata and causal boundaries.",
+        ],
+        tone="decoder",
+        size=18,
+        tooltip="configs/teacher_fv_prop_10hz.yaml and teacher_fv_no_prop_10hz.yaml. observation_stride=2, action_stride=2, horizon=16, execute=2, block_size=8. The simulator still steps at20Hz; every native command/terminal status is counted. Sparse action supervision never jumps over invalid primitive commands. Existing20Hz experiments remain separate.",
     )
     p.card(
         930,

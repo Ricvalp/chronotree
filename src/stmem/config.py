@@ -133,6 +133,18 @@ def validate_config(cfg: dict) -> None:
         raise ValueError("Model width must be divisible by attention heads")
     if not 0 < m["execute"] <= m["horizon"]:
         raise ValueError("Execute horizon must be in [1, action horizon]")
+    for section, name in (("data", "observation_stride"), ("model", "action_stride")):
+        value = cfg[section].get(name, 1)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError(f"{section}.{name} must be a positive integer in native-frame units")
+    observation_stride = cfg["data"].get("observation_stride", 1)
+    action_stride = m.get("action_stride", 1)
+    if cfg["data"].get("process_every_observation", True) != (observation_stride == 1):
+        raise ValueError("data.process_every_observation must agree with data.observation_stride")
+    if cfg["data"]["decision_stride"] % observation_stride:
+        raise ValueError("data.decision_stride must be a multiple of data.observation_stride")
+    if (m["execute"] * action_stride) % observation_stride:
+        raise ValueError("Executed native steps must end on a retained observation")
     if t["effective_batch"] < 1 or t["steps"] < 1:
         raise ValueError("Invalid training budget")
     schedule_steps = t.get("schedule_steps", t["steps"])

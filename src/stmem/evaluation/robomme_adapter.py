@@ -81,6 +81,9 @@ class StepResult:
     truncated: bool
     error: str | None = None
     command: np.ndarray | None = None
+    # True only when actual observations were deliberately dropped by cadence.
+    # An empty/malformed simulator response must never masquerade as sampling.
+    observation_skipped: bool = False
 
     @property
     def done(self):
@@ -116,9 +119,17 @@ class RoboMMEAdapter:
         center_sampling=None,
         center_counts=(32,),
         feature_extractor=None,
+        observation_stride=1,
     ):
         if split not in ("train", "val", "test"):
             raise ValueError("Unknown official split")
+        if (
+            isinstance(observation_stride, bool)
+            or not isinstance(observation_stride, int)
+            or observation_stride < 1
+        ):
+            raise ValueError("observation_stride must be a positive integer")
+        self.observation_stride = observation_stride
         self.task = task
         self.episode_idx = episode_idx
         self.split = split
@@ -143,6 +154,7 @@ class RoboMMEAdapter:
         self.last_rgb = []
         self.last_raw_observation = None
         self.last_preprocess_seconds = 0.0
+        self.last_observation_skipped = False
         if self.env is None:
             try:
                 import robomme.robomme_env  # noqa: F401 -- official task registration
@@ -174,11 +186,14 @@ class RoboMMEAdapter:
             "requested_max_steps": self.requested_max_steps,
             "action_space": "joint_angle",
             "clock": "source_local_recorded_frame",
+            "observation_stride": self.observation_stride,
         }
         for output, attr in [("control_hz", "control_freq"), ("physics_hz", "sim_freq")]:
             value = getattr(unwrapped, attr, None)
             if value is not None:
                 result[output] = float(value)
+        if "control_hz" in result:
+            result["observation_hz"] = result["control_hz"] / self.observation_stride
         node = self.env
         for _ in range(16):
             if "max_steps_without_demonstration" in vars(node):
@@ -195,6 +210,8 @@ class RoboMMEAdapter:
         Equal consecutive images are still distinct acquired observations. Repeated
         delivery of the same event returns no new frames and never advances clocks.
         """
+        self.last_rgb = []
+        self.last_observation_skipped = False
         if event_id in self._seen:
             return []
         if not obs:
@@ -210,10 +227,16 @@ class RoboMMEAdapter:
             if field + "_list" not in obs or len(obs[field + "_list"]) != n:
                 raise ValueError(f"Missing/misaligned allowed observation field: {field}")
         frames = []
-        self.last_rgb = []
         for i in range(n):
             source = "conditioning" if reset and i < n - 1 else "execution"
             allowed = {field: numpy_value(obs[field + "_list"][i]) for field in OBSERVATION_FIELDS}
+            index = self._clock[source]
+            self._clock[source] += 1
+            self.last_rgb.append(
+                np.concatenate([allowed["front_rgb"], allowed["wrist_rgb"]], axis=1).astype(np.uint8)
+            )
+            if index % self.observation_stride:
+                continue
             cloud = (
                 rgbd_to_points_with_provenance if self.feature_extractor is not None else rgbd_to_points
             )(
@@ -239,7 +262,6 @@ class RoboMMEAdapter:
             previous = (
                 torch.as_tensor(command, dtype=torch.float32).clone() if action_known else torch.zeros(8)
             )
-            index = self._clock[source]
             frames.append(
                 Frame(
                     points,
@@ -258,10 +280,7 @@ class RoboMMEAdapter:
                     **feature_kwargs,
                 )
             )
-            self._clock[source] += 1
-            self.last_rgb.append(
-                np.concatenate([allowed["front_rgb"], allowed["wrist_rgb"]], axis=1).astype(np.uint8)
-            )
+        self.last_observation_skipped = not frames
         self._seen[event_id] = True
         return frames
 
@@ -286,6 +305,7 @@ class RoboMMEAdapter:
             raise ValueError("Reset requires one initial execution observation")
         self.metadata = self._runtime_metadata()
         self.metadata["conditioning_frames"] = len(frames) - 1
+        self.metadata["conditioning_frames_recorded"] = self._clock["conditioning"]
         self.last_raw_observation = obs
         return ResetResult(frames[:-1], frames[-1], self.goal, self.metadata.copy())
 
@@ -300,7 +320,15 @@ class RoboMMEAdapter:
         self._step += 1
         frames = self.ingest(obs, info, event_id=f"{self._reset_id}/step/{self._step}", command=command)
         self.last_raw_observation = obs
-        return StepResult(frames, status, terminated, truncated, info.get("error_message"), command)
+        return StepResult(
+            frames,
+            status,
+            terminated,
+            truncated,
+            info.get("error_message"),
+            command,
+            observation_skipped=self.last_observation_skipped,
+        )
 
     def close(self):
         if self.env is not None:
