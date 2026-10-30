@@ -22,7 +22,7 @@ def load_fork_checkpoint(path, expected_sha256: str) -> dict:
 
 
 def schedule_steps(training: dict) -> int:
-    """A bounded continuation keeps the parent run's cosine-decay horizon."""
+    """Original cosine-decay horizon, independent of a continuation's stopping rule."""
     return training.get("schedule_steps", training["steps"])
 
 

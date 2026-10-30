@@ -75,6 +75,141 @@ def option(command, name):
     return command[command.index(name) + 1]
 
 
+def test_teacher_until_stopped_preserves_saved_config_and_reopens_completed_stage(planning, tmp_path):
+    planner, invoke, repo, run_root, generated = planning
+    site = tmp_path / "site.env"
+    site.write_text(
+        site.read_text()
+        + "STMEM_PARTITION=aiq\nSTMEM_GPU_TYPE=\nSTMEM_CPUS=64\nSTMEM_MEM=128G\n"
+        + "STMEM_WALLTIME=48:00:00\n"
+    )
+    config = planner.resolved_config(
+        repo / "configs/teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32.yaml"
+    )
+    # Match the historical run: no new model defaults may be injected on resume.
+    config["model"].pop("history_mode")
+    snapshot = tmp_path / "resume_teacher.json"
+    snapshot.write_text(json.dumps(config))
+    original_snapshot = snapshot.read_bytes()
+    options = [
+        "--teacher-config", str(snapshot), "--only", "seed0_teacher", "--profile", "b200_4gpu",
+    ]
+    original = invoke(*options)["jobs"][0]
+    for path in original["outputs"]:
+        output = Path(path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"Immutable candidate fixture; never loaded")
+    checkpoint = run_root / "seed0/teacher/last.pt"
+    checkpoint.write_bytes(b"Presence-only final checkpoint fixture; never loaded")
+    marker = Path(original["marker"])
+    marker.parent.mkdir(parents=True)
+    marker.write_text(json.dumps({
+        "status": "complete", "signature": original["signature"],
+        "output_sha256": {path: planner.sha256(Path(path)) for path in original["outputs"]},
+    }))
+    marker_before = marker.read_bytes()
+    assert invoke(*options, "--resume")["completed_skipped"] == ["seed0_teacher"]
+
+    plan = invoke(*options, "--resume", "--train-until-stopped", "--attention-every", "10")
+    assert plan["job_count"] == 1 and plan["completed_skipped"] == []
+    job = plan["jobs"][0]
+    command = job["commands"][0]
+    assert command.count("--train-until-stopped") == 1
+    assert option(command, "--resume") == str(checkpoint)
+    assert job["signature"] != original["signature"]
+    assert job["outputs"] == original["outputs"] and job["deps"] == []
+    restored = planner.resolved_config(Path(option(command, "--config")))
+    for key in ("model", "training", "data", "geometry"):
+        assert restored[key] == config[key]
+    assert "history_mode" not in restored["model"]
+    assert restored["training"]["steps"] == 100000
+    assert plan["training_continuation"] == {
+        "mode": "until_stopped", "original_intended_steps": 100000,
+        "schedule_steps": 100000, "final_learning_rate": 0.00001,
+        "automatic_resubmission": False,
+    }
+    script = Path(job["script"]).read_text()
+    assert "#SBATCH --gres=gpu:4" in script and "gpu:b200" not in script
+    assert "#SBATCH --partition=aiq" in script and "#SBATCH --time=48:00:00" in script
+    assert "--train-until-stopped" in script and f"--resume {checkpoint}" in script
+    assert "#SBATCH --signal=B:USR1@180" in script
+    assert marker.read_bytes() == marker_before and snapshot.read_bytes() == original_snapshot
+    assert checkpoint.read_bytes() == b"Presence-only final checkpoint fixture; never loaded"
+    subprocess.run(["bash", "-n", job["script"]], check=True)
+    again = invoke(*options, "--resume", "--train-until-stopped")
+    assert again["jobs"][0]["signature"] == job["signature"]
+
+
+@pytest.mark.parametrize("options", [
+    ("--only", "seed0_teacher"),
+    ("--resume",),
+    ("--resume", "--only", "seed0_compact"),
+    ("--resume", "--only", "seed0_teacher", "evaluate"),
+    ("--resume", "--only", "seed0_teacher", "--phase", "test"),
+    ("--resume", "--only", "seed0_teacher", "--freeze-protocol", "unused.json"),
+])
+def test_teacher_until_stopped_rejects_fresh_or_downstream_plans(planning, options, capsys):
+    _, invoke, _, _, generated = planning
+    with pytest.raises(SystemExit) as error:
+        invoke(*options, "--train-until-stopped")
+    assert error.value.code == 2
+    assert "--train-until-stopped requires --resume and --only teacher jobs" in capsys.readouterr().err
+    assert not generated.exists()
+
+
+@pytest.mark.parametrize("empty_file", (False, True))
+def test_teacher_until_stopped_requires_existing_nonempty_checkpoint(planning, empty_file, capsys):
+    _, invoke, _, run_root, generated = planning
+    if empty_file:
+        checkpoint = run_root / "seed0/teacher/last.pt"
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.touch()
+    with pytest.raises(SystemExit) as error:
+        invoke("--resume", "--only", "seed0_teacher", "--train-until-stopped")
+    assert error.value.code == 2
+    assert "needs an existing checkpoint" in capsys.readouterr().err
+    assert not generated.exists()
+
+
+@pytest.mark.parametrize("queue_output", ("12345|RUNNING\n", ""))
+def test_teacher_until_stopped_submission_preserves_active_job_protection(
+    planning, monkeypatch, tmp_path, queue_output,
+):
+    planner, invoke, _, run_root, generated = planning
+    original = invoke("--only", "seed0_teacher")["jobs"][0]
+    receipt = {"seed0_teacher": {"job_id": "12345", "signature": original["signature"]}}
+    (generated / "submitted.json").write_text(json.dumps(receipt))
+    checkpoint = run_root / "seed0/teacher/last.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"Presence-only checkpoint fixture; never loaded")
+    calls = []
+
+    def scheduler(command, **kwargs):
+        calls.append(command)
+        if command[0] == "squeue":
+            return SimpleNamespace(stdout=queue_output)
+        assert command == ["sbatch", "--parsable", original["script"]]
+        return SimpleNamespace(stdout="23456\n")
+
+    monkeypatch.setattr(planner.subprocess, "run", scheduler)
+    monkeypatch.setattr(sys, "argv", [
+        "hpc/plan.py", "--site", str(tmp_path / "site.env"),
+        "--output-dir", str(generated), "--only", "seed0_teacher", "--resume",
+        "--train-until-stopped", "--submit",
+    ])
+    planner.main()
+    updated = json.loads((generated / "submitted.json").read_text())
+    if queue_output:
+        assert [command[0] for command in calls] == ["squeue"]
+        assert updated == receipt
+    else:
+        assert [command[0] for command in calls] == ["squeue", "sbatch"]
+        assert updated["seed0_teacher"]["job_id"] == "23456"
+    planned = json.loads((generated / "plan.json").read_text())["jobs"][0]
+    assert "--train-until-stopped" in planned["commands"][0]
+    assert option(planned["commands"][0], "--resume") == str(checkpoint)
+
+
 def test_current_only_teacher_renders_two_h200s_without_affecting_other_runs(planning, tmp_path):
     planner, invoke, repo, run_root, generated = planning
     site = tmp_path / "site.env"

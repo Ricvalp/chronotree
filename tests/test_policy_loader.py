@@ -1,6 +1,7 @@
 """CPU invariants for bounded multiprocessing, ordering, retries and failures."""
 
 from dataclasses import fields, is_dataclass
+from itertools import islice
 import os
 from pathlib import Path
 import time
@@ -9,7 +10,7 @@ import pytest
 import torch
 
 from stmem.training.data import TrainingData, rank_positions
-from stmem.training.loader import PolicyBatchLoader
+from stmem.training.loader import PolicyBatchLoader, _Microbatches
 from test_batched_training import _config
 from test_training_startup import _fixture_config
 
@@ -59,11 +60,12 @@ def _assert_packed_equal(left, right):
         assert left == right
 
 
-def test_workers_persist_prefetch_is_bounded_and_overflow_reuses_same_batches(tmp_path):
+@pytest.mark.parametrize("steps", [4, None])
+def test_workers_persist_prefetch_is_bounded_and_overflow_reuses_same_batches(tmp_path, steps):
     cfg = _config(tmp_path)
     cfg["training"].update(workers=2, prefetch_factor=1)
     data = ObservedTrainingData(cfg)
-    with _loader(data, retry=True) as loader:
+    with _loader(data, steps=steps, retry=True) as loader:
         workers = list(loader._iterator._workers)
         deadline = time.monotonic() + 20
         while len(list(tmp_path.iterdir())) < 2 and time.monotonic() < deadline:
@@ -83,15 +85,19 @@ def test_workers_persist_prefetch_is_bounded_and_overflow_reuses_same_batches(tm
         assert all(worker.is_alive() for worker in workers)
     assert all(not worker.is_alive() for worker in workers)
     assert not loader._retry_batches
+    # Six consumed microbatches plus the two bounded prefetched ones; cleanup
+    # must not ask an open-ended sampler for further work while draining.
+    assert len(list(tmp_path.iterdir())) <= 8
 
 
-def test_worker_exception_propagates_and_other_workers_are_joined(tmp_path):
+@pytest.mark.parametrize("steps", [4, None])
+def test_worker_exception_propagates_and_other_workers_are_joined(tmp_path, steps):
     cfg = _config(tmp_path)
     cfg["training"].update(workers=2, prefetch_factor=1)
     cfg["fail_worker"] = True
     data = ObservedTrainingData(cfg)
     with pytest.raises(ValueError, match="diagnostic worker read failure"):
-        with _loader(data) as loader:
+        with _loader(data, steps=steps) as loader:
             workers = list(loader._iterator._workers)
             next(loader.read_update(0))
     assert all(not worker.is_alive() for worker in workers)
@@ -128,3 +134,63 @@ def test_finished_checkpoint_starts_no_workers_and_invalid_order_is_rejected(tmp
         list(loader.read_update(0))
         with pytest.raises(ValueError, match="consecutive"):
             list(loader.read_update(0))
+
+
+def test_open_ended_sampler_has_no_finite_length_and_preserves_rotating_rank_coverage():
+    # Cross the production 100k boundary without loading data. No large finite
+    # sentinel may cap the stream or change rank ownership after this boundary.
+    by_rank = []
+    for rank in range(4):
+        sampler = _Microbatches(99999, None, 12, rank, 4, 2)
+        with pytest.raises(TypeError, match="no finite length"):
+            len(sampler)
+        batches = list(islice(sampler, 6))
+        expected = []
+        for step in range(99999, 100002):
+            positions = rank_positions(step, 12, rank, 4)
+            expected.extend([tuple(positions[:2]), tuple(positions[2:])])
+        assert batches == expected
+        by_rank.append(batches)
+    for offset, step in enumerate(range(99999, 100002)):
+        combined = [
+            position
+            for batches in by_rank
+            for batch in batches[offset * 2 : (offset + 1) * 2]
+            for position in batch
+        ]
+        assert sorted(combined) == list(range(step * 12, (step + 1) * 12))
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_open_ended_loader_matches_finite_data_and_resumes_beyond_configured_budget(tmp_path, workers):
+    # The declared schedule ends at three, but an open-ended sampler must
+    # preserve the same data after that point, including after discarding its
+    # prefetched future updates on shutdown and reconstructing the loader.
+    cfg = _config(tmp_path, steps=3)
+    # Use the same center quota in current/history frames, so optional cached
+    # center counts do not differ with worker-local episode-cache warmth.
+    cfg["model"]["current_tokens"] = 1
+    cfg["training"].update(workers=0, prefetch_factor=1)
+    data = TrainingData(cfg)
+    with _loader(data, start=1, steps=5) as loader:
+        expected = {step: list(loader.read_update(step)) for step in range(1, 5)}
+    cfg["training"]["workers"] = workers
+    rng = torch.get_rng_state().clone()
+    with _loader(data, start=1, steps=None, retry=True) as loader:
+        processes = list(loader._iterator._workers) if workers else []
+        for step in range(1, 5):
+            actual = list(loader.read_update(step))
+            for a, b in zip(expected[step], actual):
+                assert a.positions == b.positions
+                _assert_packed_equal(a.packed, b.packed)
+            retried = list(loader.read_update(step))
+            assert all(a is b for a, b in zip(actual, retried))
+    assert all(not process.is_alive() for process in processes)
+    assert torch.equal(torch.get_rng_state(), rng)
+    with _loader(data, start=4, steps=None) as resumed:
+        actual = list(resumed.read_update(4))
+        for a, b in zip(expected[4], actual):
+            assert a.positions == b.positions
+            _assert_packed_equal(a.packed, b.packed)
+        assert resumed._retry_batches == []
+    assert torch.equal(torch.get_rng_state(), rng)

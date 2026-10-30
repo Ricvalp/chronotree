@@ -144,10 +144,10 @@
     "src/stmem/models/spacetime_encoder.py": "0337f2550eb2e159737bc328569e203bb20d22b9272738c34e022887d8883265",
     "src/stmem/models/text_encoder.py": "84fafb56b901b9883e0f6ef548574a885f77f35d5960dfb2d6df5290b4a5e503",
     "src/stmem/tracking.py": "711933bc1ee2d15babec3d579c46121165337f80688fcbc632c5e9fef0f3ca02",
-    "src/stmem/train.py": "16d66ba335214e29e79914436efdd19633085f8a2858106dc6de207c432c5893",
+    "src/stmem/train.py": "627986d549754a662ec0ea4229ecde6c990dda38afff2a9423f803d3852463d6",
     "src/stmem/training/attention.py": "a7e8cb691300a5c8a05bda80e9025876dd664048fe23c37ead3b1104570dd71e",
     "src/stmem/training/data.py": "03087648268b66c563ab8834d120ca4954d813515ec84a092dc6765f4923d3e0",
-    "src/stmem/training/loader.py": "5d8908bb07cc2c5daaa6df62ad1f243077674a649be16e43f5a23a1558f4af33",
+    "src/stmem/training/loader.py": "c2ba6ef8e12d9a5959fcbaee182303aa9656857c65bcbea6d86739f5dba62728",
     "src/stmem/training/logging_options.py": "9ce7fd895a3f28de3b0c2fcbf566c24d0bdc59119e1657f6a7db3093ab554d67",
     "src/stmem/vision/frozen.py": "50875723488e2038e38393765d526cf47b81017ea2dfcad89dc116939462c5c5",
     "src/stmem/visualization/diagnostics.py": "d9d03b3bddd65a25d17e14f8f8fa06f3c18fefbbe644f5590d8d4dac25428eaa"

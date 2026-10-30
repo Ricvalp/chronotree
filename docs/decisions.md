@@ -1299,3 +1299,57 @@
     passed 849 tests, with three CUDA-only tests and one optional small-data
     fixture skipped. The real-data GPU training and simulator checks above ran
     separately. Ruff and `generate_teacher_diagram.py --check` also passed.
+
+44. **Open-ended teacher continuation at the original LR floor (30 October 2026).**
+    The user requested that H32 run `5caa7c32fc1dff11` continue beyond its
+    original 100k endpoint. Its existing cosine scheduler already clamps at
+    10% of peak LR; no scheduler change is needed. The explicit runtime flag
+    `--train-until-stopped` removes only the teacher's optimizer-step stopping
+    boundary. A resume before 100k follows the remaining original decay, then
+    holds LR at 1e-5. Adam state, warmup position, scheduler state, RNG, sample
+    order and strict scientific provenance remain unchanged. The original
+    configuration is frozen from the run's saved JSON into YAML rather than
+    re-inheriting new defaults or editing `training.steps`/`training.lr`.
+
+    Continuation metadata records its original activation step, original step
+    budget, schedule horizon and final LR. Every subsequent resume requires
+    the same explicit flag, even before 100k, preventing accidental restoration
+    of the finite endpoint. W&B retains the existing run identity and logs
+    the absence of a stopping target separately from the original schedule.
+    Planned immutable checkpoints are preserved, including 100k; periodic
+    `last.pt` and previous-copy saves continue afterward. A checkpointed stop
+    exactly at or beyond the original endpoint returns 75, leaves the stage
+    incomplete and removes any stale teacher completion marker.
+
+    The loader accepts `steps=None` with an actual unbounded iterator, retaining
+    its bounded prefetch queue and optimizer-boundary sampling. New open-ended
+    worker tests exposed a Torch IPC shutdown abort when pending tensor
+    transfers remained active. Open-ended cleanup now stops sampler refill and
+    drains at most one bounded prefetch queue with a five-second total drain
+    deadline before the existing worker shutdown. Finite-loader cleanup is
+    unchanged, and genuine worker errors still propagate.
+
+    The planner permits this mode only for explicit teacher-only resume jobs
+    with an existing checkpoint. The flag is part of stage identity so an old
+    completed stage can be reopened; active-allocation checks and submission
+    receipts are retained. No dependent experiment DAG is implicitly started.
+    Slurm allocations remain bounded by the site walltime (48 hours here),
+    with the existing checkpoint-stop signal; no automatic resubmission occurs.
+    Repeating the same resume command continues the same run for another
+    allocation. Extending exposure is an intentional user-requested change to
+    this diagnostic experiment, not a modification of the matched TREE/FLAT
+    supervision or causal data contract.
+
+    Validation: 17 continuation tests, ten loader tests, 69 planner/infrastructure
+    tests and 70 existing training/attention/fork/prefetch regressions pass.
+    The synthetic CPU checks include two-rank CLI training, exact LR values
+    before/at/after the schedule endpoint, immutable checkpoint preservation,
+    W&B identity with a mocked SDK, and bit-identical interrupted continuation
+    for model, optimizer, scheduler, scaler, RNG and sampler state. A read-only
+    audit of the synced real H32 checkpoint at step 39,000 verified the saved
+    scheduler/LR and unchanged model/training hashes through a four-B200
+    dry-run; generated shell syntax passed. Evidence is under
+    `runs/inspection/constant_lr_tail_20261030/`. The actual RTX 5000 Ada device
+    doctor passed FP32/BF16/FP16 checks. Ruff, whitespace and diagram snapshot
+    checks pass; all diagram outputs were regenerated, with only source hashes
+    changing. No real-data training or Slurm job was launched for this feature.

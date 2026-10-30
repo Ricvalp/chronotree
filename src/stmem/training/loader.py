@@ -9,6 +9,7 @@ consume training RNG state when workers start or a checkpoint is resumed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import count
 import os
 import time
 
@@ -52,12 +53,15 @@ class _Microbatches:
         self.microbatch = microbatch
 
     def __iter__(self):
-        for step in range(self.start, self.steps):
+        steps = count(self.start) if self.steps is None else range(self.start, self.steps)
+        for step in steps:
             positions = rank_positions(step, self.batch, self.rank, self.world)
             for offset in range(0, len(positions), self.microbatch):
                 yield tuple(positions[offset : offset + self.microbatch])
 
     def __len__(self):
+        if self.steps is None:
+            raise TypeError("An open-ended policy sampler has no finite length")
         local_n = self.batch // self.world
         return (self.steps - self.start) * ((local_n + self.microbatch - 1) // self.microbatch)
 
@@ -79,6 +83,8 @@ class PolicyBatchLoader:
     prepared, in addition to the consumer's batch. FP16 retains the current
     optimizer update's CPU batches for overflow retries; other precisions do not.
     Prefetched future updates are disposable, never checkpointed sampler state.
+    ``steps=None`` continues sampling until the caller stops, with the same
+    bounded prefetch queue and deterministic optimizer-step positions.
     """
 
     def __init__(self, data, *, start, steps, batch, rank, world, microbatch, retain_for_retry=False):
@@ -125,7 +131,7 @@ class PolicyBatchLoader:
             **kwargs,
         )
         # Avoid starting processes for a checkpoint already at the final step.
-        if len(sampler):
+        if self.steps is None or len(sampler):
             try:
                 self._iterator = iter(self._loader)
             except BaseException:
@@ -169,12 +175,42 @@ class PolicyBatchLoader:
                 # Torch 2.9.1 has no public explicit close for persistent
                 # iterators. Use its shutdown protocol (also used by __del__)
                 # now, including on safe-stop/errors, rather than waiting for GC.
-                iterator._shutdown_workers()
-                for worker in iterator._workers:
-                    worker.join(timeout=5)
+                try:
+                    if self.steps is None:
+                        self._drain_pending(iterator)
+                finally:
+                    iterator._shutdown_workers()
+                    for worker in iterator._workers:
+                        worker.join(timeout=5)
         finally:
             self._loader = None
             self._retry_batches.clear()
+
+    def _drain_pending(self, iterator):
+        # An endless sampler always has queued work at shutdown. Stop refilling
+        # it and receive the bounded outstanding tensor transfers before workers
+        # exit; Torch 2.9 can abort its IPC feeder with transfers still active.
+        # Keep cleanup bounded even if a shared-storage read is stuck. This uses
+        # the same pinned Torch iterator internals as explicit shutdown above.
+        iterator._sampler_iter = iter(())
+        original_timeout = iterator._timeout
+        deadline = time.monotonic() + 5
+        try:
+            for _ in range(self.prefetch_capacity + 1):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                iterator._timeout = remaining
+                try:
+                    next(iterator)
+                except StopIteration:
+                    break
+                except RuntimeError as error:
+                    if str(error).startswith("DataLoader timed out after "):
+                        break  # Fall back to Torch's bounded worker shutdown.
+                    raise
+        finally:
+            iterator._timeout = original_timeout
 
     def __exit__(self, *_exc):
         self.close()

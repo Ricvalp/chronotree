@@ -1243,6 +1243,82 @@ No new site file, run root or prepared dataset is needed. A different original
 run/generated directory must be substituted consistently rather than creating
 an empty recovery directory.
 
+## Continue a teacher beyond its original learning-rate schedule
+
+`--train-until-stopped --resume --only seed0_teacher` removes the optimizer-step
+stopping limit for an existing teacher. The original configuration, optimizer,
+scheduler, RNG, sample positions and W&B identity are retained. Before the
+original decay horizon, the learning rate follows the existing schedule. At and
+after that horizon, its cosine factor stays at 0.1 of the peak learning rate.
+For H32 run `5caa7c32fc1dff11`, this means the original decay through step 100,000,
+then a constant **0.00001**, from a peak of 0.0001. Warmup does not restart and
+the decay horizon is not stretched.
+
+Do not increase `training.steps` or edit `training.lr` to achieve this: those
+changes alter checkpoint provenance and can alter the original schedule.
+Instead, freeze the run's saved configuration, which also avoids inheriting
+new defaults from the current `configs/base.yaml`. JSON is parsed explicitly
+before writing YAML so scientific-notation numbers retain numeric types.
+
+After updating the HPC checkout, with the old allocation stopped:
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+
+run_name=teacher_b200_b128_m8_blocks32_no_previous_joint_commands_h32
+generated="hpc/generated/${run_name}"
+
+.venv/bin/python - "$run_name" <<'PY'
+import json
+from pathlib import Path
+import sys
+import yaml
+
+name = sys.argv[1]
+teacher = Path("runs") / name / "seed0/teacher"
+for filename in ("last.pt", "config.json", "tracking.json"):
+    path = teacher / filename
+    if not path.is_file() or not path.stat().st_size:
+        raise SystemExit(f"Missing {path}")
+cfg = json.loads((teacher / "config.json").read_text())
+snapshot = Path("hpc/generated") / name / "inputs/teacher_resume.yaml"
+snapshot.parent.mkdir(parents=True, exist_ok=True)
+snapshot.write_text(yaml.safe_dump(cfg, sort_keys=False))
+print(snapshot)
+PY
+
+.venv/bin/python hpc/plan.py \
+  --site hpc/site_b200_4gpu.env --profile b200_4gpu \
+  --teacher-config "$generated/inputs/teacher_resume.yaml" \
+  --plan core_seed0 --only seed0_teacher \
+  --run-root "runs/${run_name}" --output-dir "$generated" \
+  --log-every 1 --progress-every-seconds 30 --attention-every 10 \
+  --resume --train-until-stopped --dry-run
+```
+
+Inspect `training_continuation` in `$generated/plan.json` and the teacher's
+generated `.sbatch`. Replace `--dry-run` with `--submit` to launch. With the
+existing B200 site file, each allocation still requests four GPUs on `aiq` using
+`--gres=gpu:4`, 64 CPUs, 128G RAM and 48 hours. The flag does not request an
+unlimited Slurm allocation or automatically submit another one. If the previous
+job is still active, the planner retains it; it cannot change a running process.
+
+Periodic `last.pt` saves and the original immutable candidate checkpoints remain
+enabled, including the step-100k candidate. Later periodic saves update `last.pt`
+and its previous copy. A timeout warning requests an optimizer-boundary save and
+returns the existing partial-run code 75, including exactly at or beyond 100k.
+Abrupt termination can still lose updates since the latest completed save.
+No teacher completion marker is written for open-ended training, and the planner
+rejects combining it with downstream stages that would wait indefinitely.
+
+For each later allocation, repeat the same planner command with **both
+`--resume --train-until-stopped`** and the same run/generated directories. The
+continuation mode is recorded in checkpoints, `manifest.json`, `partial.json`
+and W&B summaries. Resuming such a checkpoint without the flag fails explicitly
+instead of silently restoring the old 100k stopping point. Keep `tracking.json`
+to continue the same W&B run. This feature changes training exposure and should
+be recorded when comparing results with the original bounded experiments.
+
 ## Frozen visual features and measured-state ablation
 
 Use the [frozen-vision experiment workflow](frozen_vision_experiment.md) for the

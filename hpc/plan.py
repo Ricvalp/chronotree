@@ -235,6 +235,7 @@ def build_jobs(
     progress_every_seconds: float | None = None,
     teacher_config: Path | None = None,
     attention_every: int | None = None,
+    train_until_stopped: bool = False,
 ) -> list[Job]:
     jobs: list[Job] = []
     gpu_count = PROFILES[profile]
@@ -284,6 +285,8 @@ def build_jobs(
                     item += ["--progress-every-seconds", str(progress_every_seconds)]
                 if attention_every is not None and stage != "router":
                     item += ["--attention-every", str(attention_every)]
+                if train_until_stopped and stage == "teacher":
+                    item.append("--train-until-stopped")
         jobs.append(
             Job(
                 name=name,
@@ -811,6 +814,12 @@ def main() -> None:
     parser.add_argument("--freeze-manifest", type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
+        "--train-until-stopped",
+        action="store_true",
+        help="Resume selected teachers beyond their original step budget, preserving the LR decay "
+        "then holding its final value; stop/checkpoint at the allocation limit, without auto-resubmission",
+    )
+    parser.add_argument(
         "--log-every",
         type=positive_integer,
         help="Runtime training metric interval in optimizer updates; leaves scientific config unchanged",
@@ -839,6 +848,26 @@ def main() -> None:
         run_root = (repo / args.run_root.expanduser()).resolve()
         # Runtime configuration and stage markers also read the exported site root.
         site["STMEM_RUN_ROOT"] = str(run_root)
+    if args.train_until_stopped:
+        teacher_names = {f"seed{seed}_teacher": seed for seed in manifest["seeds"]}
+        if (
+            not args.resume
+            or not args.only
+            or not set(args.only) <= {"teacher", *teacher_names}
+            or args.phase != "validation"
+            or args.freeze_protocol
+        ):
+            parser.error(
+                "--train-until-stopped requires --resume and --only teacher jobs "
+                "(for example --only seed0_teacher), without downstream stages or protocol freezing"
+            )
+        selected_teachers = teacher_names if "teacher" in args.only else {
+            name: teacher_names[name] for name in args.only
+        }
+        for name, seed in selected_teachers.items():
+            checkpoint = run_root / f"seed{seed}" / "teacher" / "last.pt"
+            if not checkpoint.is_file() or checkpoint.stat().st_size == 0:
+                parser.error(f"--train-until-stopped needs an existing checkpoint for {name}: {checkpoint}")
     teacher_config = (repo / (args.teacher_config or Path("configs/teacher.yaml")).expanduser()).resolve()
     if args.teacher_config is not None:
         from stmem.config import validate_config
@@ -911,6 +940,7 @@ def main() -> None:
         progress_every_seconds=args.progress_every_seconds,
         teacher_config=teacher_config,
         attention_every=args.attention_every,
+        train_until_stopped=args.train_until_stopped,
     )
     # Configuration provenance contains bounded label totals explicitly.
     for seed in manifest["seeds"]:
@@ -1011,6 +1041,15 @@ def main() -> None:
         "remaining_stage_work": [job.name for job in selected],
         "concurrency_predecessors": lanes,
     }
+    if args.train_until_stopped:
+        training = resolved_config(teacher_config)["training"]
+        details["training_continuation"] = {
+            "mode": "until_stopped",
+            "original_intended_steps": training["steps"],
+            "schedule_steps": training.get("schedule_steps", training["steps"]),
+            "final_learning_rate": 0.1 * training["lr"],
+            "automatic_resubmission": False,
+        }
     save_json(generated / "plan.json", details)
     print(json.dumps(details, indent=2))
     if not args.submit:

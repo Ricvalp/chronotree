@@ -1,4 +1,4 @@
-"""Bounded staged training with deterministic sampling and coherent safe resume."""
+"""Staged training with deterministic sampling and coherent checkpointed resume."""
 
 from __future__ import annotations
 import argparse
@@ -17,6 +17,7 @@ from stmem.models.action_flow import flow_sample, masked_mse
 from stmem.training.data import TrainingData, rank_positions
 from stmem.training.loader import PolicyBatchLoader
 from stmem.training.forks import COMMAND_FLAG, load_fork_checkpoint, schedule_steps, validate_teacher_fork
+from stmem.training.continuation import continuation_record
 from stmem.training.logging_options import (
     nonnegative_attention_every,
     positive_log_every,
@@ -71,10 +72,13 @@ def train_policy(
     log_every=None,
     progress_every_seconds=None,
     attention_every=None,
+    train_until_stopped=False,
 ):
     validate_config(cfg)
     if resume and fork_from:
         raise ValueError("Choose either resume or fork_from, not both")
+    if train_until_stopped and (stage != "teacher" or not resume):
+        raise ValueError("--train-until-stopped requires teacher training with --resume")
     if fork_sha256 and not fork_from:
         raise ValueError("fork_sha256 requires fork_from")
     if cfg["model"].get("history_mode", "full") == "none" and stage != "teacher":
@@ -105,6 +109,7 @@ def train_policy(
             "fork_checkpoint": str(fork_from) if fork_from else None,
             "fork_sha256": fork_sha256,
             "logging": logging,
+            "train_until_stopped": train_until_stopped,
         },
     ) as tracker:
         with TrainingProgress(directory, logging["progress_every_seconds"], rank=rank) as progress:
@@ -114,6 +119,7 @@ def train_policy(
                     cfg,
                     stage,
                     resume=resume,
+                    train_until_stopped=train_until_stopped,
                     fork_from=fork_from,
                     fork_sha256=fork_sha256,
                     stop_file=stop_file,
@@ -132,6 +138,7 @@ def _train_policy(
     stage,
     *,
     resume=None,
+    train_until_stopped=False,
     fork_from=None,
     fork_sha256=None,
     stop_file=None,
@@ -229,7 +236,7 @@ def _train_policy(
         lr=cfg["training"]["lr"],
         weight_decay=cfg["training"]["weight_decay"],
     )
-    steps = cfg["training"]["steps"]
+    steps = None if train_until_stopped else cfg["training"]["steps"]
     decay_steps = schedule_steps(cfg["training"])
     warmup = cfg["training"]["warmup_steps"]
     scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -254,6 +261,7 @@ def _train_policy(
         "rank_assignment": "rotating_rank_v1",
     }
     fork = None
+    continuation = None
     if resume or fork_from:
         startup_progress("fork_loading" if fork_from else "resume_loading")
         saved = load_fork_checkpoint(fork_from, fork_sha256) if fork_from else load_checkpoint(resume)
@@ -277,20 +285,21 @@ def _train_policy(
             if saved["stage"] != stage or saved["provenance"] != provenance:
                 raise ValueError("Resume stage/data/config/dependencies/world size mismatch")
             fork = saved.get("fork")
+            continuation = continuation_record(cfg, saved, requested=train_until_stopped)
         policy.load_state_dict(saved["model"])
         optimizer.load_state_dict(saved["optimizer"])
         scheduler.load_state_dict(saved["scheduler"])
         scaler.load_state_dict(saved["scaler"])
         start = saved["step"]
         restore_rng(saved["rng_by_rank"][rank])
-        if start > steps:
+        if steps is not None and start > steps:
             raise ValueError("Resume checkpoint is beyond the intended optimizer-step budget")
     directory = run_dir(cfg, stage)
     if rank == 0:
         directory.mkdir(parents=True, exist_ok=True)
         if not resume and (directory / "last.pt").exists():
             raise FileExistsError(f"Existing run: {directory}; use --resume explicitly")
-        if start < steps:
+        if steps is None or start < steps:
             (directory / "complete.json").unlink(missing_ok=True)
         atomic_json(cfg, directory / "config.json")
         atomic_json(
@@ -303,6 +312,7 @@ def _train_policy(
                 "synthetic": data.synthetic,
                 "logging": logging,
                 "fork": fork,
+                "continuation": continuation,
                 "feature_io": feature_io_settings,
             },
             directory / "manifest.json",
@@ -319,8 +329,12 @@ def _train_policy(
     tracker.summary(
         {
             "training/start_step": start,
+            "training/completed_steps": start,
             "training/intended_steps": steps,
+            "training/train_until_stopped": train_until_stopped,
+            "training/original_intended_steps": cfg["training"]["steps"],
             "training/schedule_steps": decay_steps,
+            "training/continuation": continuation,
             "fork": fork,
             "training/world_size": world,
             "training/precision": precision,
@@ -422,6 +436,7 @@ def _train_policy(
                 "tracking": dict(tracker.identity),
                 "logging": logging,
                 "fork": fork,
+                "continuation": continuation,
             }
             atomic_save(payload, directory / "last.pt")
             tracker.checkpoint(directory / "last.pt", step)
@@ -434,7 +449,7 @@ def _train_policy(
     step = start
     consecutive_overflows = 0
     total_overflows = 0
-    while step < steps:
+    while steps is None or step < steps:
         update_started = time.perf_counter()
         reset_feature_io_metrics()
         optimizer.zero_grad(set_to_none=True)
@@ -642,17 +657,20 @@ def _train_policy(
             # next update while it observes the same completed optimizer state.
             if world > 1:
                 torch.distributed.barrier()
-        if checkpoint_due and not (stopped and current_step < steps):
+        partial_stop = stopped and (steps is None or current_step < steps)
+        if checkpoint_due and not partial_stop:
             progress.update("scene_diagnostics")
             scenes.log(current_step)
-        if stopped and current_step < steps:
+        if partial_stop:
             progress.update("checkpointed_partial")
             if rank == 0:
+                tracker.summary({"training/completed_steps": current_step})
                 atomic_json(
                     {
                         "status": "checkpointed_partial",
                         "step": current_step,
                         "checkpoint": str(directory / "last.pt"),
+                        "continuation": continuation,
                     },
                     directory / "partial.json",
                 )
@@ -703,6 +721,11 @@ def main():
     parser.add_argument("--fork-sha256", help="Expected SHA256 of the immutable fork source checkpoint")
     parser.add_argument("--stop-file", default=os.environ.get("STMEM_STOP_FILE"))
     parser.add_argument(
+        "--train-until-stopped",
+        action="store_true",
+        help="Resume a teacher without a step limit; retain its original LR decay then hold the final LR",
+    )
+    parser.add_argument(
         "--log-every",
         type=positive_log_every,
         help="Log scalar metrics every N optimizer updates; runtime-only override, safe to change on resume",
@@ -721,6 +744,8 @@ def main():
     cfg = load_config(args.config)
     stage = args.stage or cfg["stage"]
     cfg["stage"] = stage
+    if args.train_until_stopped and (stage != "teacher" or not args.resume):
+        parser.error("--train-until-stopped requires teacher training with --resume")
     if (args.fork_from or args.fork_sha256) and stage != "teacher":
         parser.error("--fork-from and --fork-sha256 apply only to teacher training")
     if stage == "router":
@@ -742,6 +767,7 @@ def main():
             log_every=args.log_every,
             progress_every_seconds=args.progress_every_seconds,
             attention_every=args.attention_every,
+            train_until_stopped=args.train_until_stopped,
         )
     raise SystemExit(result)
 
