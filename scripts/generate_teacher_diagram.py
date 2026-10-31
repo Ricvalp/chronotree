@@ -71,6 +71,12 @@ SOURCES = [
     "src/stmem/data/stage_features.py",
     "src/stmem/vision/frozen.py",
     "src/stmem/evaluate.py",
+    "hpc/evaluate.py",
+    "src/stmem/evaluation/parallel.py",
+    "src/stmem/evaluation/parallel_worker.py",
+    "src/stmem/evaluation/devices.py",
+    "src/stmem/evaluation/workload.py",
+    "src/stmem/evaluation/aggregation.py",
     "src/stmem/evaluation/execution.py",
     "src/stmem/evaluation/robomme_adapter.py",
     "src/stmem/evaluation/runner.py",
@@ -202,6 +208,18 @@ def snapshot():
                     "stride_1_native_commands": 8,
                     "stride_2_native_commands": 16,
                 },
+            },
+            "parallel_validation": {
+                "launcher": "hpc/evaluate.py",
+                "worker_architecture": "one independent policy and simulator per subprocess",
+                "default_gpus": 4,
+                "default_workers_per_gpu": 4,
+                "default_cpu_allocation": 64,
+                "default_episodes_per_task": 4,
+                "default_total_video_cap": 10,
+                "inference_and_renderer_gpu": "same allocated GPU UUID, verified physical PCI identity",
+                "cross_episode_attention_or_batching": False,
+                "changes_model_parameters_or_causal_history": False,
             },
             "frozen_feature_io": {
                 "prefetch_control": "STMEM_FEATURE_PREFETCH_CHUNKS",
@@ -849,7 +867,7 @@ def decoder(file, cfg, policy, facts):
         "decoder",
         "Action-query conditional flow matching",
         "Training predicts a velocity field once; inference integrates that field to produce robot commands.",
-        height=2390,
+        height=2660,
     )
     noisy = p.card(
         48,
@@ -980,6 +998,26 @@ def decoder(file, cfg, policy, facts):
         tooltip="evaluate.py: the explicit evaluation flag changes only the executed prefix length. "
         "It does not alter model shapes or retrain the policy. History remains causal, and "
         "the effective execution setting identifies the evaluation manifest and resume protocol.",
+        parent="notes",
+    )
+    p.card(
+        48,
+        2350,
+        1704,
+        225,
+        "PARALLEL VALIDATION  /  Independent simulator processes",
+        [
+            "One allocation, several workers per GPU. Each worker owns its policy, simulator, and causal history.",
+            "Default: 4 GPUs × 4 workers; 64 allocated CPUs; 4 fixed validation episodes per task.",
+            "Inference and rendering share each worker's assigned physical GPU; CPU affinity bounds its threads.",
+            "No cross-episode attention or encoder batching is introduced. Memory is replicated per worker.",
+            "One aggregate success/progress run and a global video cap. Policy shapes and action cadence stay unchanged.",
+        ],
+        tone="note",
+        size=19,
+        tooltip="hpc/evaluate.py and evaluation/parallel.py launch independent evaluation subprocesses. "
+        "Each episode retains its official scene, policy-noise seed, and causal observation contract. "
+        "GPU UUID masking and SAPIEN PCI verification enforce inference/render placement; throughput must be measured.",
         parent="notes",
     )
     p.section(48, 820, 1650, "INSIDE EACH DECODER BLOCK  /  Pre-normalized residual sublayers")

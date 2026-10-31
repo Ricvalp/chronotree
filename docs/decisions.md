@@ -1408,3 +1408,48 @@
     FP16 on the actual RTX5000 Ada. Shell syntax and Ruff pass. Diagram notes
     and all three artifacts were updated, checked and visually inspected. No
     evaluation was submitted to Slurm or run on test seeds for this change.
+
+47. **Parallel validation in one allocation (31 October 2026).** The user
+    requested faster repeated evaluation and at least four episodes per task.
+    `hpc/evaluate.py` snapshots a checkpoint and renders one allocation with
+    four untyped GPUs on gpuq, 64 CPUs, 16 independent simulator processes and
+    four official validation episodes per task. Thirty-two workers are an
+    explicit option. The existing single-worker path remains available.
+
+    Workers receive disjoint CPU affinities before importing native libraries,
+    bounded thread counts and one allocated GPU UUID. Policy inference and
+    SAPIEN rendering are checked against the same physical PCI identity. The
+    pinned official builder is retained, with a private factory namespace
+    supplying its rendering device. CPU physics, reset seeds, observation and
+    action cadence, causal history and policy architecture are unchanged.
+    Processes own separate simulators, policies and streaming state; this does
+    not introduce batched decoder inference across episodes.
+
+    One parent W&B run reports success and progress. Its fixed planned
+    denominator includes missing work and infrastructure failures. Immutable
+    manifests, per-episode identity and completion markers prevent mixed
+    checkpoints or protocols, duplicates, and successful partial aggregates.
+    Ten videos are assigned globally across tasks, independently of worker
+    count, and linked from the parent output. Signals and worker crashes clean
+    up process groups; explicit resume retains completed episodes and their
+    original seeds. The launcher defaults to dry-run, preserves its copied
+    weights if live `last.pt` advances, and rejects duplicate active jobs.
+
+    Validation: 93 focused CPU tests pass, including aggregation, lifecycle,
+    signal races, device identities, CLI/sharding, immutable input snapshots,
+    shell rendering and execution-length regressions. Real-checkpoint dry-runs
+    for 16/32 workers request `gpu:4`, 64 CPUs, 64 episodes and ten videos;
+    generated shell syntax passes. The actual RTX5000 Ada doctor passes
+    FP32/BF16/FP16. Two real renderer processes also pass concurrent reset and
+    stepping checks. A complete supervisor smoke with the frozen 60k policy
+    compares one and two workers on the same two PickXtimes validation scenes:
+    all 25 native command vectors per scene are bit-identical, physical device
+    placement is verified, and each run saves one video with zero infrastructure
+    errors. The 24-step cap makes this a bounded integration diagnostic, not a
+    benchmark success estimate. Evidence is under
+    `runs/inspection/parallel_evaluation_smoke_20261031/`.
+
+    Architecture artifacts were regenerated and all six HTML pages reviewed.
+    Four-H200 throughput, peak memory and 16-versus-32-worker contention remain
+    unmeasured locally; no speedup factor is claimed. No Slurm allocation,
+    training or test-seed tuning was launched.

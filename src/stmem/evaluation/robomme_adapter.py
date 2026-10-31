@@ -121,6 +121,7 @@ class RoboMMEAdapter:
         feature_extractor=None,
         observation_stride=1,
         include_conditioning=True,
+        render_device=None,
     ):
         if split not in ("train", "val", "test"):
             raise ValueError("Unknown official split")
@@ -157,6 +158,12 @@ class RoboMMEAdapter:
         self.last_raw_observation = None
         self.last_preprocess_seconds = 0.0
         self.last_observation_skipped = False
+        self.render_binding = None
+        torch_identity = None
+        if render_device is not None:
+            from stmem.evaluation.devices import verify_torch_device
+
+            torch_identity = verify_torch_device(render_device)
         if self.env is None:
             try:
                 import robomme.robomme_env  # noqa: F401 -- official task registration
@@ -170,8 +177,7 @@ class RoboMMEAdapter:
             )
             if (task, episode_idx) not in builder.metadata_index:
                 raise ValueError(f"No official {split} seed for {task}/{episode_idx}")
-            self.env = builder.make_env_for_episode(
-                episode_idx,
+            observation_flags = dict(
                 include_front_depth=True,
                 include_wrist_depth=True,
                 include_front_camera_extrinsic=True,
@@ -181,6 +187,21 @@ class RoboMMEAdapter:
                 include_maniskill_obs=False,
                 include_available_multi_choices=False,
             )
+            if render_device is None:
+                self.env = builder.make_env_for_episode(episode_idx, **observation_flags)
+            else:
+                from stmem.evaluation.devices import make_env_with_render_device
+
+                self.env = make_env_with_render_device(builder, episode_idx, render_device, **observation_flags)
+        if render_device is not None:
+            from stmem.evaluation.devices import verify_render_device
+
+            try:
+                self.render_binding = verify_render_device(self.env, render_device, torch_identity)
+            except BaseException:
+                self.env.close()
+                self.env = None
+                raise
 
     def _runtime_metadata(self):
         unwrapped = getattr(self.env, "unwrapped", self.env)
@@ -190,6 +211,8 @@ class RoboMMEAdapter:
             "clock": "source_local_recorded_frame",
             "observation_stride": self.observation_stride,
         }
+        if self.render_binding is not None:
+            result["render_binding"] = self.render_binding
         for output, attr in [("control_hz", "control_freq"), ("physics_hz", "sim_freq")]:
             value = getattr(unwrapped, attr, None)
             if value is not None:

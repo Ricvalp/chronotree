@@ -15,6 +15,7 @@ from stmem.evaluation.runner import OnlinePolicy, run_episode
 from stmem.evaluation.metrics import summarize_episodes
 from stmem.evaluation.robomme_adapter import RoboMMEAdapter
 from stmem.evaluation.execution import evaluation_execution_config
+from stmem.evaluation.workload import planned_episodes, video_episodes
 from stmem.data.pointcloud import point_sampler_settings
 from stmem.data.center_sampling import center_sampler_settings, center_counts
 from stmem.training.runtime import load_checkpoint, load_policy, load_router, environment_manifest
@@ -175,6 +176,9 @@ def main():
     p.add_argument("--router-checkpoint")
     p.add_argument("--output")
     p.add_argument("--episode-count", type=int)
+    p.add_argument("--video-cap", type=int, help="Maximum videos across the complete evaluation, not per shard")
+    p.add_argument("--no-tracking", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--render-device", help="Explicit renderer CUDA device, verified against policy inference")
     p.add_argument("--shard-index", type=int, default=0)
     p.add_argument("--num-shards", type=int, default=1)
     p.add_argument("--budget", type=int)
@@ -199,9 +203,14 @@ def main():
     cfg = load_config(args.config)
     if not 0 <= args.shard_index < args.num_shards:
         raise ValueError("Invalid shard index")
-    count = args.episode_count or cfg["evaluation"]["episode_count"]
-    if not 1 <= count <= 50:
-        raise ValueError("Official split provides 50 episode configurations per task")
+    count = cfg["evaluation"]["episode_count"] if args.episode_count is None else args.episode_count
+    cfg["evaluation"]["episode_count"] = count
+    if args.video_cap is not None:
+        cfg["evaluation"]["video_cap"] = args.video_cap
+    if args.no_tracking:
+        cfg.setdefault("tracking", {})["enabled"] = False
+    all_planned = planned_episodes(cfg, count)
+    selected_videos = video_episodes(cfg, count)
     checkpoint = (
         Path(args.checkpoint)
         if args.checkpoint
@@ -246,7 +255,6 @@ def main():
         else run_dir(cfg, "evaluation") / args.split / args.method / f"shard{args.shard_index}"
     )
     output.mkdir(parents=True, exist_ok=True)
-    all_planned = [(task, i) for task in cfg["data"]["tasks"] for i in range(count)]
     planned = all_planned[args.shard_index :: args.num_shards]
     manifest = {
         "config": cfg,
@@ -263,7 +271,10 @@ def main():
         "intervention": args.intervention,
         "budget": args.budget or cfg["model"]["budget"],
         "targeting_diagnostics": args.targeting_diagnostics,
+        "video_episodes": selected_videos,
     }
+    if args.render_device is not None:
+        manifest["render_device"] = args.render_device
     if args.execution_override is not None:
         manifest["execution_override"] = args.execution_override
     existing = output / "manifest.json"
@@ -350,12 +361,15 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
     )
     load_seconds = time.perf_counter() - started
     tracker.summary({"evaluation/model_load_seconds_this_invocation": load_seconds})
-    for episode_position, (task, episode_idx) in enumerate(planned):
+    selected_videos = set(video_episodes(cfg))
+    manifest_hash = file_sha256(existing)
+    for task, episode_idx in planned:
         path = output / "episodes" / f"{task}_{episode_idx:03d}.json"
         if (task, episode_idx) in saved:
             continue
         adapter = None
         result = None
+        seed = cfg["evaluation"]["seed"] + cfg["data"]["tasks"].index(task) * 1000 + episode_idx
         try:
             adapter = RoboMMEAdapter(
                 task,
@@ -372,15 +386,15 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
                 feature_extractor=feature_extractor,
                 observation_stride=cfg["data"].get("observation_stride", 1),
                 include_conditioning=cfg["model"].get("history_mode", "full") != "none",
+                render_device=args.render_device,
             )
             if args.targeting_diagnostics:
                 from stmem.evaluation.targeting import TargetingAdapter
 
                 adapter = TargetingAdapter(adapter)
-            seed = cfg["evaluation"]["seed"] + cfg["data"]["tasks"].index(task) * 1000 + episode_idx
             video = (
                 output / "videos" / f"{task}_{episode_idx:03d}.mp4"
-                if episode_position < cfg["evaluation"]["video_cap"]
+                if (task, episode_idx) in selected_videos
                 else None
             )
             result = run_episode(
@@ -421,6 +435,14 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
                 if args.targeting_diagnostics and result is not None:
                     result["targeting_diagnostics"] = adapter.report(result["status"])
         result["model_load_seconds"] = load_seconds
+        # Failed renderer construction must retain the same identity and seed
+        # as successful episodes so parallel aggregation cannot drop failures.
+        result["evaluation_manifest_sha256"] = manifest_hash
+        result.setdefault("checkpoint_sha256", hashes[str(checkpoint.resolve())])
+        result.setdefault("noise_seed", seed)
+        result.setdefault("training_seed", cfg["seed"])
+        result.setdefault("budget", args.budget or cfg["model"]["budget"])
+        result.setdefault("intervention", args.intervention)
         if execution_override is not None:
             result["execution_override"] = execution_override
         atomic_json(result, path)

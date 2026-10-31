@@ -95,6 +95,18 @@ or sixteen native steps (0.8 seconds) for the 10 Hz policy. The latter holds
 each target for two simulator steps; it does not interpolate. The diagram's
 default execute-four/execute-two labels still describe the saved configurations.
 
+The **Action decoder** page also records parallel validation through
+`hpc/evaluate.py`. One allocation launches independent policy-and-simulator
+processes, with four GPUs and four workers per GPU by default. Each worker has
+its own causal history and model copy; this does not batch different episodes
+through the encoder or allow attention between them. CUDA UUID assignment and
+physical PCI verification keep each worker's inference and rendering on the same
+allocated GPU, while disjoint CPU affinities bound simulator and model threads.
+Four fixed validation episodes per task, one aggregate W&B run and a global video
+cap describe the evaluation workload, without changing trained tensor shapes or
+action cadence. Replicated memory and throughput must be measured on the target
+hardware. See [parallel evaluation](parallel_evaluation.md) for the workflow.
+
 The decoder page also describes the optional attention diagnostics. Every ten
 optimizer updates by default, fixed training-scene probes generate action
 chunks from fixed noise and measure cross-attention at the final Euler

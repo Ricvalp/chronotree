@@ -1330,6 +1330,11 @@ the existing balanced-v2 geometry and require new frozen-feature sidecars.
 
 ## Evaluating a different execution length
 
+For faster repeated validation, use the [parallel evaluation launcher](parallel_evaluation.md).
+It supports the same `--execute-actions` override, defaults to four episodes per
+task, and runs 16 independent simulations across four GPUs in one allocation.
+The commands below remain the older single-worker workflow.
+
 `stmem.evaluate --execute-actions N` explicitly changes how many predicted
 joint/gripper targets execute before replanning. It is a validation-only
 ablation: the checkpoint horizon, action/observation stride, learned inputs and
