@@ -267,6 +267,7 @@ def run_episode(
                 "action_hz": None if native_hz is None else native_hz / action_stride,
                 "observation_hz": None if native_hz is None else native_hz / observation_stride,
                 "predicted_actions_per_chunk": online.cfg["model"]["horizon"],
+                "executed_actions_per_chunk": online.cfg["model"]["execute"],
                 "replan_primitive_steps": online.cfg["model"]["execute"] * action_stride,
                 "command_interpolation": "zero_order_hold",
                 "clock": "native_source_local_recorded_frame",

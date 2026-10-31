@@ -81,6 +81,20 @@ reused; targets and terminal masks are assembled for the configured horizon.
 The main diagram and its core parameter table remain the 16-action default;
 the JSON snapshot records the longer-horizon variant separately.
 
+For a separately recorded validation experiment, `stmem.evaluate
+--execute-actions N` overrides how many predicted targets are executed before
+replanning, using the existing checkpoint. It preserves the learned weights,
+predicted horizon, action/observation sampling, and checkpoint's default
+configuration. The explicit override must be between one and the predicted
+horizon and is rejected for the official test split. Effective execution is
+recorded in the evaluation manifest and checked when resuming.
+
+The decoder page labels this separately from every training recipe. Eight
+executed targets mean eight native 20 Hz steps (0.4 seconds) for a 20 Hz policy,
+or sixteen native steps (0.8 seconds) for the 10 Hz policy. The latter holds
+each target for two simulator steps; it does not interpolate. The diagram's
+default execute-four/execute-two labels still describe the saved configurations.
+
 The decoder page also describes the optional attention diagnostics. Every ten
 optimizer updates by default, fixed training-scene probes generate action
 chunks from fixed noise and measure cross-attention at the final Euler
@@ -259,7 +273,7 @@ uv run python scripts/generate_teacher_diagram.py --check
 Commit the generator and regenerated `.drawio`, `.html`, and `.json` together.
 The JSON is an auditable configuration/count/source-hash snapshot. `--check`
 detects stale artifacts and validates XML IDs, references, page links and bounds;
-it cannot prove the prose matches a newly changed algorithm. Inspect all five
+it cannot prove the prose matches a newly changed algorithm. Inspect all six
 pages after editing their layout. Native draw.io shapes remain editable, but
 manual diagram edits must be reflected in the generator before regeneration.
 
@@ -347,3 +361,13 @@ connector crossing a card was rerouted before the final check. Ruff,
 the snapshot/XML check and whitespace checks passed. Local layout evidence is
 in `runs/architecture_diagram/current_only/`. These checks do not establish
 H200 memory fit or learned policy performance.
+
+On 2026-10-31, the decoder page gained a separate validation execution-override
+note. It distinguishes eight predicted targets from eight simulator steps,
+preserves checkpoint/training defaults and shapes, and records the override in
+the JSON snapshot. All three artifacts were regenerated against the finalized
+evaluation code. Chromium opened the HTML and navigated all six pages without
+overflowing text bounds; the changed decoder page was visually inspected.
+Ruff and the snapshot/XML check passed. Layout evidence is in
+`runs/architecture_diagram/execute_override/`. This validates documentation
+consistency, not the effect of a longer execution interval on policy success.

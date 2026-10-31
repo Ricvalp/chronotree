@@ -1353,3 +1353,58 @@
     doctor passed FP32/BF16/FP16 checks. Ruff, whitespace and diagram snapshot
     checks pass; all diagram outputs were regenerated, with only source hashes
     changing. No real-data training or Slurm job was launched for this feature.
+
+45. **Repeatable checkpoint inspections (31 October 2026).** The user requested
+    the usual local checks on three newly transferred teachers and a reusable
+    launcher. `scripts/inspect_checkpoints.py` now runs tracked offline,
+    grounding and expert-prefix diagnostic modules from an immutable rsync
+    bundle, with explicit local assets in `configs/inspection.yaml`. No module
+    imports ignored historical Python helpers. Existing diagnostic data remains
+    ignored and is referenced through local links; no data regeneration or full
+    download is performed.
+
+    The prior scenes, prefixes, action/observation cadence and paired-noise
+    protocol are retained. Real cube relocation is rerendered through both
+    cameras. Point-cloud viewers distinguish predicted FK paths from executed
+    commands, and native-time metrics compare 10/20 Hz policies fairly.
+    Reports separate task success, partial grasp/lift, expert action fit and
+    counterfactual response; bounded caps are not benchmark failure rates.
+    The 60k frozen model lifts the cube in the validation probe but still fails
+    the separate PickXtimes training scene from reset. Detailed measurements
+    and caveats are in `docs/checkpoint_inspection_20261031.md`.
+
+    SHA256/CRC and checkpoint-state audits precede inference. Asset and policy
+    source identities are rechecked after stages. Resume reuses matching
+    results while independently validating arrays, commands and media. Runtime
+    identities and stage-code hashes prevent accidental mixing after upgrades.
+    Output locks and signal-driven process-group cleanup prevent overlapping
+    launchers. The current suite completed 45 policy handoffs plus two expert
+    controls, 3,250 offline predictions, reset point clouds and fresh rollouts.
+    Fifty-five focused CPU tests, Ruff and diagram consistency checks pass.
+    No production model/optimizer implementation, training run, Slurm job or
+    test-seed tuning was changed or launched.
+
+46. **Explicit validation execution-length override (31 October 2026).** The
+    user requested HPC evaluation with eight executed actions per chunk. Added
+    `stmem.evaluate --execute-actions N`, counting predicted targets, retaining
+    the checkpoint action stride and horizon. The existing `execute` contract
+    remains strict everywhere else; evaluation authorizes just this single
+    field and validates all other learned inputs/geometry/cadence unchanged.
+    The flag is validation-only and cannot bypass the frozen test protocol.
+
+    Eight targets mean eight native commands for the 20 Hz teachers and sixteen
+    native commands for the 10 Hz frozen-feature teacher. No interpolation,
+    observation resampling or checkpoint rewriting is introduced. Original and
+    effective execution settings are recorded in evaluation manifests, W&B and
+    episode records; different execution lengths cannot share an output's
+    resumed results. Generated action chunk lengths stay16/32 as trained.
+
+    The supplied HPC commands reuse the already evaluated immutable Oct31
+    snapshots and fixed validation scenes, with new output directories and ten
+    videos per job. They request one untyped GPU on gpuq per model. Eighty-five
+    targeted CPU tests pass, including real executor stride/termination checks
+    and tiny-checkpoint loading/hash/metadata/resume checks. Read-only preflight
+    passes on all three real checkpoint/config pairs; doctor passes FP32/BF16/
+    FP16 on the actual RTX5000 Ada. Shell syntax and Ruff pass. Diagram notes
+    and all three artifacts were updated, checked and visually inspected. No
+    evaluation was submitted to Slurm or run on test seeds for this change.

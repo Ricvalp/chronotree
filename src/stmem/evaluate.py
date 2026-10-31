@@ -14,9 +14,10 @@ from stmem.config import load_config, dependency, run_dir, source_revision
 from stmem.evaluation.runner import OnlinePolicy, run_episode
 from stmem.evaluation.metrics import summarize_episodes
 from stmem.evaluation.robomme_adapter import RoboMMEAdapter
+from stmem.evaluation.execution import evaluation_execution_config
 from stmem.data.pointcloud import point_sampler_settings
 from stmem.data.center_sampling import center_sampler_settings, center_counts
-from stmem.training.runtime import load_policy, load_router, validate_policy_config, environment_manifest
+from stmem.training.runtime import load_checkpoint, load_policy, load_router, environment_manifest
 from stmem.training.checkpoints import file_sha256, atomic_json
 from stmem.tracking import RunTracker
 
@@ -179,6 +180,10 @@ def main():
     p.add_argument("--budget", type=int)
     p.add_argument("--selection-family", choices=["tree", "flat"])
     p.add_argument(
+        "--execute-actions", type=int,
+        help="Validation-only override: execute this many predicted targets before replanning; each target retains the checkpoint action stride",
+    )
+    p.add_argument(
         "--targeting-diagnostics",
         action="store_true",
         help="Save evaluation-only target/contact/trajectory diagnostics for PickXtimes and VideoUnmask",
@@ -189,6 +194,8 @@ def main():
         default="none",
     )
     args = p.parse_args()
+    if args.execute_actions is not None and args.split != "val":
+        p.error("--execute-actions is validation-only; test evaluation uses its frozen protocol")
     cfg = load_config(args.config)
     if not 0 <= args.shard_index < args.num_shards:
         raise ValueError("Invalid shard index")
@@ -202,6 +209,12 @@ def main():
         if args.method == "PERCEIVER"
         else dependency(cfg, "teacher" if args.method == "FULL" else "compact")
     )
+    args.execution_override = None
+    if args.execute_actions is not None:
+        checkpoint_cfg = load_checkpoint(checkpoint)["config"]
+        cfg, args.execution_override = evaluation_execution_config(
+            checkpoint_cfg, cfg, execute_actions=args.execute_actions, split=args.split,
+        )
     router_path = args.router_checkpoint
     if args.method in ("TREE", "FLAT") and not router_path and not args.selection_family:
         router_path = str(run_dir({**cfg, "reader": args.method.lower()}, "router") / "last.pt")
@@ -251,6 +264,8 @@ def main():
         "budget": args.budget or cfg["model"]["budget"],
         "targeting_diagnostics": args.targeting_diagnostics,
     }
+    if args.execution_override is not None:
+        manifest["execution_override"] = args.execution_override
     existing = output / "manifest.json"
     resuming = existing.exists()
     if resuming:
@@ -299,7 +314,13 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
     device = "cuda" if torch.cuda.is_available() else "cpu"
     started = time.perf_counter()
     policy, checkpoint_state = load_policy(checkpoint, device)
-    validate_policy_config(checkpoint_state["config"], cfg)
+    _, execution_override = evaluation_execution_config(
+        checkpoint_state["config"], cfg, execute_actions=args.execute_actions, split=args.split,
+    )
+    if execution_override != args.execution_override:
+        raise ValueError("Checkpoint execution settings changed after evaluation preflight")
+    if execution_override is not None:
+        tracker.summary({"evaluation/execution_override": execution_override})
     from stmem.vision.frozen import FrozenCLIPFeatures, resolve_visual_features
 
     visual_spec = resolve_visual_features(cfg)
@@ -400,6 +421,8 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
                 if args.targeting_diagnostics and result is not None:
                     result["targeting_diagnostics"] = adapter.report(result["status"])
         result["model_load_seconds"] = load_seconds
+        if execution_override is not None:
+            result["execution_override"] = execution_override
         atomic_json(result, path)
         results.append(result)
         new_episodes += 1

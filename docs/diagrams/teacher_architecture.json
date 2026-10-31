@@ -14,6 +14,19 @@
   },
   "center_sampling_version": "cell_balanced_observed_medoids_v1",
   "configuration": "configs/teacher.yaml",
+  "evaluation_execution_override": {
+    "allowed_split": "val",
+    "changes_model_parameters": false,
+    "checkpoint_default_preserved": true,
+    "eight_target_example": {
+      "native_control_hz": 20,
+      "stride_1_native_commands": 8,
+      "stride_2_native_commands": 16
+    },
+    "flag": "--execute-actions",
+    "native_commands_per_replan": "execute_actions * action_stride",
+    "units": "predicted targets per chunk"
+  },
   "fp32_weight_bytes": 24394792,
   "frozen_feature_io": {
     "changes_model_parameters_or_causal_history": false,
@@ -132,8 +145,10 @@
     "src/stmem/data/prepare.py": "883cc6bcc039bed9739f8fc84f99b8883d9d3d1fb5633cdde6cef361293a21d3",
     "src/stmem/data/prepare_features.py": "a8c4302c53254153cc573ff457b4aa9aa61493f6d7f1fb08a016c2ac89a0cfa0",
     "src/stmem/data/stage_features.py": "edc163e7d9d7a211a4209e0718864636acb38a5c594dee03f01e47e8b477e3cc",
+    "src/stmem/evaluate.py": "31ca61ca38e9f50eb87a8717a11802b387814f07f44737bd2b2071b57ed274ca",
+    "src/stmem/evaluation/execution.py": "ea532b5506df92883a35ce41da54be4b272afc4d66b6d08b080e86829c8fdcfb",
     "src/stmem/evaluation/robomme_adapter.py": "aeb3c4d364d0c1ce0b52102a706b5e4536b28f0fcdd2374941747f303a562c22",
-    "src/stmem/evaluation/runner.py": "60551fb17e9fe36d41a2e67c660604f18797451b9cb2ea3578993928c9b00c41",
+    "src/stmem/evaluation/runner.py": "6b207d49c072d74ed4efb375437fa6dad6baeb50b4a8f31b1b37de09a12c03a2",
     "src/stmem/models/action_flow.py": "0f4e91469f7ff1726e2835ae5d370eee7a4fc75b7c76b3683c5c37df0976db6e",
     "src/stmem/models/attention_diagnostics.py": "1456e5645ccc4706e4615bf7b87b42e5cdf0105c8dcd3d57b686c7afa17ba5bd",
     "src/stmem/models/batched_policy.py": "299d5bf061b8d286d084b8a28f5bd207f2a9cc678d4650eabf6d5e100e5f1c97",

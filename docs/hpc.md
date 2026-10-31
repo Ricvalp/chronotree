@@ -1326,3 +1326,106 @@ two fresh H32 teachers. It covers descriptor-cache size estimates, parallel
 one-GPU preparation tasks, long-history memory profiling, separate four-B200
 training jobs and matched H200 evaluations with videos. These experiments reuse
 the existing balanced-v2 geometry and require new frozen-feature sidecars.
+
+
+## Evaluating a different execution length
+
+`stmem.evaluate --execute-actions N` explicitly changes how many predicted
+joint/gripper targets execute before replanning. It is a validation-only
+ablation: the checkpoint horizon, action/observation stride, learned inputs and
+weights remain fixed, and all other policy compatibility checks remain strict.
+The unmodified command still checks the checkpoint's original execution length.
+An override on `--split test` is rejected; it cannot bypass the frozen protocol.
+
+The count is in **predicted targets**, not native simulator commands. With the
+three 31 October snapshots, `--execute-actions 8` gives:
+
+| Snapshot | Checkpoint updates | Previous targets / native commands | New targets / native commands | Replanning interval |
+| --- | ---: | --- | --- | --- |
+| `history_h16` | 82,000 | 4 / 4 | 8 / 8 | 0.4 s |
+| `history_h32` | 60,000 | 4 / 4 | 8 / 8 | 0.4 s |
+| `frozen_10hz` | 60,000 | 2 / 4 | 8 / 16 | 0.8 s |
+
+A 10 Hz target remains active for two native 20 Hz commands (zero-order hold).
+This changes replanning time; it does not resample the observations or change the
+predicted horizon. All valid observations still enter the policy at its declared
+cadence, including during the longer executed prefix.
+
+After pushing/pulling the implementation, this submits three independent jobs
+using the **same immutable checkpoints and evaluation YAMLs** as the preceding
+HPC evaluation. Each requests one GPU in `gpuq`, using the site's untyped
+`--gres=gpu:1`, 16 CPUs, 128 GB RAM and six hours. The saved YAMLs specify the same
+32 validation episodes (two per task) and a video cap of ten per job. Slurm
+controls how many start concurrently.
+
+Save/run the following as a Bash script on the HPC, or paste it inside
+`bash <<'BASH'` / `BASH` so its fail-fast settings do not affect your login shell:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+cd /hpc/home/phi/rvalperga/chronotree
+
+set -a
+source hpc/site.env
+set +a
+export STMEM_REPO_ROOT="$PWD"
+export STMEM_PYTHON="$PWD/.venv/bin/python"
+export PYTHONPATH="$PWD/src"
+export STMEM_SITE_FILE=/dev/null
+export WANDB_MODE=online WANDB_PROJECT=chronotree
+export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1
+
+STMEM_EVAL_BUNDLE="$PWD/runs/inspection/eval_20261031T093812Z"
+STMEM_EVAL_TAG="exec8_$(date -u +%Y%m%dT%H%M%SZ)"
+(
+  cd "$STMEM_EVAL_BUNDLE"
+  sha256sum -c SHA256SUMS
+)
+
+for STMEM_EVAL_LABEL in history_h16 history_h32 frozen_10hz; do
+  export STMEM_CONFIG="$STMEM_EVAL_BUNDLE/$STMEM_EVAL_LABEL/evaluation.yaml"
+  export STMEM_CHECKPOINT="$STMEM_EVAL_BUNDLE/$STMEM_EVAL_LABEL/checkpoint.pt"
+  export STMEM_METHOD=FULL STMEM_SPLIT=val
+  STMEM_RUN_ROOT=$("$STMEM_PYTHON" -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["run_root"])' \
+    "$STMEM_EVAL_BUNDLE/$STMEM_EVAL_LABEL/source.json")
+  export STMEM_RUN_ROOT
+  STMEM_EVAL_OUTPUT="$STMEM_RUN_ROOT/seed0/evaluation/$STMEM_EVAL_TAG"
+  mkdir -p "$STMEM_EVAL_OUTPUT"
+
+  sbatch --partition=gpuq --gres=gpu:1 \
+    --nodes=1 --ntasks=1 --cpus-per-task=16 --mem=128G \
+    --time=06:00:00 --export=ALL \
+    --job-name="eval8_$STMEM_EVAL_LABEL" \
+    --output="$STMEM_EVAL_OUTPUT/slurm-%j.out" \
+    --error="$STMEM_EVAL_OUTPUT/slurm-%j.err" \
+    hpc/jobs/evaluate.sbatch \
+    --execute-actions 8 --output "$STMEM_EVAL_OUTPUT"
+  printf '%s: %s\n' "$STMEM_EVAL_LABEL" "$STMEM_EVAL_OUTPUT"
+done
+```
+
+Each job prints its output directory. Results and videos are under
+`<original-training-run>/seed0/evaluation/exec8_<timestamp>/`, with videos in
+`videos/`, and `.out` / `.err` beside them. New output directories give separate
+W&B run identities in the existing `chronotree` project; the inherited original
+run roots retain the evaluation grouping. `STMEM_SITE_FILE=/dev/null` prevents
+`common.sh` from reloading site defaults over the per-model paths after they
+have been explicitly set. The evaluation templates already forward all CLI
+arguments, so no hand-edited `.sbatch` copy is needed.
+
+The execution override, checkpoint execution length, effective execution length,
+and native command count are recorded in the evaluation manifest, W&B metadata,
+and per-episode results. Reusing an output directory with a different execution
+length fails instead of mixing outcomes. To resume an interrupted evaluation,
+use the same saved config/checkpoint, output directory and override; do not
+create a new timestamp for that resume. No new training checkpoint is required.
+
+Local validation: 85 targeted CPU tests pass, including actual chunk-executor
+checks at both action strides, terminal cutoff, strict compatibility checks,
+unchanged checkpoint weights/hash and resume identity. Read-only preflight of
+all three real snapshots confirms the counts above and preserves their 32-episode,
+ten-video evaluation configuration. Device doctor passes on the RTX 5000 Ada;
+no eight-action simulator result or HPC job is claimed from this implementation
+check. Evidence: `hpc/generated/evaluation_execute8_example/` (ignored).

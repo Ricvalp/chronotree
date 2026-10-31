@@ -14,6 +14,10 @@ commands and closed-loop targeting diagnostics. Existing XYZRGB runs keep their
 original input behavior.
 No benchmark performance or scaling result is claimed.
 
+For transferred HPC checkpoints, the [reusable local inspection workflow](docs/checkpoint_inspection.md)
+checks integrity and conditioning sensitivity, renders cube-position point clouds,
+and produces bounded rollout and expert-prefix videos in one HTML report.
+
 ## Run these next
 
 The environment and a two-episode VideoUnmask subset are already present on this

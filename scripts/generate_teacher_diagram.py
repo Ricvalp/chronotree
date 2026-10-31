@@ -70,6 +70,8 @@ SOURCES = [
     "src/stmem/data/feature_prefetch.py",
     "src/stmem/data/stage_features.py",
     "src/stmem/vision/frozen.py",
+    "src/stmem/evaluate.py",
+    "src/stmem/evaluation/execution.py",
     "src/stmem/evaluation/robomme_adapter.py",
     "src/stmem/evaluation/runner.py",
     "src/stmem/models/policy.py",
@@ -187,6 +189,19 @@ def snapshot():
                 "default_interval_optimizer_steps": resolve_logging(cfg)["attention_every"],
                 "capture_flow_time": (cfg["model"]["flow_steps"] - 1) / cfg["model"]["flow_steps"],
                 "changes_model_parameters": False,
+            },
+            "evaluation_execution_override": {
+                "flag": "--execute-actions",
+                "units": "predicted targets per chunk",
+                "allowed_split": "val",
+                "checkpoint_default_preserved": True,
+                "changes_model_parameters": False,
+                "native_commands_per_replan": "execute_actions * action_stride",
+                "eight_target_example": {
+                    "native_control_hz": 20,
+                    "stride_1_native_commands": 8,
+                    "stride_2_native_commands": 16,
+                },
             },
             "frozen_feature_io": {
                 "prefetch_control": "STMEM_FEATURE_PREFETCH_CHUNKS",
@@ -834,7 +849,7 @@ def decoder(file, cfg, policy, facts):
         "decoder",
         "Action-query conditional flow matching",
         "Training predicts a velocity field once; inference integrates that field to produce robot commands.",
-        height=2110,
+        height=2390,
     )
     noisy = p.card(
         48,
@@ -945,6 +960,26 @@ def decoder(file, cfg, policy, facts):
         size=19,
         tooltip="training/attention.py and models/attention_diagnostics.py. Fixed probes do not expose "
         "expert targets to inference. Diagnostic work is separate from the optimization update and timed explicitly.",
+        parent="notes",
+    )
+    p.card(
+        48,
+        2075,
+        1704,
+        225,
+        "OPTIONAL VALIDATION EXECUTION OVERRIDE  /  Existing checkpoint",
+        [
+            "stmem.evaluate --execute-actions N executes N predicted targets per chunk; 1 ≤ N ≤ predicted horizon.",
+            "Eight targets at 20 Hz: 8 native steps (0.4 s). Eight targets at 10 Hz: 16 native steps (0.8 s).",
+            "The 10 Hz executor holds each target for two native 20 Hz steps; no interpolation is introduced.",
+            "Checkpoint defaults, learned weights, target horizon and observation sampling stay unchanged.",
+            "The override is recorded as a separate validation protocol; official test overrides are rejected.",
+        ],
+        tone="note",
+        size=19,
+        tooltip="evaluate.py: the explicit evaluation flag changes only the executed prefix length. "
+        "It does not alter model shapes or retrain the policy. History remains causal, and "
+        "the effective execution setting identifies the evaluation manifest and resume protocol.",
         parent="notes",
     )
     p.section(48, 820, 1650, "INSIDE EACH DECODER BLOCK  /  Pre-normalized residual sublayers")

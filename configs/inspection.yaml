@@ -1,0 +1,8 @@
+# Local, immutable diagnostic assets. All paths are relative to this repository.
+# These are data files, not code dependencies on earlier inspection directories.
+prepared: data/inspection/VideoUnmask.h5
+alignment: data/alignment.json
+features: data/inspection/features
+clip_checkpoint: cache/backbones/clip_RN50.pt
+pick_prefix: data/inspection/pick_prefix.json
+replay_commands: data/inspection/replay_commands.json
