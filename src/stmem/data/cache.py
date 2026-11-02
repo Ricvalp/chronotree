@@ -3,18 +3,16 @@
 from __future__ import annotations
 import argparse
 import json
-import os
 from pathlib import Path
-import time
 import h5py
 import numpy as np
 import torch
-from stmem.config import load_config, digest, dependency, source_revision, run_dir
-from stmem.training.checkpoints import file_sha256, atomic_json
-from stmem.training.runtime import environment_manifest
+from stmem.config import load_config, digest, dependency
+from stmem.training.checkpoints import file_sha256
 from stmem.data.canonical import retained_observations
+from stmem.data.cache_source import cache_code_fingerprint
 
-FORMAT = 1
+FORMAT = 2
 
 
 def cache_identity(cfg, teacher_path, data_identity):
@@ -44,7 +42,7 @@ def cache_identity(cfg, teacher_path, data_identity):
         "frozen_encoder_precision": "fp32",
         "data_identity": data_identity,
         "prefix_convention": "history_strictly_before_current_v1",
-        "code": source_revision()["source_sha256"],
+        "code": cache_code_fingerprint(),
     }
     # Preserve the legacy omission semantics; new input contracts must never
     # share a cache with the old state/command or XYZRGB recipe.
@@ -153,7 +151,7 @@ class FrozenCache:
         return Evidence(archive, current, text, decision.current, clocks)
 
 
-def write_episode_cache(group, episode, policy, stride, horizon):
+def write_episode_cache(group, episode, policy, stride, horizon, *, check_stop=None):
     """Cache exactly the same completed blocks and queried prefixes as streaming."""
     group.attrs["task"] = episode.task
     group.attrs["episode_id"] = episode.episode_id
@@ -161,17 +159,20 @@ def write_episode_cache(group, episode, policy, stride, horizon):
     for name in ("conditioning", "execution", "prefix", "current"):
         group.create_group(name)
     fsize = policy.encoder.block_size
+    check_stop = check_stop or (lambda: None)
     # BlockEncoder centralizes source boundaries, completion status, and IDs.
     conditioning = retained_observations(episode.conditioning, episode.observation_stride)
     execution = retained_observations(episode.execution, episode.observation_stride)
     for source, frames in (("conditioning", conditioning), ("execution", execution)):
         for offset in range(0, len(frames), fsize):
+            check_stop()
             block = frames[offset : offset + fsize]
             if source == "execution" and len(block) < fsize:
                 continue
             leaves = policy.encoder.encode_frames(block, source=source, completed=True)
             write_records(group[source].create_group(str(offset)), leaves)
     for time_index in range(0, len(episode), stride):
+        check_stop()
         decision = episode.decision(time_index, horizon)
         if not decision.target_valid.any():
             continue
@@ -191,77 +192,49 @@ def write_episode_cache(group, episode, policy, stride, horizon):
             write_records(group["prefix"].create_group(f"{offset}_{n}"), leaves)
 
 
-@torch.no_grad()
-def build_cache(cfg, checkpoint):
-    from stmem.training.data import TrainingData
-    from stmem.training.runtime import (
-        load_policy,
-        load_checkpoint,
-        validate_selection,
-        validate_policy_config,
+def build_cache(cfg, checkpoint, *, task=None, task_index=None, device=None, threads=None, stop_file=None):
+    """Build all tasks or one array task; matching completed episodes resume automatically."""
+    from stmem.data.cache_builder import build_cache as build
+
+    return build(
+        cfg, checkpoint, task=task, task_index=task_index, device=device, threads=threads, stop_file=stop_file
     )
-
-    validate_selection(checkpoint, debug=cfg.get("debug", False) and cfg["data"].get("synthetic", False))
-    checkpoint_state = load_checkpoint(checkpoint)
-    validate_policy_config(checkpoint_state["config"], cfg)
-    del checkpoint_state
-    data = TrainingData(cfg)
-    identity = cache_identity(cfg, checkpoint, data.identity)
-    root = Path(cfg["paths"]["cache_root"]) / digest(identity)[:24]
-    root.mkdir(parents=True, exist_ok=True)
-
-    def record_completion():
-        manifest_path = root / "manifest.json"
-        atomic_json(
-            {
-                "status": "complete",
-                "cache_path": str(root.resolve()),
-                "cache_manifest_sha256": file_sha256(manifest_path),
-                "teacher_sha256": file_sha256(checkpoint),
-                "identity_sha256": digest(identity),
-            },
-            run_dir(cfg, "cache") / "complete.json",
-        )
-
-    if (root / "manifest.json").exists():
-        FrozenCache(cfg, checkpoint, data)
-        record_completion()
-        print(f"Compatible cache already complete: {root}")
-        return root
-    policy, _ = load_policy(checkpoint, device="cuda" if torch.cuda.is_available() else "cpu")
-    policy.eval()
-    policy.requires_grad_(False)
-    start_time = time.perf_counter()
-    for task in data.tasks:
-        target = root / f"{task}.h5"
-        temporary = target.with_suffix(".h5.tmp")
-        with h5py.File(temporary, "w") as out:
-            for epidx in data.by_task[task]:
-                ep = data.episode(epidx)
-                group = out.create_group(episode_key(task, ep.episode_id))
-                write_episode_cache(group, ep, policy, data.stride, data.horizon)
-            out.flush()
-        os.replace(temporary, target)
-    manifest = {
-        "identity": identity,
-        "status": "complete",
-        "environment": environment_manifest(),
-        "seconds": time.perf_counter() - start_time,
-        "shards": {p.name: {"sha256": file_sha256(p), "bytes": p.stat().st_size} for p in root.glob("*.h5")},
-    }
-    atomic_json(manifest, root / "manifest.json")
-    record_completion()
-    print(json.dumps({"cache": str(root), "seconds": manifest["seconds"]}))
-    return root
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", required=True)
     p.add_argument("--checkpoint")
+    choice = p.add_mutually_exclusive_group()
+    choice.add_argument("--task", help="One configured task, preserving the whole-dataset cache identity")
+    choice.add_argument("--task-index", type=int, help="Zero-based task index for a Slurm array")
+    p.add_argument("--device", help="Default CUDA when available, otherwise CPU")
+    p.add_argument("--threads", type=int)
+    p.add_argument("--stop-file", type=Path)
+    p.add_argument(
+        "--status", action="store_true", help="Read recorded build progress without loading data or CUDA"
+    )
     args = p.parse_args()
     cfg = load_config(args.config)
-    build_cache(cfg, args.checkpoint or dependency(cfg, "teacher"))
+    checkpoint = args.checkpoint or dependency(cfg, "teacher")
+    if args.status:
+        from stmem.data.cache_builder import cache_status
+
+        print(json.dumps(cache_status(cfg, checkpoint), indent=2))
+        return
+    try:
+        build_cache(
+            cfg,
+            checkpoint,
+            task=args.task,
+            task_index=args.task_index,
+            device=args.device,
+            threads=args.threads,
+            stop_file=args.stop_file,
+        )
+    except InterruptedError as error:
+        print(json.dumps({"event": "cache_stopped", "message": str(error)}), flush=True)
+        raise SystemExit(75) from None
 
 
 if __name__ == "__main__":

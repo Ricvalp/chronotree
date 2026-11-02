@@ -234,7 +234,7 @@ def test_checkpoint_contract_normalizes_omitted_default_and_rejects_changed_cond
 
 
 def test_frozen_cache_identity_records_command_conditioning(tmp_path, monkeypatch):
-    monkeypatch.setattr("stmem.data.cache.source_revision", lambda: {"source_sha256": "diagnostic"})
+    monkeypatch.setattr("stmem.data.cache.cache_code_fingerprint", lambda: "diagnostic")
     teacher = tmp_path / "checkpoint.pt"
     teacher.write_bytes(b"synthetic cache identity test; not a checkpoint")
     baseline = load_config("configs/debug/real_teacher.yaml")

@@ -365,7 +365,7 @@ def test_checkpoint_validator_rejects_invalid_new_input_flags_even_when_both_equ
 def test_frozen_leaf_cache_identity_includes_state_and_command_contract(
     tmp_path, monkeypatch, key, default, changed
 ):
-    monkeypatch.setattr("stmem.data.cache.source_revision", lambda: {"source_sha256": "diagnostic"})
+    monkeypatch.setattr("stmem.data.cache.cache_code_fingerprint", lambda: "diagnostic")
     teacher = tmp_path / "checkpoint.pt"
     teacher.write_bytes(b"synthetic cache identity test; not a checkpoint")
     baseline = load_config("configs/debug/real_teacher.yaml")
