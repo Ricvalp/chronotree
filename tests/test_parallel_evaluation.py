@@ -73,10 +73,12 @@ def test_bootstrap_sets_affinity_before_importing_evaluator(tmp_path):
     assert rejected.returncode != 0 and "outside the inherited allocation" in rejected.stderr
 
 
-def test_worker_environment_selects_allocated_gpu_and_cleans_training_state(tmp_path):
-    args = SimpleNamespace(threads_per_worker=2, checkpoint=tmp_path / "weights.pt", method="FULL",
+@pytest.mark.parametrize("family", [None, "tree", "flat"])
+def test_worker_environment_selects_allocated_gpu_and_cleans_training_state(tmp_path, family):
+    args = SimpleNamespace(threads_per_worker=2, checkpoint=tmp_path / "weights.pt",
+                           method=family.upper() if family else "FULL", selection_family=family,
                            split="val", episode_count=4, video_cap=10, execute_actions=8,
-                           budget=None, router_checkpoint=None, targeting_diagnostics=False)
+                           budget=128, router_checkpoint=None, targeting_diagnostics=False)
     devices = [{"uuid": "GPU-" + ("a" if i == 0 else "b") * 8 + "-1234-1234-1234-123456789012",
                 "pci_bus_id": f"0000:0{i}:00.0"}
                for i in range(2)]
@@ -95,6 +97,12 @@ def test_worker_environment_selects_allocated_gpu_and_cleans_training_state(tmp_
         assert w.command[w.command.index("--execute-actions") + 1] == "8"
         assert w.command[w.command.index("--video-cap") + 1] == "10"
         assert w.command[w.command.index("--render-device") + 1] == "cuda:0"
+        assert w.command[w.command.index("--budget") + 1] == "128"
+        assert w.command[w.command.index("--method") + 1] == args.method
+        if family:
+            assert w.command[w.command.index("--selection-family") + 1] == family
+        else:
+            assert "--selection-family" not in w.command
 
 
 def test_manifest_resume_preserves_identity_but_allows_new_allocation(tmp_path):
@@ -263,7 +271,8 @@ except EvaluationInterrupted as error:
 
 
 @pytest.mark.parametrize("source_changed", [False, True])
-def test_parent_main_aggregates_full_plan_with_one_tracker_and_checks_identity(tmp_path, monkeypatch, source_changed):
+@pytest.mark.parametrize("family", [None, "tree", "flat"])
+def test_parent_main_aggregates_full_plan_with_one_tracker_and_checks_identity(tmp_path, monkeypatch, source_changed, family):
     """Real subprocess/result aggregation; CPU fixtures explicitly are not policy evaluations."""
     from stmem.evaluation import devices, parallel
     from stmem.evaluation.metrics import TASKS
@@ -312,7 +321,7 @@ def write(path, value):
 write(p/'manifest.json',child)
 identity=hashlib.sha256((p/'manifest.json').read_bytes()).hexdigest()
 for task,episode in child['planned']:
- row={{'task':task,'episode_idx':episode,'status':'timeout','method':'FULL','split':'val',
+ row={{'task':task,'episode_idx':episode,'status':'timeout','method':child['method'],'split':'val',
        'training_seed':0,'noise_seed':1701+child['config']['data']['tasks'].index(task)*1000+episode,
        'checkpoint_sha256':child['policy_checkpoint_sha256'],'evaluation_manifest_sha256':identity}}
  write(p/'episodes'/f'{{task}}_{{episode:03d}}.json',row)
@@ -330,7 +339,7 @@ write(p/'complete.json',{{'status':'complete','manifest_sha256':identity,
 
     monkeypatch.setattr(parallel, "RunTracker", Tracker)
     monkeypatch.setattr(parallel, "load_config", lambda _: deepcopy(cfg))
-    monkeypatch.setattr(parallel, "load_checkpoint", lambda _: {"config": cfg})
+    monkeypatch.setattr(parallel, "load_checkpoint", lambda _: {"config": cfg, "stage": "compact", "step": 15000})
     monkeypatch.setattr(parallel, "evaluation_execution_config", lambda _checkpoint, config, **_: (config, None))
     monkeypatch.setattr(parallel, "environment_manifest", lambda: {"synthetic": True})
     monkeypatch.setattr(parallel, "source_revision", source)
@@ -339,6 +348,8 @@ write(p/'complete.json',{{'status':'complete','manifest_sha256':identity,
     argv = ["parallel", "--config", "synthetic.yaml", "--checkpoint", str(checkpoint),
             "--output", str(output), "--num-gpus", "2", "--workers-per-gpu", "2",
             "--video-cap", "0", "--poll-seconds", ".01"]
+    if family:
+        argv += ["--method", family.upper(), "--selection-family", family, "--budget", "128"]
     monkeypatch.setattr(sys, "argv", argv)
     if source_changed:
         with pytest.raises(ValueError, match="Source changed"):
@@ -350,6 +361,11 @@ write(p/'complete.json',{{'status':'complete','manifest_sha256':identity,
     parallel.main()
     assert len(trackers) == 1
     assert trackers[0].kwargs["job_type"] == "evaluation"
+    stored = json.loads((output / "manifest.json").read_text())
+    assert stored["selection_family"] == family and stored["budget"] == 128
+    assert ("random-selection" in trackers[0].kwargs["name"]) == bool(family)
+    if family:
+        assert "step15000" in trackers[0].kwargs["name"]
     assert {key for _, values in trackers[0].logged for key in values} == {
         "evaluation/success_rate_so_far_percent", "evaluation/progress_percent"}
     summary = json.loads((output / "summary.json").read_text())

@@ -60,6 +60,8 @@ evaluation used the explicit eight-target execution override. That override is
 recorded in the launch plan and must be used for matched downstream evaluation.
 The compact configuration records four validation episodes per task for later
 selection. This command does not submit those evaluations or router training.
+Once both candidates exist, follow [matched TREE/FLAT checkpoint selection](compact_checkpoint_selection.md)
+to submit the four parallel evaluations and record the selected compact weights.
 
 ## Prepare the reusable hierarchy once
 

@@ -21,6 +21,7 @@ import yaml
 
 from stmem.config import load_config, source_revision
 from stmem.evaluation.execution import evaluation_execution_config
+from stmem.evaluation.selection import validate_selection_protocol
 from stmem.training.checkpoints import atomic_json, file_sha256
 from stmem.training.runtime import environment_manifest, load_checkpoint
 from stmem.tracking import RunTracker
@@ -186,6 +187,8 @@ def worker_plan(args, output, manifest, devices, *, environment=None, available_
             forwarded += ["--budget", str(args.budget)]
         if args.router_checkpoint is not None:
             forwarded += ["--router-checkpoint", str(args.router_checkpoint.resolve())]
+        if getattr(args, "selection_family", None) is not None:
+            forwarded += ["--selection-family", args.selection_family]
         if args.targeting_diagnostics:
             forwarded.append("--targeting-diagnostics")
         command = [sys.executable, "-u", "-m", "stmem.evaluation.parallel_worker",
@@ -321,6 +324,8 @@ def main():
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--router-checkpoint", type=Path)
+    parser.add_argument("--selection-family", choices=("tree", "flat"),
+                        help="Validation diagnostic with random compact-reader selection; no learned router")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--method", choices=("FULL", "TREE", "FLAT", "UNIFORM", "PERCEIVER", "CURRENT"), default="FULL")
     parser.add_argument("--split", choices=("val",), default="val")
@@ -340,6 +345,8 @@ def main():
             or args.workers_per_gpu < 1 or args.threads_per_worker < 1
             or not math.isfinite(args.poll_seconds) or args.poll_seconds <= 0):
         parser.error("Episode count must be 1..50; video cap nonnegative; worker/GPU/thread/poll values positive")
+    if args.budget is not None and args.budget < 1:
+        parser.error("--budget must be positive")
     import torch
     from stmem.evaluation.devices import discover_devices
     from stmem.evaluation.aggregation import aggregate_shards
@@ -349,7 +356,12 @@ def main():
     output = args.output.resolve()
     with output_lock(output), termination_signals():
         cfg = load_config(args.config)
-        checkpoint_cfg = load_checkpoint(args.checkpoint)["config"]
+        checkpoint_state = load_checkpoint(args.checkpoint)
+        checkpoint_cfg = checkpoint_state["config"]
+        validate_selection_protocol(
+            args.method, args.selection_family, args.router_checkpoint,
+            checkpoint_stage=checkpoint_state.get("stage"), split=args.split,
+        )
         cfg, execution_override = evaluation_execution_config(
             checkpoint_cfg, cfg, execute_actions=args.execute_actions, split=args.split,
         )
@@ -361,8 +373,6 @@ def main():
         checkpoints = {str(args.checkpoint.resolve()): file_sha256(args.checkpoint)}
         if args.router_checkpoint:
             checkpoints[str(args.router_checkpoint.resolve())] = file_sha256(args.router_checkpoint)
-        if args.method in ("TREE", "FLAT") and args.router_checkpoint is None:
-            raise ValueError("Parallel TREE/FLAT requires explicit --router-checkpoint")
         requested = args.num_gpus * args.workers_per_gpu
         manifest = {
             "schema_version": 1, "kind": "parallel_validation_evaluation", "config": cfg,
@@ -371,7 +381,7 @@ def main():
             "method": args.method, "split": args.split, "all_planned": all_planned, "planned": all_planned,
             "video_episodes": video_episodes(cfg), "num_shards": min(requested, len(all_planned)),
             "budget": args.budget or cfg["model"]["budget"], "targeting_diagnostics": args.targeting_diagnostics,
-            "selection_family": None, "intervention": "none",
+            "selection_family": args.selection_family, "intervention": "none",
             "parallel": {"num_gpus": args.num_gpus, "workers_per_gpu": args.workers_per_gpu,
                          "threads_per_worker": args.threads_per_worker, "requested_workers": requested},
         }
@@ -388,8 +398,10 @@ def main():
                      "active_workers": len(workers), "requested_workers": requested}, output / "allocation.json")
         print(json.dumps({"event": "parallel_evaluation_started", "workers": len(workers),
                           "gpus": len(devices), "episodes": len(all_planned), "output": str(output)}), flush=True)
+        selection_label = (f"-random-selection-step{checkpoint_state['step']}"
+                           if args.selection_family is not None else "")
         with RunTracker(cfg, output, job_type="evaluation",
-                        name=f"{args.method}-{args.split}-seed{cfg['seed']}-parallel",
+                        name=f"{args.method}{selection_label}-{args.split}-seed{cfg['seed']}-parallel",
                         metadata={"evaluation_manifest": manifest,
                                   "manifest_sha256": file_sha256(output / "manifest.json")},
                         resume=args.resume) as tracker:

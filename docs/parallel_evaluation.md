@@ -1,5 +1,8 @@
 # Parallel closed-loop validation
 
+For the shared compact policy's 15k/30k random TREE/FLAT comparison, see
+[matched compact checkpoint selection](compact_checkpoint_selection.md).
+
 `hpc/evaluate.py` evaluates one checkpoint using several independent simulator
 processes in one Slurm allocation. The default requests **4 GPUs, 64 CPU cores,
 128 GB host RAM and six hours**, and runs **16 workers** (four per GPU). Each

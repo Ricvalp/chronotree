@@ -132,6 +132,7 @@ def test_resume_refuses_active_allocation_and_then_reuses_same_snapshot(launcher
 
 @pytest.mark.parametrize("change", [
     ("--execute-actions", "7"), ("--workers-per-gpu", "8"), ("--episode-count", "5"),
+    ("--budget", "64"),
 ])
 def test_named_plan_cannot_mix_execution_shards_or_episode_sets(launcher, change):
     original = launcher.invoke()
@@ -144,11 +145,37 @@ def test_named_plan_cannot_mix_execution_shards_or_episode_sets(launcher, change
     ("--workers-per-gpu", "16"), ("--episode-count", "51"), ("--gpus", "0"),
     ("--video-cap", "-1"), ("--mem", "0"), ("--walltime", "00:00:00"),
     ("--partition", ""),
+    ("--budget", "0"), ("--method", "TREE"), ("--selection-family", "tree"),
+    ("--method", "TREE", "--selection-family", "flat"),
 ])
 def test_invalid_resource_or_episode_budgets_do_not_copy_weights(launcher, arguments):
     with pytest.raises(SystemExit):
         launcher.invoke(*arguments)
     assert not (launcher.repo / "runs/evaluation_inputs").exists()
+
+
+@pytest.mark.parametrize("family", ["tree", "flat"])
+def test_random_compact_selection_plan_preserves_family_and_budget(launcher, family):
+    state = torch.load(launcher.source, weights_only=False)
+    state["stage"] = "compact"
+    torch.save(state, launcher.source)
+    plan = launcher.invoke("--method", family.upper(), "--selection-family", family,
+                           "--budget", "128", "--execute-actions", "8")
+    assert plan["selection_family"] == family and plan["budget"] == 128
+    assert plan["command"][plan["command"].index("--selection-family") + 1] == family
+    assert plan["command"][plan["command"].index("--budget") + 1] == "128"
+    assert plan["planned_episodes"] == 64 and plan["gres"] == "gpu:4"
+    assert "#SBATCH --exclusive" not in Path(plan["script"]).read_text()
+    other = "tree" if family == "flat" else "flat"
+    with pytest.raises(SystemExit):
+        launcher.invoke("--method", other.upper(), "--selection-family", other,
+                        "--budget", "128", "--execute-actions", "8")
+
+
+def test_random_selection_rejects_noncompact_weights(launcher):
+    with pytest.raises(SystemExit):
+        launcher.invoke("--method", "TREE", "--selection-family", "tree")
+    assert not (launcher.repo / "hpc/generated/example/evaluate.sbatch").exists()
 
 
 def test_generated_script_launches_one_supervisor_with_quoted_paths(launcher, monkeypatch, tmp_path):

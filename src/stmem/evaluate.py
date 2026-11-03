@@ -198,6 +198,11 @@ def main():
         default="none",
     )
     args = p.parse_args()
+    if args.budget is not None and args.budget < 1:
+        p.error("--budget must be positive")
+    if args.selection_family is not None:
+        if args.method != args.selection_family.upper() or args.router_checkpoint or args.split != "val":
+            p.error("Random --selection-family requires the matching TREE/FLAT method, validation split and no router checkpoint")
     if args.execute_actions is not None and args.split != "val":
         p.error("--execute-actions is validation-only; test evaluation uses its frozen protocol")
     cfg = load_config(args.config)
@@ -219,6 +224,13 @@ def main():
         else dependency(cfg, "teacher" if args.method == "FULL" else "compact")
     )
     args.execution_override = None
+    if args.selection_family is not None:
+        from stmem.evaluation.selection import validate_selection_protocol
+
+        validate_selection_protocol(
+            args.method, args.selection_family, args.router_checkpoint,
+            checkpoint_stage=load_checkpoint(checkpoint).get("stage"), split=args.split,
+        )
     if args.execute_actions is not None:
         checkpoint_cfg = load_checkpoint(checkpoint)["config"]
         cfg, args.execution_override = evaluation_execution_config(

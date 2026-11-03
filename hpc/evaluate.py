@@ -29,6 +29,7 @@ from hpc.plan import (  # noqa: E402
 from hpc.profile_memory import absolute_path, profile_name, walltime  # noqa: E402
 from stmem.config import digest, validate_config  # noqa: E402
 from stmem.evaluation.execution import evaluation_execution_config  # noqa: E402
+from stmem.evaluation.selection import validate_selection_protocol  # noqa: E402
 from stmem.training.runtime import load_checkpoint  # noqa: E402
 
 
@@ -117,7 +118,10 @@ def main(argv=None):
     parser.add_argument("--name", type=profile_name, help="Stable generated plan name; default UTC plus suffix")
     parser.add_argument("--output", type=Path, help="Default: REPO/runs/evaluation/NAME")
     parser.add_argument("--resume", action="store_true", help="Resume this existing named plan and output")
-    parser.add_argument("--method", choices=("FULL", "CURRENT", "UNIFORM", "PERCEIVER"), default="FULL")
+    parser.add_argument("--method", choices=("FULL", "CURRENT", "UNIFORM", "PERCEIVER", "TREE", "FLAT"), default="FULL")
+    parser.add_argument("--selection-family", choices=("tree", "flat"),
+                        help="Random compact checkpoint selection; must match TREE/FLAT method")
+    parser.add_argument("--budget", type=positive_integer, help="History token budget; default from checkpoint")
     parser.add_argument("--gpus", type=positive_integer, default=4)
     parser.add_argument("--workers-per-gpu", type=positive_integer, default=4)
     parser.add_argument("--threads-per-worker", type=positive_integer, default=2)
@@ -131,6 +135,10 @@ def main(argv=None):
     parser.add_argument("--video-cap", type=nonnegative, default=10, help="Total cap across all workers")
     parser.add_argument("--execute-actions", type=positive_integer)
     args = parser.parse_args(argv)
+    if args.selection_family is not None and args.method != args.selection_family.upper():
+        parser.error("--selection-family must match --method TREE or FLAT")
+    if args.method in ("TREE", "FLAT") and args.selection_family is None:
+        parser.error("This launcher requires --selection-family for random TREE/FLAT; learned-router evaluation uses stmem.evaluation.parallel --router-checkpoint")
     if args.resume and not args.name:
         parser.error("--resume requires the original --name")
     if args.episode_count > 50:
@@ -199,6 +207,9 @@ def _prepare_and_submit(args, site, repo, name, generated):
         state, checkpoint_hash = snapshot_checkpoint(source, snapshot)
         save_json(snapshot_record, {"source_checkpoint": str(source), "sha256": checkpoint_hash,
                                     "step": state["step"]})
+    validate_selection_protocol(
+        args.method, args.selection_family, None, checkpoint_stage=state.get("stage"), split="val",
+    )
     cfg = deepcopy(state["config"])
     if args.config:
         path = absolute_path(args.config, repo)
@@ -214,6 +225,7 @@ def _prepare_and_submit(args, site, repo, name, generated):
     effective, override = evaluation_execution_config(
         state["config"], cfg, execute_actions=args.execute_actions, split="val",
     )
+    budget = args.budget if args.budget is not None else cfg["model"]["budget"]
     if not cfg.get("tracking", {}).get("enabled", True) or (
         site.get("WANDB_MODE") or cfg.get("tracking", {}).get("mode", "offline")
     ) == "disabled":
@@ -230,6 +242,10 @@ def _prepare_and_submit(args, site, repo, name, generated):
                "--threads-per-worker", str(args.threads_per_worker), "--video-cap", str(args.video_cap)]
     if args.execute_actions is not None:
         command.extend(["--execute-actions", str(args.execute_actions)])
+    if args.budget is not None:
+        command.extend(["--budget", str(budget)])
+    if args.selection_family is not None:
+        command.extend(["--selection-family", args.selection_family])
     if args.resume:
         command.append("--resume")
     signature_inputs = {
@@ -238,6 +254,8 @@ def _prepare_and_submit(args, site, repo, name, generated):
         "threads_per_worker": args.threads_per_worker, "execution_override": override,
         "source_sha256": source_hash(repo),
     }
+    if args.selection_family is not None or args.budget is not None:
+        signature_inputs.update(selection_family=args.selection_family, budget=budget)
     signature = digest(signature_inputs)
     if previous and previous["signature"] != signature:
         raise ValueError("Named evaluation inputs, code or worker assignment changed; choose a new --name")
@@ -248,7 +266,8 @@ def _prepare_and_submit(args, site, repo, name, generated):
         "checkpoint_step": state["step"], "config": str(config), "output": str(output),
         "script": str(generated / "evaluate.sbatch"), "logs": str(logs), "command": command,
         "source_sha256": signature_inputs["source_sha256"], "signature": signature,
-        "method": args.method, "split": "val", "episode_count_per_task": args.episode_count,
+        "method": args.method, "selection_family": args.selection_family, "budget": budget,
+        "split": "val", "episode_count_per_task": args.episode_count,
         "tasks": cfg["data"]["tasks"], "planned_episodes": episode_total,
         "video_cap_total": args.video_cap, "gpus": args.gpus,
         "workers_per_gpu": args.workers_per_gpu, "requested_workers": requested_workers,
