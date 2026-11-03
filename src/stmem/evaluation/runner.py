@@ -46,6 +46,15 @@ class OnlinePolicy:
         selection_family=None,
         intervention="none",
     ):
+        if budget < 1:
+            raise ValueError("History budget must be positive")
+        if selection_family is not None:
+            from stmem.evaluation.selection import validate_selection_protocol
+
+            validate_selection_protocol(
+                method, selection_family, router,
+                checkpoint_stage=cfg.get("stage"), split=cfg["evaluation"]["split"],
+            )
         self.policy = policy.eval().requires_grad_(False)
         self.cfg = cfg
         self.method = method

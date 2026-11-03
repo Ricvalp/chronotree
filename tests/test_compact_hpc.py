@@ -210,7 +210,7 @@ def test_invalid_resource_or_batch_choices(launcher, arguments):
         launcher.invoke(*arguments)
 
 
-def save_resume_fixture(launcher, plan, *, step=1000, stage="compact"):
+def save_resume_fixture(launcher, plan, *, step=1000, stage="compact", continuation=None):
     cfg = yaml.safe_load(Path(plan["config"]).read_text())
     checkpoint = Path(plan["output"]) / "last.pt"
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
@@ -223,6 +223,8 @@ def save_resume_fixture(launcher, plan, *, step=1000, stage="compact"):
     }
     if plan.get("hierarchy_manifest_digest"):
         state["provenance"]["dependencies"]["hierarchy"] = plan["hierarchy_manifest_digest"]
+    if continuation is not None:
+        state["continuation"] = continuation
     torch.save(state, checkpoint)
     return checkpoint
 
@@ -439,3 +441,211 @@ def test_fresh_plan_refuses_nonempty_output_even_without_checkpoint(launcher):
         launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0", "--legacy-cache",
                               "--name", "new_plan", "--run-root", "runs/used"])
     assert json.loads((output / "tracking.json").read_text())["id"] == "existing logical run"
+
+
+@pytest.mark.parametrize("arguments", [
+    ("--continue-to-step", "60000"),
+    ("--restart-unstarted", "--continue-to-step", "60000"),
+    ("--resume", "--continue-to-step", "0"),
+    ("--resume", "--continue-to-step", "-1"),
+])
+def test_invalid_continuation_arguments_fail_before_submission(launcher, monkeypatch, arguments):
+    monkeypatch.setattr(launcher.module.subprocess, "run", lambda *_a, **_k: pytest.fail("Unexpected Slurm"))
+    with pytest.raises(SystemExit):
+        launcher.invoke(*arguments, "--submit")
+
+
+def test_completed_continuation_preserves_config_dependencies_and_prior_startup_plan(launcher, monkeypatch):
+    initial = launcher.invoke()
+    checkpoint = save_resume_fixture(launcher, initial, step=30000)
+    complete = checkpoint.parent / "complete.json"
+    write_json(complete, {"status": "complete", "step": 30000})
+    snapshot = Path(initial["startup_plan"])
+    immutable = [checkpoint, complete, snapshot, Path(initial["config"]), launcher.cache_plan,
+                 launcher.teacher, launcher.selection, launcher.complete, *launcher.cache_root.iterdir()]
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in immutable}
+    # Existing real runs use older code. Updating only the implementation must
+    # permit the explicit extension without changing the saved scientific run.
+    (launcher.repo / "src/fixture.py").write_text("# Updated synthetic runtime for bounded continuation.\n")
+    monkeypatch.setattr(launcher.module.subprocess, "run", lambda *_a, **_k: pytest.fail("Slurm in dry-run"))
+    continued = launcher.invoke("--resume", "--continue-to-step", "60000", "--dry-run")
+    assert continued["start_step"] == continued["remaining_updates"] == 30000
+    assert continued["continue_to_step"] == 60000
+    assert continued["continuation"] == {
+        "mode": "bounded_constant_lr_tail_v1", "original_steps": 30000,
+        "schedule_steps": 30000, "final_lr": 0.1 * 0.0001,
+        "enabled_at_step": 30000, "intended_final_step": 60000,
+    }
+    for key in ("training", "config_sha256", "cache_manifest_digest", "checkpoint_sha256",
+                "candidate_checkpoints", "run_root"):
+        assert continued[key] == initial[key]
+    assert continued["training"]["steps"] == continued["training"]["schedule_steps"] == 30000
+    assert continued["training"]["checkpoint_steps"] == [15000, 30000]
+    assert continued["source_sha256"] != initial["source_sha256"]
+    assert continued["previous_source_sha256"] == initial["source_sha256"]
+    assert continued["signature"] != initial["signature"]
+    owner = json.loads((checkpoint.parent.parent / ".compact-plan.json").read_text())
+    assert owner == {"plan": continued["plan_path"], "signature": continued["signature"]}
+    assert continued["startup_plan"] != str(snapshot)
+    assert all((path.read_bytes(), path.stat().st_mtime_ns) == value for path, value in before.items())
+    script = Path(continued["script"]).read_text()
+    assert "--resume " + shlex.quote(str(checkpoint)) in script
+    assert "--continue-to-step 60000" in script
+    launcher.module.ready_plan(continued["startup_plan"])
+
+
+@pytest.mark.parametrize("step,endpoint", [(29999, 60000), (30000, 30000), (30000, 20000), (60000, 60000)])
+def test_continuation_requires_completed_original_run_and_remaining_steps(launcher, step, endpoint):
+    initial = launcher.invoke()
+    save_resume_fixture(launcher, initial, step=step)
+    with pytest.raises(SystemExit):
+        launcher.invoke("--resume", "--continue-to-step", str(endpoint))
+    assert json.loads(Path(initial["plan_path"]).read_text()) == initial
+
+
+def test_planned_continuation_requires_flag_and_cannot_shorten_even_before_new_checkpoint(launcher):
+    initial = launcher.invoke()
+    save_resume_fixture(launcher, initial, step=30000)
+    continued = launcher.invoke("--resume", "--continue-to-step", "60000")
+    snapshot = Path(continued["startup_plan"])
+    before = snapshot.read_bytes(), snapshot.stat().st_mtime_ns
+    for arguments in [("--resume",), ("--resume", "--continue-to-step", "50000")]:
+        with pytest.raises(SystemExit):
+            launcher.invoke(*arguments)
+    assert json.loads(Path(continued["plan_path"]).read_text()) == continued
+    extended = launcher.invoke("--resume", "--continue-to-step", "70000")
+    assert extended["continue_to_step"] == 70000 and extended["remaining_updates"] == 40000
+    assert extended["signature"] == continued["signature"]
+    assert extended["startup_plan"] != continued["startup_plan"]
+    assert (snapshot.read_bytes(), snapshot.stat().st_mtime_ns) == before
+    launcher.module.ready_plan(snapshot)
+
+
+def test_interrupted_continuation_resumes_existing_checkpoint_at_same_endpoint(launcher):
+    initial = launcher.invoke()
+    checkpoint = save_resume_fixture(launcher, initial, step=30000)
+    continued = launcher.invoke("--resume", "--continue-to-step", "60000")
+    save_resume_fixture(launcher, continued, step=41000, continuation=continued["continuation"])
+    resumed = launcher.invoke("--resume", "--continue-to-step", "60000")
+    assert resumed["start_step"] == 41000 and resumed["remaining_updates"] == 19000
+    assert resumed["continuation"] == continued["continuation"]
+    assert resumed["config_sha256"] == initial["config_sha256"]
+    launcher.module.ready_plan(resumed["startup_plan"])
+    # An earlier allocation cannot read the newer checkpoint as its original input.
+    with pytest.raises(ValueError, match="Resume checkpoint"):
+        launcher.module.ready_plan(continued["startup_plan"])
+    assert resumed["resume_sha256"] == launcher.module.sha256(checkpoint)
+
+
+def test_continuation_source_upgrade_never_allows_training_config_change(launcher):
+    initial = launcher.invoke()
+    save_resume_fixture(launcher, initial, step=30000)
+    ownership = Path(initial["output"]).parent / ".compact-plan.json"
+    before = ownership.read_bytes()
+    (launcher.repo / "src/fixture.py").write_text("# Updated synthetic runtime.\n")
+    with pytest.raises(SystemExit):
+        launcher.invoke("--resume", "--continue-to-step", "60000", "--effective-batch", "256")
+    assert ownership.read_bytes() == before
+    assert json.loads(Path(initial["plan_path"]).read_text()) == initial
+
+
+def test_ordinary_resume_does_not_silently_allow_source_upgrade(launcher):
+    initial = launcher.invoke()
+    save_resume_fixture(launcher, initial)
+    (launcher.repo / "src/fixture.py").write_text("# Updated synthetic runtime.\n")
+    with pytest.raises(SystemExit):
+        launcher.invoke("--resume")
+    assert json.loads(Path(initial["plan_path"]).read_text()) == initial
+
+
+def test_continuation_blocks_active_job_before_replacing_plan_or_ownership(launcher, monkeypatch):
+    calls = []
+
+    def submit(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout="73000\n")
+
+    monkeypatch.setattr(launcher.module.subprocess, "run", submit)
+    initial = launcher.invoke("--submit")
+    checkpoint = save_resume_fixture(launcher, initial, step=30000)
+    write_json(checkpoint.parent / "complete.json", {"status": "complete", "step": 30000})
+    monkeypatch.setattr(launcher.module, "active_user_job_ids", lambda: {"73000"})
+    with pytest.raises(SystemExit):
+        launcher.invoke("--resume", "--continue-to-step", "60000", "--submit")
+    assert len(calls) == 1
+    assert json.loads(Path(initial["plan_path"]).read_text()) == initial
+
+
+def test_startup_guard_checks_continuation_metadata(launcher):
+    initial = launcher.invoke()
+    save_resume_fixture(launcher, initial, step=30000)
+    continued = launcher.invoke("--resume", "--continue-to-step", "60000")
+    continued["continuation"]["final_lr"] = 0.5
+    write_json(Path(continued["plan_path"]), continued)
+    with pytest.raises(ValueError, match="continuation differs"):
+        launcher.module.ready_plan(continued["plan_path"])
+
+
+def isolated_code_checkout(launcher):
+    root = launcher.repo.parent / "isolated runtime checkout"
+    for relative, content in {
+        "src/stmem/train.py": "# Synthetic isolated runtime fixture; no training.\n",
+        "hpc/train_compact.py": "# Synthetic isolated launcher fixture.\n",
+        "hpc/run_job.sh": "#!/usr/bin/env bash\nexit 0\n",
+    }.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    return root
+
+
+def test_isolated_code_root_preserves_main_checkout_and_existing_run_paths(launcher):
+    initial = launcher.invoke()
+    checkpoint = save_resume_fixture(launcher, initial, step=30000)
+    code_root = isolated_code_checkout(launcher)
+    immutable = [launcher.repo / "src/fixture.py", Path(initial["config"]),
+                 Path(initial["startup_plan"]), launcher.cache_plan, checkpoint]
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in immutable}
+    continued = launcher.invoke("--resume", "--continue-to-step", "60000", "--code-root", str(code_root))
+    assert continued["repo"] == str(launcher.repo)
+    assert continued["code_root"] == str(code_root)
+    assert continued["python"] == sys.executable
+    assert continued["source_sha256"] == launcher.module.source_hash(code_root)
+    assert continued["previous_source_sha256"] == initial["source_sha256"]
+    for key in ("run_root", "output", "config", "config_sha256", "cache_plan", "cache_path", "logs", "script"):
+        assert continued[key] == initial[key]
+    assert not (code_root / "runs").exists() and not (code_root / "hpc/generated").exists()
+    assert all((path.read_bytes(), path.stat().st_mtime_ns) == value for path, value in before.items())
+    script = Path(continued["script"]).read_text()
+    assert "#SBATCH --chdir=" + shlex.quote(str(code_root)) in script
+    assert "\ncd " + shlex.quote(str(code_root)) + "\n" in script
+    assert "export STMEM_REPO_ROOT=" + shlex.quote(str(code_root)) + "\n" in script
+    assert "export PYTHONPATH=" + shlex.quote(str(code_root / "src")) + "\n" in script
+    assert "exec " + shlex.quote(str(code_root / "hpc/run_job.sh")) in script
+    assert "export STMEM_RUN_ROOT=" + shlex.quote(initial["run_root"]) in script
+    assert "--config " + shlex.quote(initial["config"]) in script
+    assert "--resume " + shlex.quote(str(checkpoint)) in script
+    assert "--continue-to-step 60000" in script
+    subprocess.run(["bash", "-n", continued["script"]], check=True)
+    launcher.module.ready_plan(continued["startup_plan"])
+    with pytest.raises(SystemExit):
+        launcher.invoke("--resume", "--continue-to-step", "60000")
+    assert json.loads(Path(continued["plan_path"]).read_text()) == continued
+    repeated = launcher.invoke("--resume", "--continue-to-step", "60000", "--code-root", str(code_root))
+    assert repeated["code_root"] == str(code_root) and repeated["signature"] == continued["signature"]
+    (code_root / "src/stmem/train.py").write_text("# Changed isolated source after rendering.\n")
+    with pytest.raises(ValueError, match="Source changed"):
+        launcher.module.ready_plan(continued["startup_plan"])
+    assert (launcher.repo / "src/fixture.py").read_bytes() == before[launcher.repo / "src/fixture.py"][0]
+
+
+@pytest.mark.parametrize("missing", ["src/stmem/train.py", "hpc/train_compact.py", "hpc/run_job.sh"])
+def test_incomplete_isolated_code_root_rejected_before_submission(launcher, monkeypatch, missing):
+    initial = launcher.invoke()
+    save_resume_fixture(launcher, initial, step=30000)
+    root = isolated_code_checkout(launcher)
+    (root / missing).unlink()
+    monkeypatch.setattr(launcher.module.subprocess, "run", lambda *_a, **_k: pytest.fail("Unexpected Slurm"))
+    with pytest.raises(SystemExit):
+        launcher.invoke("--resume", "--continue-to-step", "60000", "--code-root", str(root), "--submit")
+    assert json.loads(Path(initial["plan_path"]).read_text()) == initial

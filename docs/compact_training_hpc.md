@@ -170,8 +170,9 @@ plans and checkpoint configurations are immutable: the launcher never changes an
 old run to the new worker count or hierarchy path. `--legacy-cache` explicitly
 retains on-demand hierarchy construction; reproducing an old launch also requires
 its original `--name`, `--run-root`, GPU count, batch settings and worker count.
-A changed source signature is rejected rather than silently resuming different
-code. The commands above create a separate fresh run.
+A changed source signature is rejected for an ordinary resume. The explicit
+bounded continuation below allows a recorded code upgrade only after verifying
+that the original configuration, dependencies and world size are unchanged.
 
 If an allocation fails **before any checkpoint exists**, use
 `--restart-unstarted --submit` instead of `--resume --submit`. This explicitly
@@ -200,7 +201,132 @@ compatibility remains checked against the encoder/preprocessing implementation.
 Model architecture, causal boundaries, exact leaf coverage and TREE/FLAT
 supervision remain unchanged.
 
+## Continue after 30,000 steps at the final learning rate
+
+The original completed run cannot be extended with plain `--resume`. Use the
+explicit runtime endpoint below to continue to **60,000 total optimizer steps**,
+another 30,000 updates at **1e-5**, the original schedule's final learning rate.
+This is an exploratory extension of Stage P's initial 30k budget. It does not
+change the predeclared 15k/30k matched checkpoint comparison or automatically
+make the extended weights the selected policy.
+
+Push the implementation first. Pull only when evaluations from this same
+checkout have finished: queued and running parallel evaluations verify their
+source identity and reject code changes. No new site file or cache rebuild is
+needed.
+
+If evaluations are already queued/running, use the separate-checkout instructions
+below instead of pulling into their checkout.
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+git pull
+
+.venv/bin/python hpc/train_compact.py \
+  --site hpc/site_b200_4gpu.env \
+  --cache-name memory_fv_seed0 \
+  --name memory_fv_seed0_compact_hierarchy \
+  --run-root runs/memory_fv_seed0_compact_hierarchy \
+  --resume --continue-to-step 60000 \
+  --partition gpuq --gpus 2 --cpus 64 --mem 128G \
+  --effective-batch 128 --microbatch 32 --workers 16 \
+  --walltime 48:00:00 \
+  --submit
+```
+
+This resumes `seed0/compact/last.pt` in the same run directory and W&B run,
+restoring optimizer, scheduler, scaler, sampler position and per-rank RNG.
+The original 30k cosine schedule remains fixed and clamps at its final LR;
+there is no new warmup or stretched decay. The resolved training configuration
+and its provenance remain unchanged. A separate continuation record in plans,
+manifests, W&B summaries and checkpoints records the new endpoint and final LR.
+The allocation requests **untyped `gpu:2`**, with no `--exclusive`.
+
+The 15k and 30k checkpoint files remain immutable. `last.pt` continues updating
+every 1,000 steps, on a graceful stop and at the new endpoint. The trainer removes
+the old `complete.json` after validating the resume and writes a new completion
+record at 60k. If the 48-hour allocation ends earlier, repeat the same command,
+including `--continue-to-step 60000`; dropping or decreasing a declared endpoint
+is rejected. A larger explicit endpoint can extend the run again.
+
+Generated scripts and Slurm logs remain in
+`hpc/generated/memory_fv_seed0_compact_hierarchy/`. Each attempt retains its own
+immutable startup plan. `--dry-run` renders without submitting; only `--submit`
+contacts Slurm. Do not edit `training.steps`, `schedule_steps` or `lr` in the
+saved YAML to extend the run: that would change checkpoint provenance.
+
+### Continue while evaluations use the main checkout
+
+After pushing these changes, fetch them on the HPC and create a detached
+worktree. Fetching and adding a worktree do not change the main checkout's source
+or HEAD. This creates a separate code folder, not a permanent branch, and reuses
+the original virtual environment and all data. Do not `git pull` in the original
+checkout while its evaluations are queued/running.
+
+```bash
+(
+  set -e
+  main_repo=/hpc/home/phi/rvalperga/chronotree
+  continuation_code=/hpc/home/phi/rvalperga/chronotree_compact_continue_60k
+  cd "$main_repo"
+  git fetch origin
+  git worktree add --detach "$continuation_code" origin/master
+  cd "$continuation_code"
+
+  PYTHONPATH="$continuation_code/src:$continuation_code" \
+    "$main_repo/.venv/bin/python" hpc/train_compact.py \
+      --site "$main_repo/hpc/site_b200_4gpu.env" \
+      --code-root "$continuation_code" \
+      --cache-name memory_fv_seed0 \
+      --name memory_fv_seed0_compact_hierarchy \
+      --run-root "$main_repo/runs/memory_fv_seed0_compact_hierarchy" \
+      --resume --continue-to-step 60000 \
+      --partition gpuq --gpus 2 --cpus 64 --mem 128G \
+      --effective-batch 128 --microbatch 32 --workers 16 \
+      --walltime 48:00:00 --submit
+)
+```
+
+`--code-root` selects the code imported inside the allocation. The original site
+repository remains the home of the cache plan, compact plan, logs, run directory
+and ownership lock. Both source and checkpoint identities are checked before
+startup. The generated job changes directory to the new code checkout and
+exports its `src` on `PYTHONPATH`, so the old environment's editable installation
+cannot select the original training code accidentally.
+
+Keep this code folder unchanged while the continuation is queued/running. To
+resume an interrupted continuation, reuse the same folder and launcher command;
+do not repeat `git worktree add` for an already existing folder. Evaluations read
+their own immutable 15k/30k snapshots, while training advances `last.pt`.
+
+### Cache compatibility repair
+
+The preceding matched-evaluation update put validation-only checks in
+`src/stmem/evaluate.py` and `training/select_checkpoint.py`, both conservatively
+included in the existing cache fingerprint. Those files are restored to their
+audited bytes. The checks live instead under `evaluation/runner.py` and
+`evaluation/select_compact_checkpoint.py`; the latter is now the documented
+strict compact-selection command. The original generic selector still computes
+the same balanced score. Runtime continuation is implemented in `stmem.train`,
+an existing explicit cache-consumer exclusion.
+
+No fingerprint exclusions, compatibility constants, encoded tensors or hierarchy
+algorithms were changed. The production code fingerprint was verified to equal
+the original `9cddd3ea461824003854f5b0c42595f5f1f975224d4f59ca0be72d0e1e83dc34`.
+A regression test now checks that deployed identity, in addition to synthetic
+tests that verify encoder/preprocessing changes invalidate caches.
+
 ## Local verification
+
+The bounded continuation update passed a 206-test CPU regression run covering
+compact/teacher continuation, compact launchers, matched selection, cache
+compatibility, parallel evaluation and online rollout invariants. After adding
+isolated `--code-root` support, all 61 compact-launcher tests passed. Tiny
+synthetic cached training verified bitwise equality of uninterrupted and
+interrupted/resumed tails, persistent W&B identity, unchanged candidate files,
+and a two-rank CLI continuation through graceful stop and final completion.
+Ruff, the architecture snapshot check and the local GPU doctor passed. No
+substantive training or Slurm submission was performed.
 
 The persistent-hierarchy launcher update passed 60 CPU launch tests on
 2026-11-03. These include a production hierarchy build over 16 tiny synthetic

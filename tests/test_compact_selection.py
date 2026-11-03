@@ -8,7 +8,7 @@ import pytest
 from stmem.evaluation.metrics import summarize_episodes
 from stmem.evaluation.selection import validate_selection_protocol
 from stmem.training.checkpoints import atomic_json, file_sha256
-from stmem.training.select_checkpoint import select
+from stmem.evaluation.select_compact_checkpoint import select
 
 
 @pytest.mark.parametrize("method,family,router,stage,split", [

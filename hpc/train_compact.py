@@ -33,6 +33,7 @@ from hpc.plan import (  # noqa: E402
 from hpc.profile_memory import absolute_path, profile_name, walltime  # noqa: E402
 from stmem.config import dependency, digest, run_dir, validate_config  # noqa: E402
 from stmem.data.cache import cache_identity  # noqa: E402
+from stmem.train import continuation_record  # noqa: E402
 from stmem.training.runtime import load_checkpoint, validate_policy_config  # noqa: E402
 
 
@@ -147,7 +148,7 @@ def ready_plan(plan_path):
     plan = read_json(plan_path)
     require_hash(plan["config"], plan["config_sha256"], "Compact configuration")
     require_hash(plan["cache_plan"], plan["cache_plan_sha256"], "Source cache plan")
-    if source_hash(Path(plan["repo"])) != plan["source_sha256"]:
+    if source_hash(Path(plan.get("code_root", plan["repo"]))) != plan["source_sha256"]:
         raise ValueError("Source changed since compact job rendering")
     cfg, cache_plan, manifest = inspect_cache(plan["cache_plan"])
     if (digest(manifest) != plan["cache_manifest_digest"]
@@ -169,20 +170,29 @@ def ready_plan(plan_path):
             raise ValueError("Compact hierarchy dependency changed")
     elif requested["training"].get("hierarchy_cache_root"):
         raise ValueError("Unrecorded hierarchy dependency in compact configuration")
+    endpoint = plan.get("continue_to_step")
+    if endpoint is not None and not plan["resume"]:
+        raise ValueError("Compact continuation requires a resume checkpoint")
     if plan["resume"]:
         require_hash(plan["resume"], plan["resume_sha256"], "Resume checkpoint")
+        continuation = continuation_record(
+            requested, load_checkpoint(plan["resume"]), requested=False, continue_to_step=endpoint,
+        )
+        if continuation != plan.get("continuation"):
+            raise ValueError("Compact continuation differs from the immutable startup plan")
     elif (run_dir(requested, "compact") / "last.pt").exists():
         raise ValueError("Compact checkpoint already exists; render with --resume")
 
 
 def render_script(plan, site, cfg):
+    code_root = plan.get("code_root", plan["repo"])
     directives = {
         "job-name": "stmem_compact_" + plan["name"], "partition": plan["partition"],
         "gres": f"gpu:{plan['gpus']}", "nodes": "1", "ntasks": "1",
         "cpus-per-task": str(plan["cpus"]), "mem": plan["mem"], "time": plan["walltime"],
         "output": str(Path(plan["logs"]) / "%x_%j.out"),
         "error": str(Path(plan["logs"]) / "%x_%j.err"),
-        "chdir": plan["repo"], "signal": "B:USR1@180",
+        "chdir": code_root, "signal": "B:USR1@180",
     }
     for key in ("ACCOUNT", "QOS", "CONSTRAINT"):
         if site.get("STMEM_" + key):
@@ -190,12 +200,12 @@ def render_script(plan, site, cfg):
     if any("\n" in value or "\r" in value for value in directives.values()):
         raise ValueError("Newline in Slurm directive")
     lines = ["#!/usr/bin/env bash", *(f"#SBATCH --{k}={shlex.quote(v)}" for k, v in directives.items()),
-             "set -euo pipefail", f"cd {shlex.quote(plan['repo'])}"]
+             "set -euo pipefail", f"cd {shlex.quote(code_root)}"]
     if site.get("STMEM_ACTIVATE"):
         lines.append("source " + shlex.quote(site["STMEM_ACTIVATE"]))
     exported = {
-        "STMEM_REPO_ROOT": plan["repo"], "STMEM_PYTHON": plan["python"],
-        "STMEM_SITE_FILE": "/dev/null", "PYTHONPATH": str(Path(plan["repo"]) / "src"),
+        "STMEM_REPO_ROOT": code_root, "STMEM_PYTHON": plan["python"],
+        "STMEM_SITE_FILE": "/dev/null", "PYTHONPATH": str(Path(code_root) / "src"),
         "STMEM_ALLOCATED_GPUS": str(plan["gpus"]), "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
         "OPENBLAS_NUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1", "PYTHONUNBUFFERED": "1",
         "WANDB_MODE": "online", "WANDB_PROJECT": cfg["tracking"].get("project") or "chronotree",
@@ -219,12 +229,19 @@ def render_script(plan, site, cfg):
                "--progress-every-seconds", "30"]
     if plan["resume"]:
         command += ["--resume", plan["resume"]]
-    lines.append("exec " + shlex.quote(str(Path(plan["repo"]) / "hpc/run_job.sh"))
+    if plan.get("continue_to_step") is not None:
+        command += ["--continue-to-step", str(plan["continue_to_step"])]
+    lines.append("exec " + shlex.quote(str(Path(code_root) / "hpc/run_job.sh"))
                  + ' "$STMEM_STOP_FILE" ' + shlex.join(command) + ' --stop-file "$STMEM_STOP_FILE"')
     return "\n".join(lines) + "\n"
 
 
 def prepare(args, site, repo, cache_plan_path, generated):
+    code_root = absolute_path(args.code_root, repo) if args.code_root is not None else repo
+    if args.code_root is not None:
+        for relative in ("src/stmem/train.py", "hpc/train_compact.py", "hpc/run_job.sh"):
+            if not (code_root / relative).is_file():
+                raise ValueError(f"Incomplete --code-root checkout: missing {code_root / relative}")
     cfg, cache_plan, manifest = inspect_cache(cache_plan_path)
     cache_root = Path(cfg["paths"]["cache_root"]) / digest(manifest["identity"])[:24]
     hierarchy = None
@@ -242,10 +259,13 @@ def prepare(args, site, repo, cache_plan_path, generated):
         raise ValueError("Selected input is not a teacher checkpoint")
     validate_policy_config(initial["config"], cfg)
     output = run_dir(cfg, "compact")
-    if (output / "complete.json").exists():
+    if (output / "complete.json").exists() and args.continue_to_step is None:
         raise ValueError(f"Compact training already complete: {output}")
     plan_path, receipt_path = generated / "plan.json", generated / "submitted.json"
     previous = read_json(plan_path) if plan_path.exists() else None
+    if (previous and args.code_root is None
+            and Path(previous.get("code_root", str(repo))) != repo):
+        raise ValueError(f"This compact plan uses an isolated checkout; repeat --code-root {previous['code_root']}")
     if previous is None and output.exists() and any(output.iterdir()):
         raise ValueError("Fresh compact training needs an empty output directory; choose a new --run-root")
     retry = args.resume or args.restart_unstarted
@@ -257,15 +277,27 @@ def prepare(args, site, repo, cache_plan_path, generated):
         receipt = read_json(receipt_path)
         if receipt["job_id"] in active_user_job_ids():
             raise ValueError(f"Compact job {receipt['job_id']} is still active; refusing duplicate submission")
+    previous_endpoint = previous.get("continue_to_step") if previous else None
+    if previous_endpoint is not None:
+        if args.continue_to_step is None:
+            raise ValueError("This compact plan uses continuation; repeat --continue-to-step when resuming")
+        if args.continue_to_step < previous_endpoint:
+            raise ValueError("Cannot shorten an already planned compact continuation endpoint")
+    current_source = source_hash(code_root)
     signature_inputs = {"config": cfg, "teacher": cache_plan["checkpoint_sha256"],
-                        "cache": digest(manifest), "gpus": args.gpus, "source": source_hash(repo)}
+                        "cache": digest(manifest), "gpus": args.gpus, "source": current_source}
     if hierarchy is not None:
         signature_inputs["hierarchy"] = digest(hierarchy)
     signature = digest(signature_inputs)
     if previous and previous["signature"] != signature:
-        raise ValueError("Compact configuration/dependencies/world size changed; this plan is immutable")
+        # A completed run predates this continuation feature. Permit its code
+        # upgrade explicitly, while proving every scientific input is unchanged.
+        previous_signature = digest({**signature_inputs, "source": previous["source_sha256"]})
+        if args.continue_to_step is None or previous["signature"] != previous_signature:
+            raise ValueError("Compact configuration/dependencies/world size/source changed; this plan is immutable")
     ownership = output.parent / ".compact-plan.json"
-    if ownership.exists() and read_json(ownership) != {"plan": str(plan_path), "signature": signature}:
+    owner_signature = previous["signature"] if previous else signature
+    if ownership.exists() and read_json(ownership) != {"plan": str(plan_path), "signature": owner_signature}:
         raise ValueError("A different compact plan owns this output directory")
     checkpoint = output / "last.pt"
     if args.restart_unstarted and (checkpoint.exists() or any(output.glob("*.pt"))):
@@ -273,6 +305,8 @@ def prepare(args, site, repo, cache_plan_path, generated):
     if checkpoint.exists() and not args.resume:
         raise ValueError("Compact checkpoint already exists; use --resume")
     start = 0
+    continuation = None
+    endpoint = args.continue_to_step if args.continue_to_step is not None else cfg["training"]["steps"]
     if args.resume:
         saved = load_checkpoint(checkpoint)
         expected = {"teacher": cache_plan["checkpoint_sha256"], "cache": digest(manifest)}
@@ -283,7 +317,10 @@ def prepare(args, site, repo, cache_plan_path, generated):
                 or saved["provenance"]["dependencies"] != expected):
             raise ValueError("Resume checkpoint configuration or dependencies differ")
         start = saved["step"]
-        if not 0 <= start < cfg["training"]["steps"]:
+        continuation = continuation_record(
+            cfg, saved, requested=False, continue_to_step=args.continue_to_step,
+        )
+        if not 0 <= start < endpoint:
             raise ValueError("Resume checkpoint has no remaining compact training steps")
     config_path = generated / "compact.yaml"
     payload = yaml.safe_dump(cfg, sort_keys=False)
@@ -299,6 +336,7 @@ def prepare(args, site, repo, cache_plan_path, generated):
     logs.mkdir(exist_ok=True)
     plan = {
         "kind": "shared-compact-training", "name": args.name, "repo": str(repo),
+        "code_root": str(code_root),
         "python": site.get("STMEM_PYTHON") or str(repo / ".venv/bin/python"),
         "plan_path": str(plan_path), "cache_plan": str(cache_plan_path),
         "cache_plan_sha256": sha256(cache_plan_path), "cache_manifest_digest": digest(manifest),
@@ -308,7 +346,8 @@ def prepare(args, site, repo, cache_plan_path, generated):
         "hierarchy_manifest_sha256": sha256(args.hierarchy_root / "manifest.json") if hierarchy is not None else None,
         "checkpoint": cache_plan["checkpoint"], "checkpoint_sha256": cache_plan["checkpoint_sha256"],
         "teacher_step": initial["step"], "config": str(config_path), "config_sha256": sha256(config_path),
-        "source_sha256": source_hash(repo), "signature": signature, "run_root": cfg["paths"]["run_root"],
+        "source_sha256": current_source, "signature": signature, "run_root": cfg["paths"]["run_root"],
+        "previous_source_sha256": previous["source_sha256"] if previous else None,
         "output": str(output), "script": str(generated / "compact.sbatch"), "logs": str(logs),
         "gpus": args.gpus, "gres": f"gpu:{args.gpus}", "partition": args.partition,
         "cpus": args.cpus, "mem": args.mem, "walltime": args.walltime,
@@ -318,7 +357,8 @@ def prepare(args, site, repo, cache_plan_path, generated):
         "resume": str(checkpoint) if args.resume else None,
         "resume_sha256": sha256(checkpoint) if args.resume else None,
         "restart_unstarted": args.restart_unstarted,
-        "start_step": start, "remaining_updates": 30000 - start,
+        "start_step": start, "remaining_updates": endpoint - start,
+        "continue_to_step": args.continue_to_step, "continuation": continuation,
         "candidate_checkpoints": [str(output / f"step_{step:08d}.pt") for step in (15000, 30000)],
         "accepted_evaluation_execution": cache_plan.get("evaluation_execution"),
         "estimated_gpu_hours": "unknown; cached compact training has not been measured on this allocation",
@@ -355,6 +395,8 @@ def main(argv=None):
     action.add_argument("--dry-run", action="store_true", help="Default: validate dependencies and render only")
     action.add_argument("--submit", action="store_true")
     parser.add_argument("--site", type=Path, default=REPO / "hpc/site.env")
+    parser.add_argument("--code-root", type=Path,
+                        help="Runtime checkout; default site repository. Run/cache/generated paths stay at the site.")
     parser.add_argument("--cache-name", type=profile_name, required=True)
     parser.add_argument("--name", type=profile_name, help="Default: CACHE_NAME_compact_hierarchy")
     parser.add_argument("--run-root", type=Path,
@@ -368,6 +410,8 @@ def main(argv=None):
     restart.add_argument("--resume", action="store_true", help="Resume this compact run's last.pt, after it stops")
     restart.add_argument("--restart-unstarted", action="store_true",
                          help="Retry an inactive attempt from step zero only if it has no checkpoints")
+    parser.add_argument("--continue-to-step", type=positive_integer,
+                        help="With --resume, extend a completed run to this optimizer step at its final LR")
     parser.add_argument("--partition", default="gpuq")
     parser.add_argument("--gpus", type=positive_integer, default=2)
     parser.add_argument("--cpus", type=positive_integer, default=64)
@@ -377,6 +421,8 @@ def main(argv=None):
     parser.add_argument("--microbatch", type=positive_integer, default=32)
     parser.add_argument("--workers", type=nonnegative_integer, default=16)
     args = parser.parse_args(argv)
+    if args.continue_to_step is not None and not args.resume:
+        parser.error("--continue-to-step requires --resume")
     args.name = args.name or args.cache_name + ("_compact" if args.legacy_cache else "_compact_hierarchy")
     if args.name == args.cache_name:
         parser.error("Compact --name must differ from --cache-name")

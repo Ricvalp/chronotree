@@ -114,7 +114,7 @@ FLAT; that comparison comes after router supervision and fitting.
 Run this lightweight selection command on the HPC login node:
 
 ```bash
-.venv/bin/python -m stmem.training.select_checkpoint \
+.venv/bin/python -m stmem.evaluation.select_compact_checkpoint \
   --candidates \
     runs/memory_fv_seed0_compact_hierarchy/seed0/compact/step_00015000.pt \
     runs/memory_fv_seed0_compact_hierarchy/seed0/compact/step_00030000.pt \

@@ -3,25 +3,9 @@
 from __future__ import annotations
 import argparse
 import json
-import math
 from pathlib import Path
 import shutil
 from stmem.training.checkpoints import atomic_json, file_sha256
-
-
-def compact_protocol(manifest):
-    """Compare rollout inputs, allowing only the weights and context family to differ."""
-    cfg = manifest["config"]
-    evaluation = {key: value for key, value in cfg["evaluation"].items()
-                  if key not in ("video_cap", "methods", "selection_episode_count", "test_frozen_manifest")}
-    return {
-        "budget": manifest["budget"], "execution_override": manifest.get("execution_override"),
-        "source_sha256": manifest["source"]["source_sha256"],
-        "intervention": manifest.get("intervention", "none"),
-        "seed": cfg["seed"], "model": cfg["model"], "data": cfg["data"],
-        "geometry": cfg["geometry"], "evaluation": evaluation,
-        "precision": cfg["training"].get("precision", "auto"),
-    }
 
 
 def select(candidates, evaluations, output):
@@ -35,7 +19,6 @@ def select(candidates, evaluations, output):
     scores = []
     plans = []
     evidence = []
-    protocols = []
     for i, checkpoint in enumerate(candidates):
         values = []
         families = []
@@ -50,44 +33,15 @@ def select(candidates, evaluations, output):
             expected = file_sha256(checkpoint)
             if expected not in manifest["checkpoints"].values():
                 raise ValueError("Evaluation checkpoint identity mismatch")
-            if per_candidate == 2:
-                family = manifest["selection_family"]
-                if family not in ("tree", "flat") or manifest["method"] != family.upper():
-                    raise ValueError("Compact selection requires matching random TREE/FLAT method and family")
-                if len(manifest["checkpoints"]) != 1:
-                    raise ValueError("Compact selection requires random contexts without a learned router")
-                if manifest.get("intervention", "none") != "none":
-                    raise ValueError("Compact selection cannot mix history interventions")
-                marker = json.loads((directory / "complete.json").read_text())
-                planned = manifest["planned"]
-                if (not planned or len({tuple(key) for key in planned}) != len(planned)
-                        or planned != manifest.get("all_planned", planned)):
-                    raise ValueError("Compact selection requires the full unique planned episode set")
-                if (marker.get("status") != "complete"
-                        or marker.get("manifest_sha256") != file_sha256(directory / "manifest.json")
-                        or marker.get("planned") != len(planned) or marker.get("recorded") != len(planned)
-                        or summary["overall"].get("recorded") != len(planned)
-                        or summary["overall"].get("planned") != len(planned)
-                        or summary.get("denominator_source") != "planned"):
-                    raise ValueError("Compact selection requires verified complete evaluation outputs")
-                workers = summary.get("worker_completion")
-                if workers and workers["complete"] != workers["planned"]:
-                    raise ValueError("Compact selection requires all evaluation workers to complete")
-                protocols.append(compact_protocol(manifest))
-            value = summary["macro_success"]
-            if not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1:
-                raise ValueError("Invalid macro success rate")
             plans.append(manifest["planned"])
             families.append(manifest["selection_family"])
-            values.append(value)
+            values.append(summary["macro_success"])
             evidence.append(str(directory))
         if per_candidate == 2 and set(families) != {"tree", "flat"}:
             raise ValueError("Compact selection must balance tree and flat contexts")
         scores.append(sum(values) / len(values))
     if any(plan != plans[0] for plan in plans):
         raise ValueError("Selection evaluations used different episode seeds")
-    if protocols and any(protocol != protocols[0] for protocol in protocols):
-        raise ValueError("Matched compact evaluations must use identical budgets, seeds, policy/rollout settings and code")
     # Predeclared tie break: earlier candidate, minimizing unnecessary exposure.
     best = max(range(len(scores)), key=lambda i: (scores[i], -i))
     output = Path(output)

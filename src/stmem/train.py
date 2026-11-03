@@ -17,7 +17,7 @@ from stmem.models.action_flow import flow_sample, masked_mse
 from stmem.training.data import TrainingData, rank_positions
 from stmem.training.loader import PolicyBatchLoader
 from stmem.training.forks import COMMAND_FLAG, load_fork_checkpoint, schedule_steps, validate_teacher_fork
-from stmem.training.continuation import continuation_record
+from stmem.training.continuation import continuation_record as teacher_continuation_record
 from stmem.training.logging_options import (
     nonnegative_attention_every,
     positive_log_every,
@@ -61,6 +61,51 @@ def context_sample(policy, evidence, cfg, position):
     return choose_records(evidence, method, budget, rng=rng).records
 
 
+def bounded_continuation_record(cfg, saved, endpoint):
+    """Extend a completed compact run while keeping its original constant LR tail."""
+    training = cfg["training"]
+    original, decay = training["steps"], schedule_steps(training)
+    start = saved["step"]
+    if isinstance(endpoint, bool) or not isinstance(endpoint, int) or endpoint <= max(original, start):
+        raise ValueError("--continue-to-step must exceed the original budget and saved optimizer step")
+    if start < max(original, decay):
+        raise ValueError("Bounded compact continuation requires the original training and LR decay to be complete")
+    expected = {
+        "mode": "bounded_constant_lr_tail_v1",
+        "original_steps": original,
+        "schedule_steps": decay,
+        "final_lr": 0.1 * training["lr"],
+    }
+    previous = saved.get("continuation")
+    if previous is None:
+        return {**expected, "enabled_at_step": start, "intended_final_step": endpoint}
+    if (not isinstance(previous, dict)
+            or set(previous) != {*expected, "enabled_at_step", "intended_final_step"}
+            or any(previous[key] != value for key, value in expected.items())):
+        raise ValueError("Invalid bounded continuation record or changed original LR schedule")
+    enabled_at, previous_end = previous["enabled_at_step"], previous["intended_final_step"]
+    if (isinstance(enabled_at, bool) or not isinstance(enabled_at, int)
+            or not max(original, decay) <= enabled_at <= start
+            or isinstance(previous_end, bool) or not isinstance(previous_end, int)
+            or previous_end <= enabled_at or start > previous_end):
+        raise ValueError("Invalid bounded continuation step metadata")
+    if endpoint < previous_end:
+        raise ValueError("Cannot shorten an already declared compact continuation endpoint")
+    return {**previous, "intended_final_step": endpoint}
+
+
+def continuation_record(cfg, saved, *, requested, continue_to_step=None):
+    """Keep runtime-only compact extension out of the encoded-cache identity."""
+    if continue_to_step is not None:
+        if requested:
+            raise ValueError("Choose --continue-to-step or --train-until-stopped, not both")
+        return bounded_continuation_record(cfg, saved, continue_to_step)
+    previous = saved.get("continuation")
+    if isinstance(previous, dict) and previous.get("mode") == "bounded_constant_lr_tail_v1":
+        raise ValueError("This checkpoint uses bounded continuation; resume with --continue-to-step")
+    return teacher_continuation_record(cfg, saved, requested=requested)
+
+
 def train_policy(
     cfg,
     stage,
@@ -73,12 +118,19 @@ def train_policy(
     progress_every_seconds=None,
     attention_every=None,
     train_until_stopped=False,
+    continue_to_step=None,
 ):
     validate_config(cfg)
     if resume and fork_from:
         raise ValueError("Choose either resume or fork_from, not both")
     if train_until_stopped and (stage != "teacher" or not resume):
         raise ValueError("--train-until-stopped requires teacher training with --resume")
+    if continue_to_step is not None:
+        if stage != "compact" or not resume or train_until_stopped:
+            raise ValueError("--continue-to-step requires compact training with --resume")
+        if (isinstance(continue_to_step, bool) or not isinstance(continue_to_step, int)
+                or continue_to_step <= cfg["training"]["steps"]):
+            raise ValueError("--continue-to-step must exceed the original optimizer-step budget")
     if fork_sha256 and not fork_from:
         raise ValueError("fork_sha256 requires fork_from")
     if cfg["model"].get("history_mode", "full") == "none" and stage != "teacher":
@@ -110,6 +162,7 @@ def train_policy(
             "fork_sha256": fork_sha256,
             "logging": logging,
             "train_until_stopped": train_until_stopped,
+            "continue_to_step": continue_to_step,
         },
     ) as tracker:
         with TrainingProgress(directory, logging["progress_every_seconds"], rank=rank) as progress:
@@ -120,6 +173,7 @@ def train_policy(
                     stage,
                     resume=resume,
                     train_until_stopped=train_until_stopped,
+                    continue_to_step=continue_to_step,
                     fork_from=fork_from,
                     fork_sha256=fork_sha256,
                     stop_file=stop_file,
@@ -139,6 +193,7 @@ def _train_policy(
     *,
     resume=None,
     train_until_stopped=False,
+    continue_to_step=None,
     fork_from=None,
     fork_sha256=None,
     stop_file=None,
@@ -250,6 +305,8 @@ def _train_policy(
         weight_decay=cfg["training"]["weight_decay"],
     )
     steps = None if train_until_stopped else cfg["training"]["steps"]
+    if continue_to_step is not None:
+        steps = continue_to_step
     decay_steps = schedule_steps(cfg["training"])
     warmup = cfg["training"]["warmup_steps"]
     scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -298,7 +355,9 @@ def _train_policy(
             if saved["stage"] != stage or saved["provenance"] != provenance:
                 raise ValueError("Resume stage/data/config/dependencies/world size mismatch")
             fork = saved.get("fork")
-            continuation = continuation_record(cfg, saved, requested=train_until_stopped)
+            continuation = continuation_record(
+                cfg, saved, requested=train_until_stopped, continue_to_step=continue_to_step,
+            )
         policy.load_state_dict(saved["model"])
         optimizer.load_state_dict(saved["optimizer"])
         scheduler.load_state_dict(saved["scheduler"])
@@ -350,6 +409,7 @@ def _train_policy(
             "training/completed_steps": start,
             "training/intended_steps": steps,
             "training/train_until_stopped": train_until_stopped,
+            "training/continue_to_step": continue_to_step,
             "training/original_intended_steps": cfg["training"]["steps"],
             "training/schedule_steps": decay_steps,
             "training/continuation": continuation,
@@ -803,6 +863,10 @@ def main():
         help="Resume a teacher without a step limit; retain its original LR decay then hold the final LR",
     )
     parser.add_argument(
+        "--continue-to-step", type=int,
+        help="Resume a completed compact run to this total step count, keeping its original final LR",
+    )
+    parser.add_argument(
         "--log-every",
         type=positive_log_every,
         help="Log scalar metrics every N optimizer updates; runtime-only override, safe to change on resume",
@@ -823,6 +887,11 @@ def main():
     cfg["stage"] = stage
     if args.train_until_stopped and (stage != "teacher" or not args.resume):
         parser.error("--train-until-stopped requires teacher training with --resume")
+    if args.continue_to_step is not None:
+        if stage != "compact" or not args.resume or args.train_until_stopped:
+            parser.error("--continue-to-step requires compact training with --resume")
+        if args.continue_to_step <= cfg["training"]["steps"]:
+            parser.error("--continue-to-step must exceed the original optimizer-step budget")
     if (args.fork_from or args.fork_sha256) and stage != "teacher":
         parser.error("--fork-from and --fork-sha256 apply only to teacher training")
     if stage == "router":
@@ -845,6 +914,7 @@ def main():
             progress_every_seconds=args.progress_every_seconds,
             attention_every=args.attention_every,
             train_until_stopped=args.train_until_stopped,
+            continue_to_step=args.continue_to_step,
         )
     raise SystemExit(result)
 
