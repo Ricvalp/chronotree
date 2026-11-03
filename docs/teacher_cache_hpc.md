@@ -79,6 +79,10 @@ contains startup, per-episode completion/reuse, per-task completion and final
 cache-completion JSON events. This preprocessing stage does not create training
 or evaluation W&B runs.
 
+Once status is `complete` with no missing tasks, continue with the
+[shared compact-policy training launcher](compact_training_hpc.md). It derives
+the next configuration from this saved cache configuration and reuses its teacher.
+
 If an array stops before completion, wait until all its elements are inactive,
 then use the same submission command with `--resume`. Completed episodes and
 task shards are reused after integrity checks. The launcher checks the Slurm
