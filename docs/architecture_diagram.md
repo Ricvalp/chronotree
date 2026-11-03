@@ -163,15 +163,20 @@ for the directory and restart procedure.
 The same page separately labels **later Stage P compact adaptation**. Its cache
 contains the selected teacher's learned leaf/current/text encodings, rather than
 the raw CLIP sidecars used during teacher training. CPU workers read lightweight
-decision metadata and targets, reconstruct causal block trees with bounded reuse,
-and select the matched random TREE/FLAT contexts. Only contiguous selected context
+decision metadata and targets. A separate CPU preprocessing job stores deterministic
+parent summaries and indexed topology from the existing encoded cache, including
+the separate causal prefix variants. TREE/UNIFORM traverse that topology before
+gathering selected payloads; FLAT reads leaves and computes selection-dependent
+residuals without constructing trees; CURRENT skips historical feature payloads.
+Context sampling and budgets remain variable with the original RNG sequence.
+Only contiguous selected context
 tensors, masks and metadata cross the worker boundary; recursive tree objects and
-raw point-cloud histories do not. Eight workers per GPU and a bounded prefetch
+raw point-cloud histories do not. Sixteen workers per GPU and a bounded prefetch
 queue let that work overlap GPU updates.
 
 The GPU trains the same shared metadata adapter, clock and flow decoder, with
 the original masked context assembly and mass bias. Visual and text encoders
-remain frozen. Defaults are two GPUs, 32 CPU cores, effective batch 128 and
+remain frozen. Defaults are two GPUs, 64 CPU cores, effective batch 128 and
 microbatch 32 per GPU, with two accumulation passes per rank. The teacher's
 full-history path remains distinct: these workers do not truncate teacher or
 compact history, alter causal availability, or change exact TREE/FLAT coverage.
@@ -409,3 +414,11 @@ reader distinction. The three artifacts were regenerated; Chromium opened the
 actual HTML and the added section was visually inspected. Layout evidence is in
 `runs/cache_checks/compact_worker_diagram/compact_pipeline.png`. Snapshot/XML and
 Ruff checks passed. These layout checks do not establish HPC throughput.
+
+Later on 2026-11-03, the Stage P section was updated for the parent sidecar,
+indexed TREE/UNIFORM traversal, tree-free FLAT residual computation and CURRENT
+history-read skipping. It shows 64 CPU cores and 16 workers per GPU while keeping
+the shared decoder and all causal boundaries unchanged. All three artifacts
+were regenerated, and Chromium opened the HTML for a visual review of the
+updated section. Layout evidence is
+`runs/hierarchy_cache_diagnostic_20261103/diagram.png`.

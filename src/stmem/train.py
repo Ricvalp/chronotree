@@ -204,6 +204,7 @@ def _train_policy(
     dependencies = {}
     cache = None
     cached_compact = stage == "compact"
+    packed_hierarchy = cached_compact and bool(cfg["training"].get("hierarchy_cache_root"))
     normalizer_seconds = None
     if stage != "teacher":
         startup_progress("dependencies_loading")
@@ -216,6 +217,14 @@ def _train_policy(
         dependencies["teacher"] = file_sha256(teacher)
         cache = FrozenCache(cfg, teacher, data)
         dependencies["cache"] = digest(cache.manifest)
+        if packed_hierarchy:
+            from stmem.data.hierarchy_cache import validate_hierarchy_cache
+
+            startup_progress("hierarchy_validating")
+            hierarchy_manifest = validate_hierarchy_cache(
+                cache.root, cfg["training"]["hierarchy_cache_root"]
+            )
+            dependencies["hierarchy"] = digest(hierarchy_manifest)
         # Frozen training uses final encoder outputs, not CLIP descriptor I/O.
         feature_io_enabled = False
         feature_io_settings.update(active=False, pinned_host_buffers=False, asynchronous_transfer=False)
@@ -356,7 +365,10 @@ def _train_policy(
             "environment": environment_manifest(),
             "logging": logging,
             "training/feature_io": feature_io_settings,
-            "training/input_pipeline": "cached_context_workers_v1" if cached_compact else "packed_observations_v1",
+            "training/input_pipeline": (
+                "packed_hierarchy_workers_v1" if packed_hierarchy
+                else "cached_context_workers_v1" if cached_compact else "packed_observations_v1"
+            ),
         }
     )
     records_seen = torch.zeros((), device=device, dtype=torch.long)
@@ -481,6 +493,8 @@ def _train_policy(
         cache_worker_seconds = 0.0
         context_worker_seconds = 0.0
         block_cache_hits = block_cache_misses = 0
+        hierarchy_read_seconds = hierarchy_select_seconds = hierarchy_residual_seconds = 0.0
+        hierarchy_read_bytes = 0
         progress.begin_update(step, local_n)
         positions = rank_positions(step, batch, rank, world)
         prepared_batches = loader.read_update(step)
@@ -512,6 +526,10 @@ def _train_policy(
                 context_worker_seconds += loaded.context_seconds
                 block_cache_hits += loaded.block_cache_hits
                 block_cache_misses += loaded.block_cache_misses
+                hierarchy_read_seconds += loaded.hierarchy_read_seconds
+                hierarchy_select_seconds += loaded.hierarchy_select_seconds
+                hierarchy_residual_seconds += loaded.hierarchy_residual_seconds
+                hierarchy_read_bytes += loaded.hierarchy_read_bytes
             else:
                 packed = loaded.packed
                 decisions = list(packed.metadata) if cache is None else packed.decisions()
@@ -647,11 +665,25 @@ def _train_policy(
                 cache_metrics = {
                     "cache_worker_seconds_rank": cache_worker_seconds,
                     "context_worker_seconds_rank": context_worker_seconds,
-                    "cache_block_hits_rank": block_cache_hits,
-                    "cache_block_misses_rank": block_cache_misses,
                     "data_wait_seconds_max_rank": wait_max,
                     "step_seconds_max_rank": step_max,
                 }
+                if packed_hierarchy:
+                    # Worker component times are overlapping background effort,
+                    # not additive wall-time contributions to the update.
+                    cache_metrics.update({
+                        "hierarchy_read_seconds_rank": hierarchy_read_seconds,
+                        "hierarchy_select_seconds_rank": hierarchy_select_seconds,
+                        "hierarchy_residual_seconds_rank": hierarchy_residual_seconds,
+                        "hierarchy_read_bytes_rank": hierarchy_read_bytes,
+                        "hierarchy_index_hits_rank": block_cache_hits,
+                        "hierarchy_index_misses_rank": block_cache_misses,
+                    })
+                else:
+                    cache_metrics.update({
+                        "cache_block_hits_rank": block_cache_hits,
+                        "cache_block_misses_rank": block_cache_misses,
+                    })
             record = {
                 "step": current_step,
                 "training_action_loss": float(loss_tensor),

@@ -93,9 +93,12 @@ SOURCES = [
     "src/stmem/training/loader.py",
     "src/stmem/training/cached_loader.py",
     "src/stmem/training/cached_policy.py",
+    "src/stmem/training/packed_context.py",
     "src/stmem/data/cache.py",
+    "src/stmem/data/hierarchy_cache.py",
     "src/stmem/data/cache_source.py",
     "hpc/train_compact.py",
+    "hpc/cache_hierarchy.py",
     "src/stmem/training/attention.py",
     "src/stmem/training/logging_options.py",
     "src/stmem/visualization/diagnostics.py",
@@ -241,13 +244,18 @@ def snapshot():
                 "stage": "compact",
                 "encoders_frozen": True,
                 "default_gpus": 2,
-                "default_cpu_allocation": 32,
-                "default_workers_per_rank": 8,
+                "default_cpu_allocation": 64,
+                "default_workers_per_rank": 16,
                 "default_prefetch_factor": 1,
                 "effective_batch": 128,
                 "microbatch_per_gpu": 32,
                 "history_budgets": [64, 128, 256],
                 "worker_output": "selected contiguous context tensors; no recursive archive objects",
+                "hierarchy_preprocessing": "deterministic parent summaries and topology, once per encoded cache",
+                "hierarchy_launcher": "hpc/cache_hierarchy.py",
+                "tree_uniform": "select stored node indices before gathering selected payload",
+                "flat": "exact leaf scan and selection-dependent residuals, no tree construction",
+                "current": "skip historical payload, preserve causal metadata and budget checks",
                 "raw_history_pointcloud_reads": False,
                 "changes_model_parameters_or_causal_history": False,
             },
@@ -1608,18 +1616,18 @@ def frozen_vision(file, facts):
     compact = facts["compact_cache_io"]
     learned = p.card(
         48, 2565, 500, 350,
-        "Completed learned-encoder cache",
+        "Encoded cache + hierarchy index",
         [
             "Selected teacher weights are immutable.",
-            "Cache leaves, current tokens and goal text.",
-            "Distinct from raw CLIP descriptor sidecars.",
+            "Reuse leaves, current tokens and goal text.",
+            "Precompute deterministic parents and topology.",
             "Completed and causal partial blocks stay separate.",
-            "Original clocks and observed-point metadata.",
+            "Store each subtree once, with original clocks.",
             "Exact descendant coverage is retained.",
             "No visual or task-encoder gradient updates.",
         ],
         tone="data", size=18,
-        tooltip="data/cache.py. The immutable cache contains learned observation encodings. It never stores decision-dependent relative-age embeddings or future execution frames. Runtime-only loading improvements reuse compatible cached values; encoder/preprocessing changes still invalidate the cache.",
+        tooltip="data/cache.py and data/hierarchy_cache.py. The derived index stores deterministic parents and causal roots from immutable learned leaves. It does not re-encode observations or cache relative-age embeddings. Prefix variants remain separate from completed blocks; hashes bind the index to its original leaf cache and aggregation implementation.",
     )
     selected = p.card(
         640, 2565, 500, 350,
@@ -1627,14 +1635,14 @@ def frozen_vision(file, facts):
         [
             f"{compact['default_workers_per_rank']} workers / GPU; one queued batch / worker.",
             "Read lightweight state, clocks and action targets.",
-            "Load leaves and construct causal block trees.",
-            "Reuse immutable block trees within a bounded cache.",
-            "Select matched random TREE / FLAT contexts.",
+            "TREE / UNIFORM: traverse stored node indices.",
+            "FLAT: leaf scan + exact residuals; no tree build.",
+            "CURRENT: skip all historical feature payloads.",
             "Return selected content, metadata and masks only.",
             "No raw point-cloud histories or recursive IPC.",
         ],
         tone="visual", size=18,
-        tooltip="training/cached_loader.py. Sampling remains deterministic by global position. Each worker reads only evidence available at its assigned decision, applies the original context mixture and budget, and packs a bounded selected context. Reading a future batch early does not expose it to the current policy decision.",
+        tooltip="training/cached_loader.py and training/packed_context.py. Preserve the same global-position RNG, family mixture, budget and causal leaf coverage. Tree readers select IDs before fetching features; flat residuals depend on the actual selected leaves. Relative ages are computed at read time. Bounded worker state and selected tensor queues overlap preparation with training.",
     )
     compact_gpu = p.card(
         1232, 2565, 520, 350,
@@ -1651,14 +1659,14 @@ def frozen_vision(file, facts):
         tone="decoder", size=18,
         tooltip="training/cached_policy.py reproduces the cached branch of models/batched_policy.py with the same TokenBank adaptation, auxiliary current context, history mass bias and decoder. DDP wraps the training forward; checkpoints retain the original MemoryPolicy state layout.",
     )
-    p.edge(learned, selected, "leaves", tone="visual")
+    p.edge(learned, selected, "index + values", tone="visual")
     p.edge(selected, compact_gpu, "tensors", tone="visual")
     p.card(
         48, 2960, 1704, 120,
         "Compact launch defaults · allocation, not an architecture change",
         [
             f"{compact['default_gpus']} GPUs in gpuq · {compact['default_cpu_allocation']} CPU cores · effective batch {compact['effective_batch']} · microbatch {compact['microbatch_per_gpu']}/GPU · two accumulation passes/rank",
-            "Full-history teacher still reads every fine leaf. Compact worker prefetch changes scheduling and data movement; it never truncates history or changes TREE/FLAT supervision.",
+            "Full-history teacher still reads every fine leaf. Stored parents and family-specific reads preserve context variability, causal availability and matched TREE/FLAT supervision.",
         ],
         tone="note", size=18,
     )

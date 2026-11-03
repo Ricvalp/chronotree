@@ -42,7 +42,15 @@ class NoReuseDataset(CachedPolicyDataset):
 
     def __getitem__(self, positions):
         if self._reader is None:
-            self._reader = CachedArchiveReader(self.data.cfg, self.cache_root, maximum_blocks=0)
+            hierarchy = self.data.cfg["training"].get("hierarchy_cache_root")
+            if hierarchy:
+                from stmem.training.packed_context import PackedContextReader
+
+                self._reader = PackedContextReader(
+                    self.data.cfg, self.cache_root, hierarchy, maximum_indices=0,
+                )
+            else:
+                self._reader = CachedArchiveReader(self.data.cfg, self.cache_root, maximum_blocks=0)
             self._decisions = LightweightDecisions(self.data)
         return super().__getitem__(positions)
 
@@ -70,6 +78,8 @@ def bounded_data(args):
     state = load_checkpoint(args.checkpoint)
     cfg = deepcopy(state["config"])
     cfg["stage"] = "compact"
+    if getattr(args, "hierarchy_root", None):
+        cfg["training"]["hierarchy_cache_root"] = str(args.hierarchy_root.resolve())
     cfg["paths"].update(data_root=str(args.prepared.parent.resolve()),
                         cache_root=str(args.cache_root.resolve()))
     cfg["data"]["alignment_path"] = str(args.alignment.resolve())
@@ -162,11 +172,17 @@ def benchmark(args):
     # benefits. Every sampled decision is unique in this first pass.
     reference, old_cold = reference_batch(data, cache, episode, unique_positions)
     cold = CachedPolicyDataset(data, cache.root)
-    # Initialization owns lightweight action metadata; then disable block reuse.
-    first = cold[unique_positions[:1]]
-    del first
-    cold._reader.close()
-    cold._reader = CachedArchiveReader(data.cfg, cache.root, maximum_blocks=0)
+    if not args.hierarchy_root:
+        # Initialization owns lightweight action metadata; then disable block reuse.
+        first = cold[unique_positions[:1]]
+        del first
+        cold._reader.close()
+        cold._reader = CachedArchiveReader(data.cfg, cache.root, maximum_blocks=0)
+    else:
+        from stmem.training.packed_context import PackedContextReader
+
+        cold._reader = PackedContextReader(data.cfg, cache.root, args.hierarchy_root, maximum_indices=0)
+        cold._decisions = LightweightDecisions(data)
     started = time.perf_counter()
     new_cold = cold[unique_positions]
     new_cold_seconds = time.perf_counter() - started
@@ -178,6 +194,8 @@ def benchmark(args):
         "task": args.task, "episode": episode.episode_id, "checkpoint_step": checkpoint_step,
         "unique_available_decisions": count, "examples": args.examples, "microbatch": args.microbatch,
         "block_reuse_disabled": args.disable_block_reuse,
+        "index_reuse_disabled": args.disable_index_reuse,
+        "hierarchy_root": str(args.hierarchy_root.resolve()) if args.hierarchy_root else None,
         "reference_scope": "cache read/rebuild, context selection and CPU packing; raw point-cloud reads excluded",
         "new_scope": "lightweight supervision, cached context preparation, CPU packing and IPC; no neural forward",
         "limitations": ["single episode; repeated prefixes favor block reuse",
@@ -199,7 +217,7 @@ def benchmark(args):
     for workers in args.workers:
         data.cfg["training"].update(workers=workers, prefetch_factor=1)
         started = time.perf_counter()
-        loader_type = NoReuseLoader if args.disable_block_reuse else CachedPolicyBatchLoader
+        loader_type = NoReuseLoader if args.disable_block_reuse or args.disable_index_reuse else CachedPolicyBatchLoader
         loader = loader_type(
             data, cache, stage="compact", start=0, steps=args.examples // args.microbatch,
             batch=args.microbatch, rank=0, world=1, microbatch=args.microbatch,
@@ -232,7 +250,8 @@ def benchmark(args):
             "warmup_batches_excluded": warm_batches,
             "steady_wait": summarize(steady) if steady else None,
             "selected_tensor_payload_bytes_max": max(payloads),
-            "block_cache_hits": hits, "block_cache_misses": misses,
+            ("index_cache_hits" if args.hierarchy_root else "block_cache_hits"): hits,
+            ("index_cache_misses" if args.hierarchy_root else "block_cache_misses"): misses,
             "worker_cache_seconds_sum": worker_cache_seconds,
         }
         report["runs"].append(result)
@@ -248,6 +267,8 @@ def main():
                         default=Path("runs/inspection/eval_20261102T120621Z/frozen_10hz/checkpoint.pt"))
     parser.add_argument("--prepared", type=Path, default=Path("data/inspection/VideoUnmask.h5"))
     parser.add_argument("--cache-root", type=Path, default=Path("runs/cache_checks/fv_20261102"))
+    parser.add_argument("--hierarchy-root", type=Path,
+                        help="Existing derived hierarchy for the same diagnostic leaf cache")
     parser.add_argument("--feature-root", type=Path, default=Path("data/inspection/features"))
     parser.add_argument("--alignment", type=Path, default=Path("data/alignment.json"))
     parser.add_argument("--task", default="VideoUnmask")
@@ -256,13 +277,19 @@ def main():
     parser.add_argument("--workers", type=int, nargs="+", default=[0, 2, 4, 8])
     parser.add_argument("--disable-block-reuse", action="store_true",
                         help="Diagnostic only: every block is rebuilt, approximating low-hit-rate workloads")
+    parser.add_argument("--disable-index-reuse", action="store_true",
+                        help="Diagnostic only: reread topology on every example, approximating low-hit-rate workloads")
     parser.add_argument("--output", type=Path,
                         default=Path("runs/compact_loader_diagnostic_20261103/report.json"))
     args = parser.parse_args()
     if not 1 <= args.microbatch <= 32 or not 1 <= args.examples <= 512 or args.examples % args.microbatch:
         parser.error("Require microbatch1–32 and examples1–512 divisible by microbatch")
-    if any(not 0 <= count <= 8 for count in args.workers):
-        parser.error("Workers must be between0 and8")
+    if any(not 0 <= count <= 16 for count in args.workers):
+        parser.error("Workers must be between0 and16")
+    if args.hierarchy_root and args.disable_block_reuse:
+        parser.error("--disable-block-reuse applies only to the legacy tree-building reader")
+    if args.disable_index_reuse and not args.hierarchy_root:
+        parser.error("--disable-index-reuse requires --hierarchy-root")
     benchmark(args)
 
 

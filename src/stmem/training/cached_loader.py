@@ -60,6 +60,11 @@ class LoadedCachedBatch:
     context_seconds: float
     block_cache_hits: int
     block_cache_misses: int
+    hierarchy_read_seconds: float = 0.0
+    hierarchy_select_seconds: float = 0.0
+    hierarchy_residual_seconds: float = 0.0
+    hierarchy_read_bytes: int = 0
+    hierarchy_enabled: bool = False
 
     def pin_memory(self):
         def bank(value):
@@ -365,18 +370,41 @@ class CachedPolicyDataset(Dataset):
 
     def __getitem__(self, positions):
         if self._reader is None:
-            self._reader = CachedArchiveReader(self.data.cfg, self.cache_root)
+            hierarchy_root = self.data.cfg["training"].get("hierarchy_cache_root")
+            if hierarchy_root:
+                from stmem.training.packed_context import PackedContextReader
+
+                self._reader = PackedContextReader(self.data.cfg, self.cache_root, hierarchy_root)
+            else:
+                self._reader = CachedArchiveReader(self.data.cfg, self.cache_root)
             self._decisions = LightweightDecisions(self.data)
         reader = self._reader
+        hierarchy_enabled = bool(self.data.cfg["training"].get("hierarchy_cache_root"))
         hits, misses = reader.hits, reader.misses
         policy = SimpleNamespace(config=self.data.cfg, device=torch.device("cpu"))
         current, history, text, decisions, leaves = [], [], [], [], []
         load_seconds = cache_seconds = context_seconds = pack_seconds = 0.0
+        hierarchy_read_seconds = hierarchy_select_seconds = hierarchy_residual_seconds = 0.0
+        hierarchy_read_bytes = 0
         for position in positions:
             started = time.perf_counter()
             decision = self._decisions.decision(position)
             load_seconds += time.perf_counter() - started
             started = time.perf_counter()
+            if hierarchy_enabled:
+                prepared = reader.prepare(decision, position)
+                cache_seconds += time.perf_counter() - started
+                current.append(prepared.current)
+                history.append(prepared.history)
+                text.append(prepared.text)
+                leaves.append(prepared.leaf_count)
+                decisions.append(decision)
+                hierarchy_read_seconds += prepared.read_seconds
+                hierarchy_select_seconds += prepared.selection_seconds
+                hierarchy_residual_seconds += prepared.residual_seconds
+                hierarchy_read_bytes += prepared.read_bytes
+                context_seconds += prepared.selection_seconds
+                continue
             evidence = reader.evidence(decision)
             cache_seconds += time.perf_counter() - started
             started = time.perf_counter()
@@ -407,6 +435,9 @@ class CachedPolicyDataset(Dataset):
             load_seconds=load_seconds, pack_seconds=0.0, worker_pid=os.getpid(),
             cache_seconds=cache_seconds, context_seconds=context_seconds,
             block_cache_hits=reader.hits - hits, block_cache_misses=reader.misses - misses,
+            hierarchy_enabled=hierarchy_enabled, hierarchy_read_seconds=hierarchy_read_seconds,
+            hierarchy_select_seconds=hierarchy_select_seconds, hierarchy_residual_seconds=hierarchy_residual_seconds,
+            hierarchy_read_bytes=hierarchy_read_bytes,
         )
         result.pack_seconds = pack_seconds + time.perf_counter() - started
         return result

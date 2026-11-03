@@ -24,9 +24,9 @@ cache. This is one shared compact policy, not separate TREE and FLAT policies.
   schedule; schedule horizon explicitly resets to 30,000 compact updates.
 - Effective batch 128; microbatch 32 per GPU. With two GPUs this is two
   accumulation microbatches per rank per optimizer update.
-- Two GPUs in `gpuq`, untyped `--gres=gpu:2`, no `--exclusive`, 32 CPU cores,
+- Two GPUs in `gpuq`, untyped `--gres=gpu:2`, no `--exclusive`, 64 CPU cores,
   128 GB host RAM, 48 hours. One Slurm task starts one torchrun agent with two
-  training processes. Eight loading workers per rank, prefetch factor one.
+  training processes. Sixteen loading workers per rank, prefetch factor one.
 - W&B online logging and system statistics enabled; scalar metrics every step,
   attention diagnostics every 10 steps. The existing compact attention probe
   uses a fixed UNIFORM context, not the randomly sampled training frontier.
@@ -40,19 +40,64 @@ reported `cache_loading`. Cache loading and tree construction ran serially in ea
 training process, after the already-prefetched raw observation batches arrived.
 The user chose a fresh restart rather than preserving that partial checkpoint.
 
-The updated cached training path moves cache reading, tree construction and random
-context selection into the loading workers. Workers return the selected contiguous
-context tensors, not recursive tree objects or raw point-cloud histories. Immutable
-block/tree reuse and the prefetch queue are bounded. With eight workers per GPU,
-the two training processes plus sixteen workers fit within the 32-CPU allocation.
-The HPC throughput of this replacement path must still be measured; local parity
-and timing checks do not establish shared-storage performance.
+The first worker update moved cache reading, tree construction and context selection
+into background processes. The user reports that update settled around 13 seconds
+per optimizer update. It still rebuilt many deterministic parents when random
+sampling missed its bounded in-process cache.
+
+The new path uses a persistent derived hierarchy cache. Build it once with
+[`hpc/cache_hierarchy.py`](../hpc/cache_hierarchy.py) before starting this fresh
+compact run. It derives parents and causal-prefix trees from existing encoded
+leaves; it does not prepare point clouds or run the teacher encoder again. The
+loader still samples the same random TREE/FLAT contexts and budgets. FLAT residuals
+continue to exclude the selected leaves exactly. Read-time ages are computed at
+the actual decision. Precomputation changes neither grouping nor training diversity.
+Workers return selected contiguous tensors, and both in-process reuse and prefetch
+remain bounded. The new HPC throughput remains to be measured.
 
 The selected teacher's stored `model.execute: 2` remains unchanged. Its accepted
 evaluation used the explicit eight-target execution override. That override is
 recorded in the launch plan and must be used for matched downstream evaluation.
 The compact configuration records four validation episodes per task for later
 selection. This command does not submit those evaluations or router training.
+
+## Prepare the reusable hierarchy once
+
+Use the same accepted teacher cache name. This CPU preprocessing reserves one
+untyped GPU per task because this cluster provides the required compute cores on
+GPU nodes. Defaults: 16 task elements, four simultaneous, `gpuq`, four CPU cores,
+32 GB RAM and 24 hours each. It does not start training or create a W&B run.
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+git pull
+
+.venv/bin/python hpc/cache_hierarchy.py \
+  --site hpc/site_b200_4gpu.env --cache-name memory_fv_seed0 --dry-run
+
+.venv/bin/python hpc/cache_hierarchy.py \
+  --site hpc/site_b200_4gpu.env --cache-name memory_fv_seed0 --submit
+```
+
+Check completion before training:
+
+```bash
+.venv/bin/python hpc/cache_hierarchy.py \
+  --site hpc/site_b200_4gpu.env --cache-name memory_fv_seed0 --status
+```
+
+`--status` only reads filesystem progress; it creates no directories and does not
+contact Slurm. Preparation logs are under
+`hpc/generated/memory_fv_seed0_hierarchy/logs/`. The printed
+`hierarchy_cache_root` is a content-addressed directory beneath the existing leaf
+cache's `hierarchy/` directory. The original leaf files remain dependencies; keep
+them in place because hierarchy virtual datasets reference their contents.
+
+If an array is interrupted, wait until every element is inactive, then repeat
+its command with `--resume --submit`. Verified completed work is reused. Never
+change source or generated configuration while jobs are queued or running. A new
+builder version has a different derived-cache identity; it does not invalidate
+the frozen encoded leaves.
 
 ## Submit on the HPC
 
@@ -65,20 +110,20 @@ git pull
 .venv/bin/python hpc/train_compact.py \
   --site hpc/site_b200_4gpu.env \
   --cache-name memory_fv_seed0 \
-  --name memory_fv_seed0_compact_prefetch \
-  --run-root runs/memory_fv_seed0_compact_prefetch \
+  --name memory_fv_seed0_compact_hierarchy \
+  --run-root runs/memory_fv_seed0_compact_hierarchy \
   --dry-run
 ```
 
-Check `cache_path`, `teacher_step`, `gres: gpu:2`, `partition: gpuq`, and the
-training settings in the printed plan. Then:
+Check `cache_path`, `hierarchy_cache_root`, `teacher_step`, `gres: gpu:2`,
+`partition: gpuq`, `cpus: 64`, and the training settings in the printed plan. Then:
 
 ```bash
 .venv/bin/python hpc/train_compact.py \
   --site hpc/site_b200_4gpu.env \
   --cache-name memory_fv_seed0 \
-  --name memory_fv_seed0_compact_prefetch \
-  --run-root runs/memory_fv_seed0_compact_prefetch \
+  --name memory_fv_seed0_compact_hierarchy \
+  --run-root runs/memory_fv_seed0_compact_hierarchy \
   --submit
 ```
 
@@ -93,9 +138,9 @@ dependency remains an absolute path under `runs/memory_fv_seed0/`.
 
 Output:
 
-- Generated configuration/script/plan: `hpc/generated/memory_fv_seed0_compact_prefetch/`.
-- Slurm logs: `hpc/generated/memory_fv_seed0_compact_prefetch/logs/` with `%x_%j.out/.err`.
-- Training metrics, W&B identity and weights: `runs/memory_fv_seed0_compact_prefetch/seed0/compact/`.
+- Generated configuration/script/plan: `hpc/generated/memory_fv_seed0_compact_hierarchy/`.
+- Slurm logs: `hpc/generated/memory_fv_seed0_compact_hierarchy/logs/` with `%x_%j.out/.err`.
+- Training metrics, W&B identity and weights: `runs/memory_fv_seed0_compact_hierarchy/seed0/compact/`.
 - Selection candidates: `step_00015000.pt` and `step_00030000.pt` in that directory.
 - Accepted teacher and cache remain at their existing paths; nothing overwrites
   them. The old slow compact run under `runs/memory_fv_seed0/seed0/compact/` is also
@@ -109,8 +154,8 @@ After the job has stopped and saved `last.pt`:
 .venv/bin/python hpc/train_compact.py \
   --site hpc/site_b200_4gpu.env \
   --cache-name memory_fv_seed0 \
-  --name memory_fv_seed0_compact_prefetch \
-  --run-root runs/memory_fv_seed0_compact_prefetch \
+  --name memory_fv_seed0_compact_hierarchy \
+  --run-root runs/memory_fv_seed0_compact_hierarchy \
   --resume --submit
 ```
 
@@ -118,7 +163,13 @@ Resume uses the compact checkpoint, optimizer, sampler, schedule and W&B identit
 not the teacher's optimizer. Keep the original GPU count and batch/training
 configuration. If nondefault options were used initially, pass the same values.
 Walltime, memory and CPU allocation may be changed without changing scientific
-inputs. Active submitted jobs are rejected before resubmission.
+inputs. Active submitted jobs are rejected before resubmission. Existing generated
+plans and checkpoint configurations are immutable: the launcher never changes an
+old run to the new worker count or hierarchy path. `--legacy-cache` explicitly
+retains on-demand hierarchy construction; reproducing an old launch also requires
+its original `--name`, `--run-root`, GPU count, batch settings and worker count.
+A changed source signature is rejected rather than silently resuming different
+code. The commands above create a separate fresh run.
 
 If an allocation fails **before any checkpoint exists**, use
 `--restart-unstarted --submit` instead of `--resume --submit`. This explicitly
@@ -127,7 +178,8 @@ It retains the run directory's W&B identity. Never retry while the old allocatio
 is still active.
 
 The launcher verifies teacher/configuration/selection hashes, the final cache
-manifest hash, cache identity (including encoding code), task coverage, shard
+manifest hash, hierarchy manifest/hash and source-cache dependency, cache identity
+(including encoding code), task coverage, shard
 sizes and receipt consistency. It does not repeat a full byte scan of every HDF5
 shard; those hashes were verified by cache construction before final publication.
 The trainer independently checks alignment, the dataset identity, teacher input
@@ -147,6 +199,14 @@ Model architecture, causal boundaries, exact leaf coverage and TREE/FLAT
 supervision remain unchanged.
 
 ## Local verification
+
+The persistent-hierarchy launcher update passed 60 CPU launch tests on
+2026-11-03. These include a production hierarchy build over 16 tiny synthetic
+task shards, followed by compact planning, allocation guards and checkpoint
+resume with the hierarchy manifest dependency. Status, immutable inputs, active
+array rejection, shell syntax, resources and isolated output roots are covered.
+Ruff and the owned-file whitespace check passed. No HPC submission was made;
+these tests do not measure training throughput or scientific success.
 
 CPU launch tests use explicitly synthetic serialized fixtures and cover scientific
 configuration preservation, immutable inputs, hash/coverage failures, shell
@@ -208,9 +268,58 @@ work and must not be added to the wall-clock step time. Block hit/miss counters
 show whether reuse helps on the real task mixture. GPU system metrics and
 attention diagnostics remain enabled.
 
+### Persistent hierarchy update, 2026-11-03
+
+146 focused CPU cases passed, including the production sidecar writer/reader,
+exact coverage and prefix parity, interrupted construction recovery, spawned
+workers, two-rank DDP, deterministic checkpoint/resume, launch guards and existing
+encoded-cache invariants. The local device doctor passed FP32/BF16/FP16. The
+updated architecture diagram was regenerated, checked and visually inspected.
+
+The real one-episode diagnostic used the previously encoded VideoUnmask episode,
+with a copied leaf shard and explicitly diagnostic manifests under
+`runs/hierarchy_cache_diagnostic_20261103/`. It did not run an encoder or update a
+model. For 128 examples at microbatch 16 with **topology reuse disabled**:
+
+| Input preparation | Time |
+| --- | ---: |
+| Original serial reconstruction and packing | 16.72 seconds |
+| Indexed reader, zero workers | 2.53 seconds |
+| Indexed reader, eight workers | 1.14 seconds |
+
+The indexed runs had zero topology-cache hits and 122 misses; CURRENT examples
+did not load an index. Timings include the first-batch wait, exclude neural work
+and shutdown, and use warm OS caches on local storage. The eight-worker total
+including shutdown was 1.50 seconds. It has only eight batches, so it does not
+establish steady-state throughput. With metadata reuse enabled the zero-worker
+run took 1.04 seconds, but that repeated-episode workload favors reuse.
+
+The separate 32-distinct-decision check matched selected content, metadata,
+targets, clocks, state and history counts **bit-exactly**. The original 21,786,386
+byte leaf file gained a 19,152,360 byte hierarchy file; combined storage was
+40.94 MB. Leaf payloads remain referenced in the original file. These counts
+are for one episode, not an extrapolated full-dataset storage promise.
+Reports: `benchmark.json` and `benchmark_no_index_reuse.json` in the diagnostic
+directory. Reproduce by supplying `--hierarchy-root` to
+`scripts/benchmark_compact_loader.py`; `--disable-index-reuse` disables only the
+in-process metadata cache for the diagnostic.
+
+On the HPC, compare the same step/wait maxima as before. New worker metrics are
+`train/hierarchy_read_seconds_rank`, `train/hierarchy_select_seconds_rank`,
+`train/hierarchy_residual_seconds_rank`, `train/hierarchy_read_bytes_rank`, and
+`train/hierarchy_index_hits_rank`/`train/hierarchy_index_misses_rank`. Read time
+covers array retrieval and decoding; byte counts are requested logical bytes,
+not physical filesystem traffic. Index hits refer to episode topology, unlike
+the earlier block-tree hit counter. Background effort times overlap and must
+not be added to step wall time. Full-dataset HPC throughput and the effect of
+16 workers per GPU remain unmeasured locally.
+
 The cache compatibility migration excludes exactly `train.py`,
-`training/loader.py`, `training/cached_loader.py` and `training/cached_policy.py`
-from encoded-content identity. It preserves the old identity only when every
+`training/loader.py`, `training/cached_loader.py`, `training/cached_policy.py`,
+`training/packed_context.py` and `data/hierarchy_cache.py` from encoded-content
+identity. The last two consume frozen leaves; the parent builder is separately
+fingerprinted by the derived hierarchy identity, and training records the full
+runtime source provenance. It preserves the old identity only when every
 other protected source byte matches audited commit `21d0b24`, plus a checked
 digest of the fingerprint implementation itself. Changes to encoder weights,
 geometry, preparation, alignment, aggregation or unknown source files still

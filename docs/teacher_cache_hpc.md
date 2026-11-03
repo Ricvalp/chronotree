@@ -79,9 +79,26 @@ contains startup, per-episode completion/reuse, per-task completion and final
 cache-completion JSON events. This preprocessing stage does not create training
 or evaluation W&B runs.
 
-Once status is `complete` with no missing tasks, continue with the
-[shared compact-policy training launcher](compact_training_hpc.md). It derives
-the next configuration from this saved cache configuration and reuses its teacher.
+Once status is `complete` with no missing tasks, build the derived hierarchy
+with `hpc/cache_hierarchy.py` before starting the
+[shared compact-policy training launcher](compact_training_hpc.md). Both derive
+their inputs from this saved cache configuration and reuse its selected teacher.
+The hierarchy stage builds deterministic parents from existing leaf payloads;
+it does not repeat this encoder job. Its default command is:
+
+```bash
+.venv/bin/python hpc/cache_hierarchy.py \
+  --site hpc/site_b200_4gpu.env --cache-name memory_fv_seed0 --dry-run
+```
+
+Replace `--dry-run` with `--submit` to launch its 16-element array, then use
+`--status` to read progress. Defaults are four simultaneous elements, one untyped
+GPU in `gpuq`, four CPU cores, 32 GB RAM and 24 hours per element. Computation is
+CPU-only; the GPU is reserved because this cluster provides the cores on GPU
+nodes. Plans/logs live in `hpc/generated/memory_fv_seed0_hierarchy/`; the derived
+cache lives under the original encoded cache's `hierarchy/<identity>/`. Keep the
+original shards because the derived virtual datasets reference them. This
+preprocessing creates no W&B training/evaluation run.
 
 If an array stops before completion, wait until all its elements are inactive,
 then use the same submission command with `--resume`. Completed episodes and
@@ -132,8 +149,8 @@ incompatible per-task configuration hashes by narrowing `data.tasks`.
 Cache format 2 records an encoding-code fingerprint. It conservatively covers
 encoded-content producers while excluding evaluation orchestration, inspection
 tools and report rendering. The 2026-11-03 cached-training update additionally
-excludes four exact training-consumer paths through an audited compatibility
-record; all other protected source bytes must match before an old cache identity
+excludes six exact consumer paths (training loaders/policy and the separately
+fingerprinted packed hierarchy builder) through an audited compatibility record; all other protected source bytes must match before an old cache identity
 is retained. This permits worker-side reading without another encoding pass.
 See the [compact training verification](compact_training_hpc.md) for that record
 and measured checks. The final manifest separately records the full repository

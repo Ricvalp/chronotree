@@ -104,7 +104,7 @@ def launcher(tmp_path, monkeypatch):
     }.items()) + "\n")
 
     def invoke(*args):
-        module.main(["--site", str(site), "--cache-name", "memory_fv_seed0", *args])
+        module.main(["--site", str(site), "--cache-name", "memory_fv_seed0", "--legacy-cache", *args])
         return json.loads((repo / "hpc/generated/memory_fv_seed0_compact/plan.json").read_text())
 
     return SimpleNamespace(module=module, repo=repo, cfg=cfg, teacher=teacher, selection=selection,
@@ -132,9 +132,9 @@ def test_dry_run_preserves_teacher_contract_and_cached_inputs(launcher, monkeypa
     assert cfg["training"]["lr"] == pytest.approx(0.0001)
     assert cfg["training"]["effective_batch"] == 128 and cfg["training"]["microbatch"] == 32
     assert cfg["training"]["context_mix"] == {"tree": 0.45, "flat": 0.45, "uniform": 0.05, "current": 0.05}
-    assert cfg["training"]["workers"] == 8
+    assert cfg["training"]["workers"] == 16
     assert plan["gres"] == "gpu:2" and plan["gpus"] == 2 and plan["partition"] == "gpuq"
-    assert plan["cpus"] == 32 and plan["mem"] == "128G" and plan["walltime"] == "48:00:00"
+    assert plan["cpus"] == 64 and plan["mem"] == "128G" and plan["walltime"] == "48:00:00"
     assert plan["run_root"] == launcher.cfg["paths"]["run_root"]
     script = Path(plan["script"]).read_text()
     assert "#SBATCH --gres=gpu:2" in script and "--exclusive" not in script
@@ -221,6 +221,8 @@ def save_resume_fixture(launcher, plan, *, step=1000, stage="compact"):
             "teacher": plan["checkpoint_sha256"], "cache": plan["cache_manifest_digest"],
         }},
     }
+    if plan.get("hierarchy_manifest_digest"):
+        state["provenance"]["dependencies"]["hierarchy"] = plan["hierarchy_manifest_digest"]
     torch.save(state, checkpoint)
     return checkpoint
 
@@ -388,7 +390,7 @@ def test_fresh_run_root_isolates_training_and_reuses_selected_teacher_and_cache(
     monkeypatch.setattr(launcher.module.subprocess, "run", lambda *_a, **_k: pytest.fail("Slurm in dry-run"))
     name = "memory_fv_seed0_compact_prefetch"
     new_root = launcher.repo / "runs" / name
-    launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0",
+    launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0", "--legacy-cache",
                           "--name", name, "--run-root", "runs/" + name, "--dry-run"])
     plan_path = launcher.repo / "hpc/generated" / name / "plan.json"
     plan = json.loads(plan_path.read_text())
@@ -412,7 +414,7 @@ def test_fresh_run_root_isolates_training_and_reuses_selected_teacher_and_cache(
 @pytest.mark.parametrize("change", ["data_root", "cache_root", "teacher"])
 def test_fresh_run_runtime_guard_only_allows_output_root_change(launcher, change):
     name = "fresh_compact"
-    launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0",
+    launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0", "--legacy-cache",
                           "--name", name, "--run-root", "runs/fresh_compact"])
     plan_path = launcher.repo / "hpc/generated" / name / "plan.json"
     plan = json.loads(plan_path.read_text())
@@ -434,6 +436,6 @@ def test_fresh_plan_refuses_nonempty_output_even_without_checkpoint(launcher):
     output.mkdir(parents=True)
     (output / "tracking.json").write_text('{"id":"existing logical run"}\n')
     with pytest.raises(SystemExit):
-        launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0",
+        launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0", "--legacy-cache",
                               "--name", "new_plan", "--run-root", "runs/used"])
     assert json.loads((output / "tracking.json").read_text())["id"] == "existing logical run"

@@ -1453,3 +1453,50 @@
     Four-H200 throughput, peak memory and 16-versus-32-worker contention remain
     unmeasured locally; no speedup factor is claimed. No Slurm allocation,
     training or test-seed tuning was launched.
+
+48. **Persisted hierarchy and family-specific compact reads (3 November 2026).**
+    The user authorized removing repeated hierarchy construction after the
+    prefetched compact run remained input-bound. Recent production measurements
+    showed mean step time 14.08s and maximum-rank input wait 14.02s over 40 updates;
+    a nearby 40-update window had zero block-cache hits in 56,833 requests. These
+    are observations of the previous implementation, not speed predictions.
+
+    A separately fingerprinted parent sidecar reuses the immutable encoded
+    leaves through HDF5 virtual mappings. It stores deterministic FP32 parents,
+    topology and causal decision roots once; completed subtrees are shared,
+    while pending-block encodings remain separate causal variants. Leaf payloads
+    are not duplicated. The sidecar is location-bound and the original encoded
+    shards must remain present. Independent hashes, atomic task publication and
+    episode commits protect construction/reuse. No raw preprocessing or neural
+    encoding is repeated.
+
+    Compact workers sample the unchanged family, budget and RNG sequence first.
+    TREE/UNIFORM traverse indexed topology and gather selected payloads. FLAT
+    scans the same causal leaves and constructs exact selection-dependent
+    residuals without building trees. CURRENT skips historical payload reads.
+    Metadata ages remain read-time values; no learned inputs, causal boundaries,
+    leaf coverage, teacher weights or TREE/FLAT supervision change. Worker read,
+    selection and residual-effort timers are reported separately from exposed
+    cross-rank input wait. Background effort times are not additive step times.
+
+    The compact launcher now defaults to two untyped GPUs on gpuq, 64 CPU cores,
+    16 workers per GPU, one prefetched microbatch per worker, effective batch 128
+    and microbatch 32. This CPU scaling is an authorized resource experiment,
+    not a measured HPC speedup. Old named plans remain immutable; fresh indexed
+    runs use a distinct output by default. Hierarchy preprocessing is task
+    parallel and CPU-only, reserving one untyped GPU per task because the user's
+    cluster does not offer a usable CPU-only allocation. No Slurm jobs were
+    submitted by the assistant.
+
+    Validation: 146 focused CPU tests passed, including exact selected-context
+    parity, causal prefixes, publication/recovery, DDP and deterministic resume.
+    A bounded real VideoUnmask diagnostic matched 32 distinct decisions
+    bit-exactly. With application index reuse disabled, preparing 128 examples
+    took 16.72s through original serial reconstruction, 2.53s with the indexed
+    zero-worker reader, and 1.14s with eight workers including first-batch
+    startup. This is local input preparation with warm OS caches, not complete
+    optimizer time or HPC throughput. The one-episode sidecar occupies 19.15 MB
+    alongside the 21.79 MB original leaf shard. Evidence and limitations are in
+    `docs/compact_training_hpc.md` and ignored
+    `runs/hierarchy_cache_diagnostic_20261103/`. The device doctor passed all
+    three precisions; the diagram was regenerated and visually inspected.

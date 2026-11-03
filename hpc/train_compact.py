@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Train one shared compact policy from an adopted teacher's completed cache.
+"""Train one shared compact policy from completed leaf and hierarchy caches.
 
 Only --submit contacts Slurm. The saved cache configuration owns the scientific
-inputs and cache paths. --run-root can isolate a fresh compact experiment; the
-site file supplies the interpreter and account settings.
+inputs and cache paths. New runs use an isolated output root and require the
+derived hierarchy; --legacy-cache explicitly retains on-demand construction.
+The site file supplies the interpreter and account settings.
 """
 
 from __future__ import annotations
@@ -99,6 +100,19 @@ def inspect_cache(cache_plan_path):
     return cfg, plan, manifest
 
 
+def inspect_hierarchy(cache_root, hierarchy_root):
+    """Require the completed derived cache without rescanning its large payloads."""
+    from stmem.data.hierarchy_cache import validate_hierarchy_cache
+
+    try:
+        return validate_hierarchy_cache(cache_root, hierarchy_root)
+    except FileNotFoundError as error:
+        raise ValueError(
+            f"Missing or incomplete hierarchy cache: {hierarchy_root}. "
+            "Run hpc/cache_hierarchy.py and wait for --status to report complete."
+        ) from error
+
+
 def compact_config(cfg, args):
     result = deepcopy(cfg)
     result["stage"] = "compact"
@@ -114,6 +128,10 @@ def compact_config(cfg, args):
         "context_mix": {"tree": 0.45, "flat": 0.45, "uniform": 0.05, "current": 0.05},
         "intermediate_probability": 0.5,
     })
+    if args.legacy_cache:
+        result["training"].pop("hierarchy_cache_root", None)
+    else:
+        result["training"]["hierarchy_cache_root"] = str(args.hierarchy_root)
     result.setdefault("tracking", {}).update(enabled=True, system_stats=True, mode="online")
     # Evaluation will use the adopted execution override, separately from the
     # checkpoint's unchanged action contract. This is the fixed selection subset.
@@ -142,6 +160,15 @@ def ready_plan(plan_path):
         raise ValueError("Compact job changed cached data or paths")
     if dependency(requested, "teacher") != Path(cache_plan["checkpoint"]):
         raise ValueError("Compact job changed the selected teacher dependency")
+    if plan.get("hierarchy_cache_root"):
+        require_hash(Path(plan["hierarchy_cache_root"]) / "manifest.json",
+                     plan["hierarchy_manifest_sha256"], "Hierarchy manifest")
+        hierarchy = inspect_hierarchy(plan["cache_path"], plan["hierarchy_cache_root"])
+        if (digest(hierarchy) != plan["hierarchy_manifest_digest"]
+                or requested["training"].get("hierarchy_cache_root") != plan["hierarchy_cache_root"]):
+            raise ValueError("Compact hierarchy dependency changed")
+    elif requested["training"].get("hierarchy_cache_root"):
+        raise ValueError("Unrecorded hierarchy dependency in compact configuration")
     if plan["resume"]:
         require_hash(plan["resume"], plan["resume_sha256"], "Resume checkpoint")
     elif (run_dir(requested, "compact") / "last.pt").exists():
@@ -199,6 +226,14 @@ def render_script(plan, site, cfg):
 
 def prepare(args, site, repo, cache_plan_path, generated):
     cfg, cache_plan, manifest = inspect_cache(cache_plan_path)
+    cache_root = Path(cfg["paths"]["cache_root"]) / digest(manifest["identity"])[:24]
+    hierarchy = None
+    if not args.legacy_cache:
+        from stmem.data.hierarchy_cache import default_hierarchy_root
+
+        args.hierarchy_root = (absolute_path(args.hierarchy_root, repo) if args.hierarchy_root
+                               else default_hierarchy_root(cache_root))
+        hierarchy = inspect_hierarchy(cache_root, args.hierarchy_root)
     if args.run_root is not None:
         cfg["paths"]["run_root"] = str(absolute_path(args.run_root, repo))
     cfg = compact_config(cfg, args)
@@ -222,8 +257,11 @@ def prepare(args, site, repo, cache_plan_path, generated):
         receipt = read_json(receipt_path)
         if receipt["job_id"] in active_user_job_ids():
             raise ValueError(f"Compact job {receipt['job_id']} is still active; refusing duplicate submission")
-    signature = digest({"config": cfg, "teacher": cache_plan["checkpoint_sha256"],
-                        "cache": digest(manifest), "gpus": args.gpus, "source": source_hash(repo)})
+    signature_inputs = {"config": cfg, "teacher": cache_plan["checkpoint_sha256"],
+                        "cache": digest(manifest), "gpus": args.gpus, "source": source_hash(repo)}
+    if hierarchy is not None:
+        signature_inputs["hierarchy"] = digest(hierarchy)
+    signature = digest(signature_inputs)
     if previous and previous["signature"] != signature:
         raise ValueError("Compact configuration/dependencies/world size changed; this plan is immutable")
     ownership = output.parent / ".compact-plan.json"
@@ -238,6 +276,8 @@ def prepare(args, site, repo, cache_plan_path, generated):
     if args.resume:
         saved = load_checkpoint(checkpoint)
         expected = {"teacher": cache_plan["checkpoint_sha256"], "cache": digest(manifest)}
+        if hierarchy is not None:
+            expected["hierarchy"] = digest(hierarchy)
         if (saved["stage"] != "compact" or saved["config"] != cfg
                 or saved["provenance"]["world_size"] != args.gpus
                 or saved["provenance"]["dependencies"] != expected):
@@ -263,6 +303,9 @@ def prepare(args, site, repo, cache_plan_path, generated):
         "plan_path": str(plan_path), "cache_plan": str(cache_plan_path),
         "cache_plan_sha256": sha256(cache_plan_path), "cache_manifest_digest": digest(manifest),
         "cache_path": str(Path(cfg["paths"]["cache_root"]) / digest(manifest["identity"])[:24]),
+        "hierarchy_cache_root": str(args.hierarchy_root) if hierarchy is not None else None,
+        "hierarchy_manifest_digest": digest(hierarchy) if hierarchy is not None else None,
+        "hierarchy_manifest_sha256": sha256(args.hierarchy_root / "manifest.json") if hierarchy is not None else None,
         "checkpoint": cache_plan["checkpoint"], "checkpoint_sha256": cache_plan["checkpoint_sha256"],
         "teacher_step": initial["step"], "config": str(config_path), "config_sha256": sha256(config_path),
         "source_sha256": source_hash(repo), "signature": signature, "run_root": cfg["paths"]["run_root"],
@@ -313,23 +356,28 @@ def main(argv=None):
     action.add_argument("--submit", action="store_true")
     parser.add_argument("--site", type=Path, default=REPO / "hpc/site.env")
     parser.add_argument("--cache-name", type=profile_name, required=True)
-    parser.add_argument("--name", type=profile_name, help="Default: CACHE_NAME_compact")
+    parser.add_argument("--name", type=profile_name, help="Default: CACHE_NAME_compact_hierarchy")
     parser.add_argument("--run-root", type=Path,
-                        help="Fresh compact output root; default retains the cache experiment's run root")
+                        help="Fresh compact output root; default REPO/runs/NAME")
+    cache_mode = parser.add_mutually_exclusive_group()
+    cache_mode.add_argument("--hierarchy-root", type=Path,
+                            help="Completed compatible hierarchy directory; default derived from leaf cache")
+    cache_mode.add_argument("--legacy-cache", action="store_true",
+                            help="Explicit old on-demand tree path; no hierarchy sidecar (slower)")
     restart = parser.add_mutually_exclusive_group()
     restart.add_argument("--resume", action="store_true", help="Resume this compact run's last.pt, after it stops")
     restart.add_argument("--restart-unstarted", action="store_true",
                          help="Retry an inactive attempt from step zero only if it has no checkpoints")
     parser.add_argument("--partition", default="gpuq")
     parser.add_argument("--gpus", type=positive_integer, default=2)
-    parser.add_argument("--cpus", type=positive_integer, default=32)
+    parser.add_argument("--cpus", type=positive_integer, default=64)
     parser.add_argument("--mem", default="128G")
     parser.add_argument("--walltime", type=walltime, default="48:00:00")
     parser.add_argument("--effective-batch", type=positive_integer, default=128)
     parser.add_argument("--microbatch", type=positive_integer, default=32)
-    parser.add_argument("--workers", type=nonnegative_integer, default=8)
+    parser.add_argument("--workers", type=nonnegative_integer, default=16)
     args = parser.parse_args(argv)
-    args.name = args.name or args.cache_name + "_compact"
+    args.name = args.name or args.cache_name + ("_compact" if args.legacy_cache else "_compact_hierarchy")
     if args.name == args.cache_name:
         parser.error("Compact --name must differ from --cache-name")
     if args.effective_batch % args.gpus or args.microbatch > args.effective_batch // args.gpus:
@@ -346,7 +394,9 @@ def main(argv=None):
         cache_plan_path = repo / "hpc/generated" / args.cache_name / "plan.json"
         # All named launchers targeting this experiment share an ownership lock.
         cache_plan = read_json(cache_plan_path)
-        root = absolute_path(args.run_root or cache_plan["run_root"], repo)
+        root = absolute_path(args.run_root or (cache_plan["run_root"] if args.legacy_cache
+                                              else repo / "runs" / args.name), repo)
+        args.run_root = root
         root.mkdir(parents=True, exist_ok=True)
         with (root / ".compact-launch.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -1,8 +1,8 @@
 """Conservative encoded-content identity, with an audited runtime-only migration.
 
 The original format-2 cache covered training execution code as well as its
-encoding dependencies. Moving cache *consumption* into workers does not change
-any encoded leaves. Exactly four training-only paths are therefore excluded;
+encoding dependencies. Moving cache *consumption* into workers or building a
+derived parent index does not change any encoded leaves. Explicit consumer paths are excluded;
 all other data/model/geometry/vision/memory/configuration source remains covered.
 Unknown new source files are covered too, rather than assumed safe.
 
@@ -29,14 +29,17 @@ CACHE_CODE_EXCLUSIONS = (
     "src/stmem/report.py",
 )
 
-# These modules only consume encoded evidence during optimization. They are not
-# imported by cache construction or by any encoder/preprocessing implementation.
+# These modules only consume encoded evidence, during optimization or while
+# constructing a separately fingerprinted hierarchy sidecar. They are not
+# imported by leaf-cache construction or encoder/preprocessing implementations.
 # Keep this an exact path list, not a blanket exclusion of training/ or models/.
 CACHE_RUNTIME_EXCLUSIONS = frozenset({
     "src/stmem/train.py",
     "src/stmem/training/loader.py",
     "src/stmem/training/cached_loader.py",
     "src/stmem/training/cached_policy.py",
+    "src/stmem/training/packed_context.py",
+    "src/stmem/data/hierarchy_cache.py",
 })
 _SELF_PATH = "src/stmem/data/cache_source.py"
 
@@ -45,7 +48,7 @@ _SELF_PATH = "src/stmem/data/cache_source.py"
 # after only the explicit exclusions above and this separately checked module.
 _AUDITED_PROTECTED_SHA256 = "9421a08097a787f79a59b2f8560199ebd100cc8499dfedac1f28a9d1327e813b"
 _AUDITED_LEGACY_SHA256 = "9cddd3ea461824003854f5b0c42595f5f1f975224d4f59ca0be72d0e1e83dc34"
-_AUDITED_IMPLEMENTATION_SHA256 = "465b8421cee417bb21609412e46b321b21eea82dbf3bbeb676a6d4c7a916df2b"
+_AUDITED_IMPLEMENTATION_SHA256 = "f8e2a3af5d40334d631b2d4e4e939d1f9ab7ada1e8daf357cb790905427a9867"
 
 
 def _implementation_fingerprint(root: Path) -> str:
