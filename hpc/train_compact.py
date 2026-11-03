@@ -2,7 +2,8 @@
 """Train one shared compact policy from an adopted teacher's completed cache.
 
 Only --submit contacts Slurm. The saved cache configuration owns the scientific
-inputs and paths; the site file supplies the interpreter and account settings.
+inputs and cache paths. --run-root can isolate a fresh compact experiment; the
+site file supplies the interpreter and account settings.
 """
 
 from __future__ import annotations
@@ -136,8 +137,11 @@ def ready_plan(plan_path):
         raise ValueError("Compact job's frozen dependencies changed")
     requested = yaml.safe_load(Path(plan["config"]).read_text())
     validate_policy_config(cfg, requested)
-    if requested["data"] != cfg["data"] or requested["paths"] != cfg["paths"]:
+    expected_paths = {**cfg["paths"], "run_root": plan["run_root"]}
+    if requested["data"] != cfg["data"] or requested["paths"] != expected_paths:
         raise ValueError("Compact job changed cached data or paths")
+    if dependency(requested, "teacher") != Path(cache_plan["checkpoint"]):
+        raise ValueError("Compact job changed the selected teacher dependency")
     if plan["resume"]:
         require_hash(plan["resume"], plan["resume_sha256"], "Resume checkpoint")
     elif (run_dir(requested, "compact") / "last.pt").exists():
@@ -195,6 +199,8 @@ def render_script(plan, site, cfg):
 
 def prepare(args, site, repo, cache_plan_path, generated):
     cfg, cache_plan, manifest = inspect_cache(cache_plan_path)
+    if args.run_root is not None:
+        cfg["paths"]["run_root"] = str(absolute_path(args.run_root, repo))
     cfg = compact_config(cfg, args)
     initial = load_checkpoint(cache_plan["checkpoint"])
     if initial["stage"] != "teacher":
@@ -205,6 +211,8 @@ def prepare(args, site, repo, cache_plan_path, generated):
         raise ValueError(f"Compact training already complete: {output}")
     plan_path, receipt_path = generated / "plan.json", generated / "submitted.json"
     previous = read_json(plan_path) if plan_path.exists() else None
+    if previous is None and output.exists() and any(output.iterdir()):
+        raise ValueError("Fresh compact training needs an empty output directory; choose a new --run-root")
     retry = args.resume or args.restart_unstarted
     if receipt_path.exists() and not retry:
         raise ValueError("Already submitted; use --resume after the job finishes")
@@ -306,6 +314,8 @@ def main(argv=None):
     parser.add_argument("--site", type=Path, default=REPO / "hpc/site.env")
     parser.add_argument("--cache-name", type=profile_name, required=True)
     parser.add_argument("--name", type=profile_name, help="Default: CACHE_NAME_compact")
+    parser.add_argument("--run-root", type=Path,
+                        help="Fresh compact output root; default retains the cache experiment's run root")
     restart = parser.add_mutually_exclusive_group()
     restart.add_argument("--resume", action="store_true", help="Resume this compact run's last.pt, after it stops")
     restart.add_argument("--restart-unstarted", action="store_true",
@@ -317,7 +327,7 @@ def main(argv=None):
     parser.add_argument("--walltime", type=walltime, default="48:00:00")
     parser.add_argument("--effective-batch", type=positive_integer, default=128)
     parser.add_argument("--microbatch", type=positive_integer, default=32)
-    parser.add_argument("--workers", type=nonnegative_integer, default=4)
+    parser.add_argument("--workers", type=nonnegative_integer, default=8)
     args = parser.parse_args(argv)
     args.name = args.name or args.cache_name + "_compact"
     if args.name == args.cache_name:
@@ -336,7 +346,8 @@ def main(argv=None):
         cache_plan_path = repo / "hpc/generated" / args.cache_name / "plan.json"
         # All named launchers targeting this experiment share an ownership lock.
         cache_plan = read_json(cache_plan_path)
-        root = Path(cache_plan["run_root"])
+        root = absolute_path(args.run_root or cache_plan["run_root"], repo)
+        root.mkdir(parents=True, exist_ok=True)
         with (root / ".compact-launch.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             generated = repo / "hpc/generated" / args.name

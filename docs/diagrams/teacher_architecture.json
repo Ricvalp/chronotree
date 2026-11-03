@@ -13,6 +13,25 @@
     "table_z": 0.0
   },
   "center_sampling_version": "cell_balanced_observed_medoids_v1",
+  "compact_cache_io": {
+    "changes_model_parameters_or_causal_history": false,
+    "default_cpu_allocation": 32,
+    "default_gpus": 2,
+    "default_prefetch_factor": 1,
+    "default_workers_per_rank": 8,
+    "effective_batch": 128,
+    "encoders_frozen": true,
+    "history_budgets": [
+      64,
+      128,
+      256
+    ],
+    "launcher": "hpc/train_compact.py",
+    "microbatch_per_gpu": 32,
+    "raw_history_pointcloud_reads": false,
+    "stage": "compact",
+    "worker_output": "selected contiguous context tensors; no recursive archive objects"
+  },
   "configuration": "configs/teacher.yaml",
   "evaluation_execution_override": {
     "allowed_split": "val",
@@ -148,7 +167,10 @@
     "configs/teacher_fv_prop.yaml": "bcf12b15fe6bf1c93f7a6454949ca3b10c9aa0424073cd01932b33c2f0f50237",
     "configs/teacher_fv_prop_10hz.yaml": "0cd5369a3f021aae9f101705b2b65112a50d8eebf84c4dda1fc8158939564a24",
     "hpc/evaluate.py": "e9de61a9f54301d2564236794e33d42fedcd9b66d0b8299e2c8d635260608314",
+    "hpc/train_compact.py": "956524e694a9bbe72cc54fc226a9e9a5abbda9e9f17671af66cb75b5f5c04ee0",
     "src/stmem/config.py": "f56dce4d219b972e2fd7256b538901dd90a63aa324d6153b5e8117ec8e22c3cb",
+    "src/stmem/data/cache.py": "468f2da90e06af986c6f0a978ee34531e98110d783365f33179538aea3e4a0b6",
+    "src/stmem/data/cache_source.py": "f76b68de8d7d58659671f61a7630a9d76114841a3a258b64e6829c2900ad3f4d",
     "src/stmem/data/canonical.py": "bdfa34d88e39ea779fca1bbdaab8853a4aac20a8a167936f2802999296189606",
     "src/stmem/data/center_sampling.py": "829973de64ed8909a3386627ae1e4575f3b3b294685b1df4af5062a07b976cdc",
     "src/stmem/data/dataset.py": "d14de301aa8707a90e1cbd11c03610a2bc87027aea1b39ea62ccbbe5c739cc06",
@@ -177,8 +199,10 @@
     "src/stmem/models/spacetime_encoder.py": "0337f2550eb2e159737bc328569e203bb20d22b9272738c34e022887d8883265",
     "src/stmem/models/text_encoder.py": "84fafb56b901b9883e0f6ef548574a885f77f35d5960dfb2d6df5290b4a5e503",
     "src/stmem/tracking.py": "711933bc1ee2d15babec3d579c46121165337f80688fcbc632c5e9fef0f3ca02",
-    "src/stmem/train.py": "627986d549754a662ec0ea4229ecde6c990dda38afff2a9423f803d3852463d6",
+    "src/stmem/train.py": "eb531b90ec46a3f001ea345e408999152a58a2568cf5e828aeb23bf4eafef5f3",
     "src/stmem/training/attention.py": "a7e8cb691300a5c8a05bda80e9025876dd664048fe23c37ead3b1104570dd71e",
+    "src/stmem/training/cached_loader.py": "643c4bf4fe2319f7c79f634588baf314840edb7051654b6201f23ea75ec0e769",
+    "src/stmem/training/cached_policy.py": "7a5fd19563f53a407768589ea8b61ec36a583e5ba80e965e75d7de2421f73fef",
     "src/stmem/training/data.py": "03087648268b66c563ab8834d120ca4954d813515ec84a092dc6765f4923d3e0",
     "src/stmem/training/loader.py": "c2ba6ef8e12d9a5959fcbaee182303aa9656857c65bcbea6d86739f5dba62728",
     "src/stmem/training/logging_options.py": "9ce7fd895a3f28de3b0c2fcbf566c24d0bdc59119e1657f6a7db3093ab554d67",

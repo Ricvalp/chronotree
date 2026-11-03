@@ -91,6 +91,11 @@ SOURCES = [
     "src/stmem/models/attention_diagnostics.py",
     "src/stmem/training/data.py",
     "src/stmem/training/loader.py",
+    "src/stmem/training/cached_loader.py",
+    "src/stmem/training/cached_policy.py",
+    "src/stmem/data/cache.py",
+    "src/stmem/data/cache_source.py",
+    "hpc/train_compact.py",
     "src/stmem/training/attention.py",
     "src/stmem/training/logging_options.py",
     "src/stmem/visualization/diagnostics.py",
@@ -229,6 +234,21 @@ def snapshot():
                 "cuda_transfer": "separate copy stream with consumer dependency",
                 "staging_control": "STMEM_SCRATCH_ROOT",
                 "physical_cache_override": "STMEM_FEATURE_CACHE_ROOT",
+                "changes_model_parameters_or_causal_history": False,
+            },
+            "compact_cache_io": {
+                "launcher": "hpc/train_compact.py",
+                "stage": "compact",
+                "encoders_frozen": True,
+                "default_gpus": 2,
+                "default_cpu_allocation": 32,
+                "default_workers_per_rank": 8,
+                "default_prefetch_factor": 1,
+                "effective_batch": 128,
+                "microbatch_per_gpu": 32,
+                "history_budgets": [64, 128, 256],
+                "worker_output": "selected contiguous context tensors; no recursive archive objects",
+                "raw_history_pointcloud_reads": False,
                 "changes_model_parameters_or_causal_history": False,
             },
             "variants": {
@@ -1317,7 +1337,7 @@ def frozen_vision(file, facts):
         "frozen",
         "Frozen RGB features · matched state-input experiment",
         "FV-Prop and FV-NoProp share visual evidence, initial shared weights, clocks, action cadence and training budget",
-        height=2570,
+        height=3150,
     )
     p.section(48, 225, 1704, "01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS")
     source = p.card(
@@ -1584,6 +1604,64 @@ def frozen_vision(file, facts):
     )
     p.edge(storage, producer, "raw FP16", tone="visual")
     p.edge(producer, transfer, "pinned CPU", tone="visual")
+    p.section(48, 2505, 1704, "06  LATER STAGE P · SHARED COMPACT POLICY WITH FROZEN LEARNED ENCODERS")
+    compact = facts["compact_cache_io"]
+    learned = p.card(
+        48, 2565, 500, 350,
+        "Completed learned-encoder cache",
+        [
+            "Selected teacher weights are immutable.",
+            "Cache leaves, current tokens and goal text.",
+            "Distinct from raw CLIP descriptor sidecars.",
+            "Completed and causal partial blocks stay separate.",
+            "Original clocks and observed-point metadata.",
+            "Exact descendant coverage is retained.",
+            "No visual or task-encoder gradient updates.",
+        ],
+        tone="data", size=18,
+        tooltip="data/cache.py. The immutable cache contains learned observation encodings. It never stores decision-dependent relative-age embeddings or future execution frames. Runtime-only loading improvements reuse compatible cached values; encoder/preprocessing changes still invalidate the cache.",
+    )
+    selected = p.card(
+        640, 2565, 500, 350,
+        "Bounded CPU cache workers",
+        [
+            f"{compact['default_workers_per_rank']} workers / GPU; one queued batch / worker.",
+            "Read lightweight state, clocks and action targets.",
+            "Load leaves and construct causal block trees.",
+            "Reuse immutable block trees within a bounded cache.",
+            "Select matched random TREE / FLAT contexts.",
+            "Return selected content, metadata and masks only.",
+            "No raw point-cloud histories or recursive IPC.",
+        ],
+        tone="visual", size=18,
+        tooltip="training/cached_loader.py. Sampling remains deterministic by global position. Each worker reads only evidence available at its assigned decision, applies the original context mixture and budget, and packs a bounded selected context. Reading a future batch early does not expose it to the current policy decision.",
+    )
+    compact_gpu = p.card(
+        1232, 2565, 520, 350,
+        "GPU · same adapter and flow decoder",
+        [
+            "Padded selected tensors transfer as whole banks.",
+            "History budgets 64 / 128 / 256 + current context.",
+            "Adapter, clock and decoder receive gradients.",
+            "One shared policy for TREE and FLAT evidence.",
+            "Same causal masks, metadata and action supervision.",
+            "No full-history encoder forward/backward here.",
+            "This is compact adaptation, not teacher training.",
+        ],
+        tone="decoder", size=18,
+        tooltip="training/cached_policy.py reproduces the cached branch of models/batched_policy.py with the same TokenBank adaptation, auxiliary current context, history mass bias and decoder. DDP wraps the training forward; checkpoints retain the original MemoryPolicy state layout.",
+    )
+    p.edge(learned, selected, "leaves", tone="visual")
+    p.edge(selected, compact_gpu, "tensors", tone="visual")
+    p.card(
+        48, 2960, 1704, 120,
+        "Compact launch defaults · allocation, not an architecture change",
+        [
+            f"{compact['default_gpus']} GPUs in gpuq · {compact['default_cpu_allocation']} CPU cores · effective batch {compact['effective_batch']} · microbatch {compact['microbatch_per_gpu']}/GPU · two accumulation passes/rank",
+            "Full-history teacher still reads every fine leaf. Compact worker prefetch changes scheduling and data movement; it never truncates history or changes TREE/FLAT supervision.",
+        ],
+        tone="note", size=18,
+    )
 
 
 def current_only(file, facts):

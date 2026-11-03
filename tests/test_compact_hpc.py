@@ -132,7 +132,7 @@ def test_dry_run_preserves_teacher_contract_and_cached_inputs(launcher, monkeypa
     assert cfg["training"]["lr"] == pytest.approx(0.0001)
     assert cfg["training"]["effective_batch"] == 128 and cfg["training"]["microbatch"] == 32
     assert cfg["training"]["context_mix"] == {"tree": 0.45, "flat": 0.45, "uniform": 0.05, "current": 0.05}
-    assert cfg["training"]["workers"] == 4
+    assert cfg["training"]["workers"] == 8
     assert plan["gres"] == "gpu:2" and plan["gpus"] == 2 and plan["partition"] == "gpuq"
     assert plan["cpus"] == 32 and plan["mem"] == "128G" and plan["walltime"] == "48:00:00"
     assert plan["run_root"] == launcher.cfg["paths"]["run_root"]
@@ -373,3 +373,67 @@ def test_inconsistent_shard_receipt_contract_is_rejected(launcher, field, value)
     write_json(path, record)
     with pytest.raises(SystemExit):
         launcher.invoke()
+
+
+def test_fresh_run_root_isolates_training_and_reuses_selected_teacher_and_cache(launcher, monkeypatch):
+    old_plan = launcher.invoke()
+    old_output = Path(old_plan["output"])
+    old_output.mkdir(parents=True)
+    (old_output / "tracking.json").write_text('{"id":"old compact run"}\n')
+    (old_output / "last.pt").write_bytes(b"old compact checkpoint retained")
+    immutable_paths = [launcher.teacher, launcher.selection, launcher.complete, launcher.cache_plan,
+                       *launcher.cache_root.iterdir(), *old_output.iterdir(),
+                       Path(old_plan["config"]), Path(old_plan["plan_path"])]
+    before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in immutable_paths}
+    monkeypatch.setattr(launcher.module.subprocess, "run", lambda *_a, **_k: pytest.fail("Slurm in dry-run"))
+    name = "memory_fv_seed0_compact_prefetch"
+    new_root = launcher.repo / "runs" / name
+    launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0",
+                          "--name", name, "--run-root", "runs/" + name, "--dry-run"])
+    plan_path = launcher.repo / "hpc/generated" / name / "plan.json"
+    plan = json.loads(plan_path.read_text())
+    cfg = yaml.safe_load(Path(plan["config"]).read_text())
+    assert plan["run_root"] == str(new_root)
+    assert plan["output"] == str(new_root / "seed0/compact")
+    assert cfg["paths"] == {**launcher.cfg["paths"], "run_root": str(new_root)}
+    assert cfg["checkpoints"]["teacher"] == str(launcher.teacher)
+    assert cfg["checkpoints"]["compact"] == str(new_root / "seed0/compact/selected.pt")
+    assert plan["cache_path"] == str(launcher.cache_root)
+    assert plan["resume"] is None and plan["start_step"] == 0
+    assert (new_root / ".compact-launch.lock").exists()
+    assert (new_root / "seed0/.compact-plan.json").exists()
+    script = Path(plan["script"]).read_text()
+    assert "export STMEM_RUN_ROOT=" + shlex.quote(str(new_root)) in script
+    launcher.module.ready_plan(plan_path)
+    assert not (new_root / "seed0/compact/last.pt").exists()
+    assert all((path.read_bytes(), path.stat().st_mtime_ns) == value for path, value in before.items())
+
+
+@pytest.mark.parametrize("change", ["data_root", "cache_root", "teacher"])
+def test_fresh_run_runtime_guard_only_allows_output_root_change(launcher, change):
+    name = "fresh_compact"
+    launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0",
+                          "--name", name, "--run-root", "runs/fresh_compact"])
+    plan_path = launcher.repo / "hpc/generated" / name / "plan.json"
+    plan = json.loads(plan_path.read_text())
+    config_path = Path(plan["config"])
+    cfg = yaml.safe_load(config_path.read_text())
+    if change == "teacher":
+        cfg["checkpoints"]["teacher"] = str(launcher.repo / "unrelated_teacher.pt")
+    else:
+        cfg["paths"][change] = str(launcher.repo / "unrelated_data")
+    config_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    plan["config_sha256"] = launcher.module.sha256(config_path)
+    write_json(plan_path, plan)
+    with pytest.raises(ValueError):
+        launcher.module.ready_plan(plan_path)
+
+
+def test_fresh_plan_refuses_nonempty_output_even_without_checkpoint(launcher):
+    output = launcher.repo / "runs/used/seed0/compact"
+    output.mkdir(parents=True)
+    (output / "tracking.json").write_text('{"id":"existing logical run"}\n')
+    with pytest.raises(SystemExit):
+        launcher.module.main(["--site", str(launcher.site), "--cache-name", "memory_fv_seed0",
+                              "--name", "new_plan", "--run-root", "runs/used"])
+    assert json.loads((output / "tracking.json").read_text())["id"] == "existing logical run"

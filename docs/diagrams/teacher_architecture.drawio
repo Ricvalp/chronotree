@@ -696,7 +696,7 @@
     </mxGraphModel>
   </diagram>
   <diagram id="frozen" name="05 · Frozen vision">
-    <mxGraphModel dx="1800" dy="2570" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="2570" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
+    <mxGraphModel dx="1800" dy="3150" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="3150" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
       <root>
         <mxCell id="0" />
         <mxCell id="1" value="Architecture" parent="0" />
@@ -738,7 +738,7 @@
           </mxCell>
         </object>
         <mxCell id="frozen-9" value="CHRONOTREE  /  Matched FV-Prop / FV-NoProp experiment     •     Click page tabs or linked blocks · hover for details · all shapes are editable" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=14;fontColor=#64748B;fontStyle=0;spacing=0;" vertex="1" parent="1">
-          <mxGeometry as="geometry" x="48" y="2522" width="1690" height="30" />
+          <mxGeometry as="geometry" x="48" y="3102" width="1690" height="30" />
         </mxCell>
         <mxCell id="frozen-10" value="01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
           <mxGeometry as="geometry" x="48" y="225" width="1704" height="35" />
@@ -837,6 +837,35 @@
         <mxCell id="frozen-32" value="pinned CPU" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="frozen-29" target="frozen-30">
           <mxGeometry as="geometry" relative="1" />
         </mxCell>
+        <mxCell id="frozen-33" value="06  LATER STAGE P · SHARED COMPACT POLICY WITH FROZEN LEARNED ENCODERS" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="2505" width="1704" height="35" />
+        </mxCell>
+        <object id="frozen-34" label="&lt;b&gt;Completed learned-encoder cache&lt;/b&gt;&lt;br&gt;&lt;br&gt;Selected teacher weights are immutable.&lt;br&gt;Cache leaves, current tokens and goal text.&lt;br&gt;Distinct from raw CLIP descriptor sidecars.&lt;br&gt;Completed and causal partial blocks stay separate.&lt;br&gt;Original clocks and observed-point metadata.&lt;br&gt;Exact descendant coverage is retained.&lt;br&gt;No visual or task-encoder gradient updates." tooltip="data/cache.py. The immutable cache contains learned observation encodings. It never stores decision-dependent relative-age embeddings or future execution frames. Runtime-only loading improvements reuse compatible cached values; encoder/preprocessing changes still invalidate the cache.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="2565" width="500" height="350" />
+          </mxCell>
+        </object>
+        <object id="frozen-35" label="&lt;b&gt;Bounded CPU cache workers&lt;/b&gt;&lt;br&gt;&lt;br&gt;8 workers / GPU; one queued batch / worker.&lt;br&gt;Read lightweight state, clocks and action targets.&lt;br&gt;Load leaves and construct causal block trees.&lt;br&gt;Reuse immutable block trees within a bounded cache.&lt;br&gt;Select matched random TREE / FLAT contexts.&lt;br&gt;Return selected content, metadata and masks only.&lt;br&gt;No raw point-cloud histories or recursive IPC." tooltip="training/cached_loader.py. Sampling remains deterministic by global position. Each worker reads only evidence available at its assigned decision, applies the original context mixture and budget, and packs a bounded selected context. Reading a future batch early does not expose it to the current policy decision.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="640" y="2565" width="500" height="350" />
+          </mxCell>
+        </object>
+        <object id="frozen-36" label="&lt;b&gt;GPU · same adapter and flow decoder&lt;/b&gt;&lt;br&gt;&lt;br&gt;Padded selected tensors transfer as whole banks.&lt;br&gt;History budgets 64 / 128 / 256 + current context.&lt;br&gt;Adapter, clock and decoder receive gradients.&lt;br&gt;One shared policy for TREE and FLAT evidence.&lt;br&gt;Same causal masks, metadata and action supervision.&lt;br&gt;No full-history encoder forward/backward here.&lt;br&gt;This is compact adaptation, not teacher training." tooltip="training/cached_policy.py reproduces the cached branch of models/batched_policy.py with the same TokenBank adaptation, auxiliary current context, history mass bias and decoder. DDP wraps the training forward; checkpoints retain the original MemoryPolicy state layout.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1232" y="2565" width="520" height="350" />
+          </mxCell>
+        </object>
+        <mxCell id="frozen-37" value="leaves" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="frozen-34" target="frozen-35">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="frozen-38" value="tensors" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="frozen-35" target="frozen-36">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <object id="frozen-39" label="&lt;b&gt;Compact launch defaults · allocation, not an architecture change&lt;/b&gt;&lt;br&gt;&lt;br&gt;2 GPUs in gpuq · 32 CPU cores · effective batch 128 · microbatch 32/GPU · two accumulation passes/rank&lt;br&gt;Full-history teacher still reads every fine leaf. Compact worker prefetch changes scheduling and data movement; it never truncates history or changes TREE/FLAT supervision." tooltip="Compact launch defaults · allocation, not an architecture change&#10;2 GPUs in gpuq · 32 CPU cores · effective batch 128 · microbatch 32/GPU · two accumulation passes/rank&#10;Full-history teacher still reads every fine leaf. Compact worker prefetch changes scheduling and data movement; it never truncates history or changes TREE/FLAT supervision.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="2960" width="1704" height="120" />
+          </mxCell>
+        </object>
       </root>
     </mxGraphModel>
   </diagram>

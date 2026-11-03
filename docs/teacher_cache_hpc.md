@@ -130,10 +130,14 @@ Task array elements keep the complete dataset identity; they do not create
 incompatible per-task configuration hashes by narrowing `data.tasks`.
 
 Cache format 2 records an encoding-code fingerprint. It conservatively covers
-all Python source except evaluation orchestration, inspection tools and report
-rendering, which cannot change encoded training content. This lets those tools
-evolve later without forcing a new encoding pass. The final manifest separately
-records the full repository source revision for audit.
+encoded-content producers while excluding evaluation orchestration, inspection
+tools and report rendering. The 2026-11-03 cached-training update additionally
+excludes four exact training-consumer paths through an audited compatibility
+record; all other protected source bytes must match before an old cache identity
+is retained. This permits worker-side reading without another encoding pass.
+See the [compact training verification](compact_training_hpc.md) for that record
+and measured checks. The final manifest separately records the full repository
+source revision for audit.
 
 Checkpoint adoption verifies completed official all-task FULL validation, exact
 checkpoint identity, the declared execution override, each episode and worker,

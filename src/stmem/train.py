@@ -203,6 +203,7 @@ def _train_policy(
         )
     dependencies = {}
     cache = None
+    cached_compact = stage == "compact"
     normalizer_seconds = None
     if stage != "teacher":
         startup_progress("dependencies_loading")
@@ -215,6 +216,9 @@ def _train_policy(
         dependencies["teacher"] = file_sha256(teacher)
         cache = FrozenCache(cfg, teacher, data)
         dependencies["cache"] = digest(cache.manifest)
+        # Frozen training uses final encoder outputs, not CLIP descriptor I/O.
+        feature_io_enabled = False
+        feature_io_settings.update(active=False, pinned_host_buffers=False, asynchronous_transfer=False)
     else:
         startup_progress("normalizer_started")
         normalizer_started = time.perf_counter()
@@ -256,7 +260,7 @@ def _train_policy(
         "world_size": world,
         "effective_batch": batch,
         "training": digest(cfg["training"]),
-        "training_engine": "padded_policy_batch_v1",
+        "training_engine": "cached_context_batch_v1" if cached_compact else "padded_policy_batch_v1",
         "sampler": data.sampler_version,
         "rank_assignment": "rotating_rank_v1",
     }
@@ -319,10 +323,15 @@ def _train_policy(
         )
     # Empty historical banks/all-invalid points legitimately leave modality
     # encoders unused. Availability also changes between decisions and ranks.
+    forward_policy = policy
+    if cached_compact:
+        from stmem.training.cached_policy import CachedPolicyForward
+
+        forward_policy = CachedPolicyForward(policy)
     model = (
-        DDP(policy, device_ids=[device.index] if device.type == "cuda" else None, find_unused_parameters=True)
+        DDP(forward_policy, device_ids=[device.index] if device.type == "cuda" else None, find_unused_parameters=True)
         if world > 1
-        else policy
+        else forward_policy
     )
     if world > 1:
         torch.distributed.barrier()
@@ -347,6 +356,7 @@ def _train_policy(
             "environment": environment_manifest(),
             "logging": logging,
             "training/feature_io": feature_io_settings,
+            "training/input_pipeline": "cached_context_workers_v1" if cached_compact else "packed_observations_v1",
         }
     )
     records_seen = torch.zeros((), device=device, dtype=torch.long)
@@ -372,8 +382,15 @@ def _train_policy(
         prefetch_factor=cfg["training"].get("prefetch_factor", 1),
     )
     loader_started = time.perf_counter()
+    loader_class = PolicyBatchLoader
+    loader_options = {}
+    if cached_compact:
+        from stmem.training.cached_loader import CachedPolicyBatchLoader
+
+        loader_class = CachedPolicyBatchLoader
+        loader_options = {"cache": cache, "stage": stage, "pin_memory": device.type == "cuda"}
     loader = resources.enter_context(
-        PolicyBatchLoader(
+        loader_class(
             data,
             start=start,
             steps=steps,
@@ -382,6 +399,7 @@ def _train_policy(
             world=world,
             microbatch=microbatch,
             retain_for_retry=precision == "fp16",
+            **loader_options,
         )
     )
     startup_metrics = {
@@ -460,6 +478,9 @@ def _train_policy(
         data_loading_seconds = 0.0
         worker_load_seconds = 0.0
         worker_pack_seconds = 0.0
+        cache_worker_seconds = 0.0
+        context_worker_seconds = 0.0
+        block_cache_hits = block_cache_misses = 0
         progress.begin_update(step, local_n)
         positions = rank_positions(step, batch, rank, world)
         prepared_batches = loader.read_update(step)
@@ -481,32 +502,38 @@ def _train_policy(
             data_loading_seconds += time.perf_counter() - loading_started
             worker_load_seconds += loaded.load_seconds
             worker_pack_seconds += loaded.pack_seconds
-            packed = loaded.packed
-            decisions = list(packed.metadata) if cache is None else packed.decisions()
-            action = packed.target_chunk.to(device)
-            valid = packed.target_valid.to(device)
-            lengths = [d.conditioning_frames + d.execution_history_frames for d in packed.metadata]
+            if cached_compact:
+                decisions = loaded.metadata
+                packed = None
+                action = loaded.target_chunk.to(device, non_blocking=True)
+                valid = loaded.target_valid.to(device, non_blocking=True)
+                lengths = list(loaded.history_lengths)
+                cache_worker_seconds += loaded.cache_seconds
+                context_worker_seconds += loaded.context_seconds
+                block_cache_hits += loaded.block_cache_hits
+                block_cache_misses += loaded.block_cache_misses
+            else:
+                packed = loaded.packed
+                decisions = list(packed.metadata) if cache is None else packed.decisions()
+                action = packed.target_chunk.to(device)
+                valid = packed.target_valid.to(device)
+                lengths = [d.conditioning_frames + d.execution_history_frames for d in packed.metadata]
             history_lengths.extend(lengths)
+            metadata = decisions if cached_compact else packed.metadata
             progress.update(
-                "cache_loading" if cache is not None else "encoding_history",
+                "cached_context_ready" if cached_compact else "cache_loading" if cache is not None else "encoding_history",
                 batch_tasks=[d.task for d in decisions],
                 history_frames_min_rank=min(lengths),
                 history_frames_max_rank=max(lengths),
                 task=decisions[0].task if len(decisions) == 1 else None,
                 episode_id=decisions[0].episode_id if len(decisions) == 1 else None,
                 decision_index=decisions[0].index if len(decisions) == 1 else None,
-                conditioning_frames=packed.metadata[0].conditioning_frames if len(decisions) == 1 else None,
-                execution_history_frames=packed.metadata[0].execution_history_frames
+                conditioning_frames=metadata[0].conditioning_frames if len(decisions) == 1 else None,
+                execution_history_frames=metadata[0].execution_history_frames
                 if len(decisions) == 1
                 else None,
             )
-            evidences = None if cache is None else [cache.evidence(d) for d in decisions]
-            context_records = None
-            if stage == "compact":
-                context_records = [
-                    context_sample(policy, e, cfg, position)
-                    for e, position in zip(evidences, batch_positions)
-                ]
+            evidences = None if cache is None or cached_compact else [cache.evidence(d) for d in decisions]
             sync = model.no_sync() if world > 1 and local_index + len(decisions) < local_n else nullcontext()
             # DDP's no_sync must cover both the forward and backward. Teacher
             # encoders run inside model.forward so DDP tracks their gradients.
@@ -515,17 +542,20 @@ def _train_policy(
                     noisy, flow_time, target, _ = flow_sample(action, valid, policy.normalizer)
                     if cfg["model"].get("decoder") == "regression":
                         target = policy.normalizer.normalize(action).masked_fill(~valid, 0)
-                    prediction, stats = model(
-                        decisions,
-                        noisy,
-                        flow_time,
-                        records=context_records,
-                        evidence=evidences,
-                        perceiver=stage == "perceiver",
-                        return_stats=True,
-                        progress=progress,
-                        packed_batch=packed,
-                    )
+                    if cached_compact:
+                        prediction, stats = model(loaded, noisy, flow_time, progress=progress)
+                    else:
+                        prediction, stats = model(
+                            decisions,
+                            noisy,
+                            flow_time,
+                            records=None,
+                            evidence=evidences,
+                            perceiver=stage == "perceiver",
+                            return_stats=True,
+                            progress=progress,
+                            packed_batch=packed,
+                        )
                     loss = masked_mse(prediction, target, valid)
                 if not torch.isfinite(loss):
                     raise FloatingPointError(f"Nonfinite loss at optimizer step {step}")
@@ -608,6 +638,20 @@ def _train_policy(
                 )
                 feature_metrics["step_seconds_max_rank"] = values[-1]
             elapsed = time.perf_counter() - started
+            cache_metrics = {}
+            if cached_compact:
+                maxima = torch.tensor([data_loading_seconds, step_seconds], dtype=torch.float64, device=device)
+                if world > 1:
+                    torch.distributed.all_reduce(maxima, op=torch.distributed.ReduceOp.MAX)
+                wait_max, step_max = maxima.tolist()
+                cache_metrics = {
+                    "cache_worker_seconds_rank": cache_worker_seconds,
+                    "context_worker_seconds_rank": context_worker_seconds,
+                    "cache_block_hits_rank": block_cache_hits,
+                    "cache_block_misses_rank": block_cache_misses,
+                    "data_wait_seconds_max_rank": wait_max,
+                    "step_seconds_max_rank": step_max,
+                }
             record = {
                 "step": current_step,
                 "training_action_loss": float(loss_tensor),
@@ -637,6 +681,7 @@ def _train_policy(
                 "amp_scale": scaler.get_scale(),
                 "amp_overflows_this_attempt": total_overflows,
                 **feature_metrics,
+                **cache_metrics,
                 "gpu_peak_allocated_bytes_rank": torch.cuda.max_memory_allocated(device)
                 if device.type == "cuda"
                 else 0,

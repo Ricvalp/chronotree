@@ -26,7 +26,7 @@ contains explanatory cards; hiding it leaves the main architecture visible.
 | Encoders | Prepared point sampling and center indices, point and edge MLPs, Gaussian pooling, historical event branches, and the byte-level text Transformer. |
 | Action decoder | Query projections, each residual attention/FFN sublayer, and the distinction between training flow matching and inference Euler integration. |
 | Context & size | The shared metadata adapter, current auxiliary branches, valid versus allocated context lengths, parameter counts, and core batching settings. |
-| Frozen vision | The shared frozen CLIP feature path, source-pixel correspondence/cache, matched FV-Prop versus FV-NoProp state-input paths, and training descriptor I/O. |
+| Frozen vision | The shared frozen CLIP feature path, source-pixel correspondence/cache, matched FV-Prop versus FV-NoProp state-input paths, teacher descriptor I/O, and later compact-policy cache workers. |
 | Current only | A separately trained current-visual-and-goal policy, with no history, numerical robot state, previous commands or clock inputs. |
 
 Blue blocks represent visual/history processing, teal represents state and
@@ -159,6 +159,23 @@ identity, model parameters, scientific configuration or resume compatibility.
 The diagram records these as runtime I/O controls, separate from model batching.
 See the [HPC workflow](frozen_vision_experiment.md#5b-descriptor-prefetch-and-optional-node-local-staging)
 for the directory and restart procedure.
+
+The same page separately labels **later Stage P compact adaptation**. Its cache
+contains the selected teacher's learned leaf/current/text encodings, rather than
+the raw CLIP sidecars used during teacher training. CPU workers read lightweight
+decision metadata and targets, reconstruct causal block trees with bounded reuse,
+and select the matched random TREE/FLAT contexts. Only contiguous selected context
+tensors, masks and metadata cross the worker boundary; recursive tree objects and
+raw point-cloud histories do not. Eight workers per GPU and a bounded prefetch
+queue let that work overlap GPU updates.
+
+The GPU trains the same shared metadata adapter, clock and flow decoder, with
+the original masked context assembly and mass bias. Visual and text encoders
+remain frozen. Defaults are two GPUs, 32 CPU cores, effective batch 128 and
+microbatch 32 per GPU, with two accumulation passes per rank. The teacher's
+full-history path remains distinct: these workers do not truncate teacher or
+compact history, alter causal availability, or change exact TREE/FLAT coverage.
+See [compact training](compact_training_hpc.md) for the fresh-run commands.
 
 **FV-Prop** retains measured state, with one current state token and one event
 token per historical frame. **FV-NoProp** removes those tokens entirely,
@@ -383,3 +400,12 @@ overflowing text bounds; the changed decoder page was visually inspected.
 Ruff and the snapshot/XML check passed. Layout evidence is in
 `runs/architecture_diagram/execute_override/`. This validates documentation
 consistency, not the effect of a longer execution interval on policy success.
+
+On 2026-11-03, the frozen-vision page gained a separate Stage P section for
+worker-side cached-evidence loading and context selection. It distinguishes the
+learned encoder cache from raw CLIP sidecars, shows bounded selected tensors at
+the worker/GPU boundary, and preserves the full-history teacher versus compact
+reader distinction. The three artifacts were regenerated; Chromium opened the
+actual HTML and the added section was visually inspected. Layout evidence is in
+`runs/cache_checks/compact_worker_diagram/compact_pipeline.png`. Snapshot/XML and
+Ruff checks passed. These layout checks do not establish HPC throughput.
