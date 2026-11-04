@@ -1,5 +1,31 @@
 # Implementation and verification status
 
+## Fixed-label longer router fit — 4 November 2026
+
+The user-run initial router jobs are now observable through W&B. TREE/velocity
+run `10f7ad712dcf45d0` completed 5k updates in 16.4 seconds on an H200, with
+50,582 fitting labels and 12,642 held-out labels. Validation loss was 10.373
+at step 100 and 10.376 at step 5k; final within-context ranking agreement was
+50.15%. The other initial routers ended at 50.33–51.88% ranking agreement.
+All initial label shards completed; their reported elapsed generation times
+were 425–509 seconds. These are read-only measurements of the user's jobs.
+They do not establish useful learned routing or its closed-loop success.
+
+The requested longer-fit diagnostic is implemented in `hpc/overfit_router.py`.
+It continues the immutable initial 5k TREE/velocity checkpoint to 100k total
+updates on exactly the existing initial labels, with preserved optimizer/RNG
+and episode split. Separate outputs and the **`chronotree-routers`** W&B project
+keep it outside the original training pipeline. Full fitting/validation losses
+and ranking, plus zero/median reference predictors, distinguish fitting from
+generalization. See [router_overfit_hpc.md](router_overfit_hpc.md).
+
+Verification: CPU regression tests establish unchanged optimization with
+diagnostics on/off, unchanged original inputs, and guarded isolated launch and
+resume. A tiny synthetic CUDA continuation matched uninterrupted fitting
+exactly; the device doctor passed FP32/BF16/FP16. Architecture snapshot checks
+pass without diagram changes because no model/context/batching design changed.
+The 100k diagnostic itself has not been run or submitted by the assistant.
+
 ## Router objective ablation — 4 November 2026
 
 The velocity/final-denoised-action ablation is implemented. The combined label
@@ -13,8 +39,10 @@ Verification: 308 focused CPU tests passed; all four scorers completed a tiny
 synthetic initial/refresh/resume pipeline; spawned-worker and interruption
 recovery checks passed. The RTX 5000 Ada passed the device doctor and a bounded
 synthetic CUDA label/optimizer check. The unchanged architecture diagram's
-provenance was regenerated. Full-data throughput, HPC execution and learned
-router closed-loop results remain unmeasured. No Slurm jobs were submitted.
+provenance was regenerated. Full-data throughput and HPC execution were
+unmeasured at implementation time; subsequent user-run observations are recorded
+above. Learned-router closed-loop results remain unmeasured. No Slurm jobs were
+submitted by the assistant.
 
 Next command on the HPC (dry-run):
 

@@ -1,5 +1,24 @@
 # Implementation decisions — 17 October 2026
 
+## 4 November: fixed-label longer-fit diagnostic
+
+The user requested longer fitting after TREE/velocity validation loss remained
+about 10.37 and candidate ordering agreement reached only 50.15% at 5k updates.
+All four initial router runs showed similarly weak held-out ranking (50–52%).
+The separate `hpc/overfit_router.py` diagnostic continues the immutable initial
+5k checkpoint to 100k total updates on exactly the existing initial shards.
+It preserves optimizer state/hyperparameters, target scaling, RNG and the
+episode split, and creates separate outputs/W&B identity in the user-requested
+`chronotree-routers` project, overriding the site project's setting. It does not regenerate
+labels or modify the original matched experiment.
+
+Opt-in `training.router_diagnostics` reports full fitting-set loss/ranking and
+unchanged held-out metrics before further updates and every diagnostic interval.
+Zero and signed-training-median predictors give fixed reference losses. Evaluation
+passes are read-only and do not consume training RNG. No encoder, decoder,
+context schema or action timing changes are involved. See
+[router_overfit_hpc.md](router_overfit_hpc.md) for commands and interpretation.
+
 ## 4 November: velocity versus final-action router supervision
 
 The user authorized a matched four-scorer ablation: TREE and FLAT with velocity

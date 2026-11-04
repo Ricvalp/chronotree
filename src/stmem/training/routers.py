@@ -235,7 +235,7 @@ def _load_labels(cfg):
 
 
 @torch.no_grad()
-def _validation_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size):
+def _split_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size, *, training=False):
     predictions = torch.cat([
         router(query[chunk], candidate[chunk]) for chunk in ids.split(batch_size)
     ])
@@ -244,19 +244,41 @@ def _validation_metrics(router, query, candidate, gain, ids, left, right, scale,
         F.smooth_l1_loss(predictions, expected_gain / scale),
         ((predictions > 0) == (expected_gain > 0)).float().mean(),
     ]
-    names = ["conditional_label_validation_loss", "validation_sign_agreement"]
+    prefix = "training" if training else "validation"
+    names = ["training_full_gain_loss" if training else "conditional_label_validation_loss",
+             f"{prefix}_sign_agreement"]
     if len(left):
         predicted_order = (predictions[left] - predictions[right]).sign()
         expected_order = (expected_gain[left] - expected_gain[right]).sign()
         metrics.append((predicted_order == expected_order).float().mean())
-        names.append("validation_within_context_rank_agreement")
+        names.append(f"{prefix}_within_context_rank_agreement")
     # A single small transfer; no per-validation-batch GPU synchronization.
     return dict(zip(names, torch.stack(metrics).cpu().tolist()))
+
+
+def _validation_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size):
+    return _split_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size)
+
+
+@torch.no_grad()
+def _constant_baselines(gain, train_ids, val_ids, scale):
+    """Fixed reference losses; the signed-median predictor uses training labels only."""
+    median = gain[train_ids].median() / scale
+    values, names = [], []
+    for split, ids in (("training", train_ids), ("validation", val_ids)):
+        targets = gain[ids] / scale
+        values.extend((F.smooth_l1_loss(torch.zeros_like(targets), targets),
+                       F.smooth_l1_loss(median.expand_as(targets), targets)))
+        names.extend((f"baseline/{split}_zero_gain_loss", f"baseline/{split}_median_gain_loss"))
+    return dict(zip(names, torch.stack(values).cpu().tolist()))
 
 
 def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
     logging_options = resolve_logging(cfg, log_every=log_every, attention_every=0)
     validation_every = positive_log_every(cfg["training"]["log_every"])
+    diagnostics = cfg["training"].get("router_diagnostics", False)
+    if not isinstance(diagnostics, bool):
+        raise ValueError("training.router_diagnostics must be a boolean")
     if int(os.environ.get("WORLD_SIZE", "1")) > 1:
         raise ValueError("Small router training uses one worker; select the one-GPU router resource profile")
     seed_all(cfg["seed"])
@@ -275,12 +297,18 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
     ranking_left, ranking_right = _validation_ranking_pairs(
         context_arrays, val_ids, gain_cpu[val_ids], cfg.get("labels", {}).get("gain_epsilon", 1e-6)
     )
+    if diagnostics:
+        train_left, train_right = _validation_ranking_pairs(
+            context_arrays, train_ids, gain_cpu[train_ids], cfg.get("labels", {}).get("gain_epsilon", 1e-6)
+        )
+        train_left, train_right = train_left.to(device), train_right.to(device)
     # The full FP32 dataset is small (about 263 MiB for 64k default-width rows).
     # Transfer once; minibatches thereafter transfer only their sampled indices.
     query = torch.from_numpy(merged["query"]).to(device=device, dtype=torch.float32)
     candidate = torch.from_numpy(merged["candidate"]).to(device=device, dtype=torch.float32)
     gain = gain_cpu.to(device)
     val_indices = torch.from_numpy(val_ids).to(device)
+    train_indices = torch.from_numpy(train_ids).to(device) if diagnostics else None
     ranking_left, ranking_right = ranking_left.to(device), ranking_right.to(device)
     feature_bytes = sum(value.numel() * value.element_size() for value in (query, candidate, gain))
     del merged, context_arrays, gain_cpu
@@ -354,6 +382,7 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
         "validation_labels": len(val_ids),
         "planned_steps": steps,
         "resume_step": start,
+        "router_diagnostics": diagnostics,
         "environment": environment,
         "logging": {**logging_options, "validation_every": validation_every},
     }
@@ -361,13 +390,47 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
         cfg,
         directory,
         job_type=f"router_{cfg['reader']}",
-        name=(f"seed{cfg.get('seed', 0)}-router-{cfg['reader']}-{objective}"
+        name=(f"seed{cfg.get('seed', 0)}-router-{'overfit-' if diagnostics else ''}{cfg['reader']}-{objective}"
               + (f"-{integration_steps}steps" if objective == "final_action" else ""))
-        if "objective" in cfg.get("labels", {}) else None,
+        if diagnostics or "objective" in cfg.get("labels", {}) else None,
         metadata=tracking_metadata,
         resume=bool(resume),
     ) as tracker:
         started = time.perf_counter()
+        baselines = _constant_baselines(gain, train_indices, val_indices, scale) if diagnostics else {}
+
+        def full_fit_metrics():
+            router.eval()
+            result = _validation_metrics(
+                router, query, candidate, gain, val_indices, ranking_left, ranking_right,
+                scale, validation_batch,
+            )
+            if diagnostics:
+                result.update(_split_metrics(
+                    router, query, candidate, gain, train_indices, train_left, train_right,
+                    scale, validation_batch, training=True,
+                ))
+                result.update(baselines, training_rank_pairs=len(train_left))
+            return result
+
+        def publish(row, current):
+            with (directory / "metrics.jsonl").open("a") as stream:
+                stream.write(json.dumps(row) + "\n")
+            print(json.dumps(row), flush=True)
+            tracker.log(row, step=current)
+
+        if diagnostics:
+            # Evaluate the unchanged source checkpoint before the first update.
+            # LocalRouter contains no stochastic eval layers; these read-only
+            # passes consume no RNG and never enter the optimization graph.
+            publish({
+                "step": start, "target_scale_training_only": scale,
+                "train_labels": len(train_ids), "validation_labels": len(val_ids),
+                "validation_rank_pairs": len(ranking_left),
+                "training_examples_this_allocation": 0, **full_fit_metrics(),
+                "seconds": time.perf_counter() - started,
+            }, start)
+            tracker.summary(baselines)
         for step in range(start, steps):
             router.train()
             # Retain the original CPU RNG draw and row order for exact resume.
@@ -408,19 +471,12 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
                     **process_memory(),
                 }
                 if validation_due:
-                    router.eval()
-                    row.update(_validation_metrics(
-                        router, query, candidate, gain, val_indices, ranking_left, ranking_right,
-                        scale, validation_batch,
-                    ))
+                    row.update(full_fit_metrics())
                 row["seconds"] = time.perf_counter() - started
                 row["training_examples_per_second"] = row["training_examples_this_allocation"] / max(
                     row["seconds"], 1e-9
                 )
-                with (directory / "metrics.jsonl").open("a") as stream:
-                    stream.write(json.dumps(row) + "\n")
-                print(json.dumps(row), flush=True)
-                tracker.log(row, step=current)
+                publish(row, current)
             if (
                 current % cfg["training"]["checkpoint_every"] == 0
                 or current == steps

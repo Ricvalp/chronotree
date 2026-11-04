@@ -102,6 +102,10 @@ Artifact locations for the default run are:
 - Final immutable scorer: each router directory's `step_00010000.pt`; its
   `last.pt`, metrics, and completion records remain in that directory.
 
+For the separately requested longer-fit diagnostic on unchanged initial labels,
+see [router_overfit_hpc.md](router_overfit_hpc.md). It starts from the immutable
+5k scorer in a new output directory; it does not change this dependency chain.
+
 Inspect artifact completion without contacting Slurm:
 
 ```bash

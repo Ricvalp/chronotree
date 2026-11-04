@@ -596,6 +596,19 @@ A user-designated compact checkpoint may be frozen for this requested ablation
 with an explicit selection record; do not describe that designation as the
 matched validation selection protocol from Section 4.1.1.
 
+### 9.5.1 Authorized longer-fit diagnostic (4 November 2026)
+
+The user requested longer router fitting after initial validation ranking
+remained near chance. A separate
+diagnostic may continue the immutable initial 5k TREE/velocity router to 100k
+total updates on its unchanged initial labels. Preserve the optimizer, RNG,
+normalization, and episode-disjoint label split; retain original run artifacts.
+Use a separate `chronotree-routers` W&B project. Report full fitting-set and
+held-out losses/ranking plus training-fitted constant baselines. This does not
+change the matched 5k/refresh/10k primary protocol,
+authorize repeated label refreshes, or establish a matched TREE/FLAT result.
+See `docs/router_overfit_hpc.md`.
+
 ### 9.6 Optional alternating adaptation, only if justified
 
 Do not make joint/alternating training a prerequisite.
