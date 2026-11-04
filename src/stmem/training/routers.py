@@ -49,40 +49,245 @@ def _validation_ranking_pairs(context_arrays, validation_ids, validation_gain, e
     return indices[distinct, 0], indices[distinct, 1]
 
 
+def _objective(cfg):
+    labels = cfg.get("labels", {})
+    objective = labels.get("objective", "velocity")
+    steps = labels.get("integration_steps", 8)
+    if objective not in ("velocity", "final_action"):
+        raise ValueError("Router label objective must be velocity or final_action")
+    if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
+        raise ValueError("Router label integration_steps must be a positive integer")
+    return objective, steps
+
+
+def _router_device(cfg):
+    requested = cfg["training"].get("router_device", "auto")
+    if requested not in ("auto", "cpu", "cuda"):
+        raise ValueError("training.router_device must be auto, cpu, or cuda")
+    if requested == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if requested == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("Router training requested CUDA but CUDA is unavailable")
+    return requested
+
+
+def _load_labels(cfg):
+    """Validate complete immutable phases, then merge in context order.
+
+    Context IDs may repeat for distinct candidate moves within one context. They
+    may never occur in two shards of the same phase. Initial and refresh phases
+    deliberately have separate context namespaces and separate ranking groups.
+    """
+    objective, integration_steps = _objective(cfg)
+    labels = cfg.get("labels", {})
+    names = ("query", "candidate", "gain", "partition", "context_id", "episode")
+    required = {
+        "teacher", "compact", "cache", "data", "reader", "partition", "objective",
+        "integration_steps", "sample_plan", "shard_index", "shard_count", "refresh", "router",
+        "schema_version", "contexts", "source_sha256",
+    }
+    paths, identities, phase_arrays, context_arrays = [], [], [], []
+    seen_paths = set()
+    frozen = None
+    for refresh in ([False, True] if labels.get("use_refresh", False) else [False]):
+        setting = "refresh_shards" if refresh else "initial_shards"
+        supplied = labels.get(setting)
+        if supplied is not None and (not isinstance(supplied, (list, tuple)) or not supplied):
+            raise ValueError(f"labels.{setting} must be a nonempty list of shard paths")
+        phase_paths = [Path(p) for p in supplied] if supplied is not None else [label_path(cfg, refresh)]
+        shards = []
+        for path in phase_paths:
+            resolved = path.resolve()
+            if resolved in seen_paths:
+                raise ValueError("Duplicate label shard path")
+            seen_paths.add(resolved)
+            with h5py.File(path, "r") as f:
+                if not f.attrs.get("complete"):
+                    raise ValueError(f"Incomplete label shard: {path}")
+                ident = json.loads(f.attrs["identity"])
+                modern = "objective" in ident or supplied is not None
+                if modern and not required <= ident.keys():
+                    raise ValueError(f"Label shard lacks objective/shard provenance: {sorted(required - ident.keys())}")
+                if modern and ident["schema_version"] != 2:
+                    raise ValueError("Unsupported router label schema_version")
+                if modern and any(
+                    not isinstance(ident[key], str) or not ident[key]
+                    for key in ("teacher", "compact", "cache", "data", "reader", "sample_plan")
+                ):
+                    raise ValueError("Label shard has empty or invalid identity fields")
+                if not modern and (objective != "velocity" or integration_steps != 8):
+                    raise ValueError("Legacy labels are supported only for the default velocity objective")
+                actual_objective = ident.get("objective", "velocity")
+                actual_steps = ident.get("integration_steps", 8)
+                if actual_objective != objective or actual_steps != integration_steps:
+                    raise ValueError("Label objective/integration_steps mismatch")
+                if ident.get("reader", cfg["reader"]) != cfg["reader"]:
+                    raise ValueError("Label reader mismatch")
+                if ident.get("refresh", refresh) != refresh:
+                    raise ValueError("Label initial/refresh phase mismatch")
+                if modern and (
+                    (refresh and (not isinstance(ident["router"], str) or not ident["router"]))
+                    or (not refresh and ident["router"] is not None)
+                ):
+                    raise ValueError("Initial labels must omit a router hash; refresh labels require one")
+                signature = {
+                    key: ident.get(key) for key in ("teacher", "compact", "cache", "data", "partition", "source_sha256")
+                }
+                signature.update(reader=cfg["reader"], objective=objective, integration_steps=integration_steps)
+                if not all(ident.get(key) is not None for key in ("teacher", "compact", "data", "partition")):
+                    raise ValueError("Label shard lacks frozen-policy/data provenance")
+                if frozen is not None and signature != frozen:
+                    raise ValueError("Label shards changed frozen teacher/compact/cache/data/partition provenance")
+                frozen = signature
+                index, count = ident.get("shard_index", 0), ident.get("shard_count", 1)
+                if (
+                    isinstance(index, bool) or not isinstance(index, int)
+                    or isinstance(count, bool) or not isinstance(count, int)
+                    or count < 1 or not 0 <= index < count
+                ):
+                    raise ValueError("Invalid label shard index/count")
+                data = {name: np.asarray(f[name]) for name in names}
+                rows = len(data["gain"])
+                width = cfg["model"]["width"]
+                shapes = {"query": (rows, 2 * width + 27), "candidate": (rows, 2 * width + 23)}
+                shapes.update({name: (rows,) for name in names[2:]})
+                if any(data[name].shape != shape for name, shape in shapes.items()):
+                    raise ValueError("Label rows or feature dimensions disagree")
+                if any(not np.isfinite(data[name]).all() for name in ("query", "candidate", "gain")):
+                    raise ValueError("Nonfinite label features or gains")
+                contexts = data["context_id"]
+                if not np.issubdtype(contexts.dtype, np.integer) or np.any(contexts < 0):
+                    raise ValueError("Label context IDs must be nonnegative integers")
+                if not np.isin(data["partition"], [0, 1]).all():
+                    raise ValueError("Label partition must identify train or validation")
+                if modern and np.any(contexts % count != index):
+                    raise ValueError("Label context belongs to a different shard")
+                if modern:
+                    total = ident["contexts"]
+                    if isinstance(total, bool) or not isinstance(total, int) or total < 1:
+                        raise ValueError("Label planned contexts must be a positive integer")
+                    if "attempted_context_ids" not in f:
+                        raise ValueError("Label shard lacks attempted-context coverage")
+                    attempted = np.asarray(f["attempted_context_ids"])
+                    expected_ids = np.arange(index, total, count, dtype=np.int64)
+                    if (
+                        attempted.ndim != 1 or not np.issubdtype(attempted.dtype, np.integer)
+                        or not np.array_equal(np.sort(attempted), expected_ids)
+                    ):
+                        raise ValueError("Label shard has incomplete or duplicate attempted-context coverage")
+                    if np.any(contexts >= total):
+                        raise ValueError("Label row exceeds the planned context range")
+                    budget = np.asarray(f["budget"])
+                    if (
+                        budget.shape != (rows,) or not np.issubdtype(budget.dtype, np.integer)
+                        or np.any(budget < 1)
+                    ):
+                        raise ValueError("Label budgets must be positive integers, one per row")
+                    order = np.argsort(contexts, kind="stable")
+                    same_context = contexts[order][1:] == contexts[order][:-1]
+                    for name in ("query", "partition", "episode"):
+                        values = data[name][order]
+                        if np.any(values[1:][same_context] != values[:-1][same_context]):
+                            raise ValueError("Rows from one label context disagree on query/episode/partition")
+                    if np.any(budget[order][1:][same_context] != budget[order][:-1][same_context]):
+                        raise ValueError("Rows from one label context disagree on budget")
+                    _, context_counts = np.unique(contexts, return_counts=True)
+                    if np.any(context_counts > labels.get("candidates", 4)):
+                        raise ValueError("Label context has more candidate rows than configured")
+                    if "move_index" in f:
+                        moves = np.asarray(f["move_index"])
+                        if moves.shape != (rows,) or not np.issubdtype(moves.dtype, np.integer):
+                            raise ValueError("Label move indices must identify each candidate row")
+                        pairs = np.stack([contexts, moves], axis=1)
+                        if np.any(moves < 0) or len(np.unique(pairs, axis=0)) != rows:
+                            raise ValueError("Duplicate or invalid candidate moves within a label context")
+                    for episode, partition in zip(data["episode"], data["partition"]):
+                        episode = episode.decode() if isinstance(episode, bytes) else str(episode)
+                        expected = "validation" if partition else "train"
+                        if ident["partition"].get(episode) != expected:
+                            raise ValueError("Label row contradicts the episode partition manifest")
+                shards.append((index, count, path, ident, data))
+        shards.sort(key=lambda shard: shard[0])
+        counts = {shard[1] for shard in shards}
+        if len(counts) != 1 or [shard[0] for shard in shards] != list(range(shards[0][1])):
+            raise ValueError("Missing or duplicate label shards in phase")
+        phase_identity = None
+        seen_contexts = set()
+        for index, count, path, ident, data in shards:
+            phase_signature = {key: ident.get(key) for key in ("sample_plan", "router", "contexts")}
+            if phase_identity is not None and phase_signature != phase_identity:
+                raise ValueError("Label phase mixes sample plans or refresh router checkpoints")
+            phase_identity = phase_signature
+            contexts = set(map(int, data["context_id"]))
+            if seen_contexts & contexts:
+                raise ValueError("Duplicate context IDs across label shards")
+            seen_contexts.update(contexts)
+            paths.append(path)
+            identities.append(ident)
+        phase = {name: np.concatenate([shard[4][name] for shard in shards]) for name in names}
+        # This gives one reproducible row order regardless of input shard-list order.
+        order = np.argsort(phase["context_id"], kind="stable")
+        phase = {name: values[order] for name, values in phase.items()}
+        context_arrays.append(phase["context_id"])
+        phase_arrays.append(phase)
+    merged = {name: np.concatenate([phase[name] for phase in phase_arrays]) for name in names}
+    return merged, paths, identities, context_arrays, frozen
+
+
+@torch.no_grad()
+def _validation_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size):
+    predictions = torch.cat([
+        router(query[chunk], candidate[chunk]) for chunk in ids.split(batch_size)
+    ])
+    expected_gain = gain[ids]
+    metrics = [
+        F.smooth_l1_loss(predictions, expected_gain / scale),
+        ((predictions > 0) == (expected_gain > 0)).float().mean(),
+    ]
+    names = ["conditional_label_validation_loss", "validation_sign_agreement"]
+    if len(left):
+        predicted_order = (predictions[left] - predictions[right]).sign()
+        expected_order = (expected_gain[left] - expected_gain[right]).sign()
+        metrics.append((predicted_order == expected_order).float().mean())
+        names.append("validation_within_context_rank_agreement")
+    # A single small transfer; no per-validation-batch GPU synchronization.
+    return dict(zip(names, torch.stack(metrics).cpu().tolist()))
+
+
 def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
     logging_options = resolve_logging(cfg, log_every=log_every, attention_every=0)
     validation_every = positive_log_every(cfg["training"]["log_every"])
     if int(os.environ.get("WORLD_SIZE", "1")) > 1:
         raise ValueError("Small router training uses one worker; select the one-GPU router resource profile")
     seed_all(cfg["seed"])
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _router_device(cfg)
     torch.set_num_threads(min(4, os.cpu_count() or 1))
-    paths = [label_path(cfg)]
-    if cfg.get("labels", {}).get("use_refresh", False):
-        paths.append(label_path(cfg, True))
-    arrays = {k: [] for k in ("query", "candidate", "gain", "partition", "context_id", "episode")}
-    identities = []
-    for p in paths:
-        with h5py.File(p, "r") as f:
-            if not f.attrs.get("complete"):
-                raise ValueError("Incomplete label shard")
-            identities.append(json.loads(f.attrs["identity"]))
-            for k in arrays:
-                arrays[k].append(np.asarray(f[k]))
-    merged = {k: np.concatenate(v) for k, v in arrays.items()}
+    merged, paths, identities, context_arrays, label_identity = _load_labels(cfg)
+    objective, integration_steps = _objective(cfg)
     train_ids = np.flatnonzero(merged["partition"] == 0)
     val_ids = np.flatnonzero(merged["partition"] == 1)
     if not len(train_ids) or not len(val_ids):
         raise ValueError("Router labels must contain nonempty disjoint train and validation episode sets")
     if set(merged["episode"][train_ids]) & set(merged["episode"][val_ids]):
         raise ValueError("Episode leakage in router-label diagnostic split")
-    for ident in identities[1:]:
-        if ident["partition"] != identities[0]["partition"] or ident["compact"] != identities[0]["compact"]:
-            raise ValueError("Refresh changed episode partitions or frozen compact policy")
-    query = torch.from_numpy(merged["query"]).float()
-    candidate = torch.from_numpy(merged["candidate"]).float()
-    gain = torch.from_numpy(merged["gain"]).float()
-    scale = max(float(gain[train_ids].abs().median()), 1e-6)
+    gain_cpu = torch.from_numpy(merged["gain"]).float()
+    scale = max(float(gain_cpu[train_ids].abs().median()), 1e-6)
+    ranking_left, ranking_right = _validation_ranking_pairs(
+        context_arrays, val_ids, gain_cpu[val_ids], cfg.get("labels", {}).get("gain_epsilon", 1e-6)
+    )
+    # The full FP32 dataset is small (about 263 MiB for 64k default-width rows).
+    # Transfer once; minibatches thereafter transfer only their sampled indices.
+    query = torch.from_numpy(merged["query"]).to(device=device, dtype=torch.float32)
+    candidate = torch.from_numpy(merged["candidate"]).to(device=device, dtype=torch.float32)
+    gain = gain_cpu.to(device)
+    val_indices = torch.from_numpy(val_ids).to(device)
+    ranking_left, ranking_right = ranking_left.to(device), ranking_right.to(device)
+    feature_bytes = sum(value.numel() * value.element_size() for value in (query, candidate, gain))
+    del merged, context_arrays, gain_cpu
+    validation_batch = cfg["training"].get("router_validation_batch", 4096)
+    if isinstance(validation_batch, bool) or not isinstance(validation_batch, int) or validation_batch < 1:
+        raise ValueError("training.router_validation_batch must be a positive integer")
+    label_hashes = [file_sha256(p) for p in paths]
     router = LocalRouter(cfg["model"]["width"], cfg["model"]["router_width"]).to(device)
     optimizer = torch.optim.AdamW(
         router.parameters(), lr=cfg["training"]["lr"], weight_decay=cfg["training"]["weight_decay"]
@@ -92,8 +297,18 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
         old = load_checkpoint(resume)
         if old["config"]["reader"] != cfg["reader"] or old["config"]["model"] != cfg["model"]:
             raise ValueError("Router resume reader/model mismatch")
-        if not set(old["label_hashes"]).issubset({file_sha256(p) for p in paths}):
+        if _objective(old["config"]) != (objective, integration_steps):
+            raise ValueError("Router resume objective/integration_steps mismatch")
+        if old.get("label_identity", label_identity) != label_identity:
+            raise ValueError("Router resume frozen label identity changed")
+        if old["label_hashes"] != label_hashes[:len(old["label_hashes"])]:
             raise ValueError("Router resume labels changed; refresh may only append a new fixed shard")
+        if len(old["label_hashes"]) < len(label_hashes):
+            if old["config"].get("labels", {}).get("use_refresh", False):
+                raise ValueError("Router resume cannot append labels after the one allowed refresh")
+            for ident in identities[len(old["label_hashes"]):]:
+                if "objective" in ident and (not ident["refresh"] or ident["router"] != file_sha256(resume)):
+                    raise ValueError("Refresh labels were not generated by the resumed router checkpoint")
         router.load_state_dict(old["model"])
         optimizer.load_state_dict(old["optimizer"])
         start = old["step"]
@@ -119,16 +334,17 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
         (directory / "partial.json").unlink(missing_ok=True)
         return 0
     atomic_json(cfg, directory / "config.json")
-    label_hashes = [file_sha256(p) for p in paths]
     batch = cfg["training"]["effective_batch"]
-    ranking_left, ranking_right = _validation_ranking_pairs(
-        arrays["context_id"], val_ids, gain[val_ids], cfg.get("labels", {}).get("gain_epsilon", 1e-6)
-    )
     environment = environment_manifest()
     tracking_metadata = {
         "reader": cfg["reader"],
         "phase": "refresh" if cfg.get("labels", {}).get("use_refresh", False) else "initial",
         "label_hashes": label_hashes,
+        "label_identity": label_identity,
+        "objective": objective,
+        "integration_steps": integration_steps,
+        "router_device": device,
+        "feature_bytes": feature_bytes,
         "teacher_sha256": identities[0]["teacher"],
         "compact_sha256": identities[0]["compact"],
         "data_identity": identities[0]["data"],
@@ -145,15 +361,19 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
         cfg,
         directory,
         job_type=f"router_{cfg['reader']}",
+        name=(f"seed{cfg.get('seed', 0)}-router-{cfg['reader']}-{objective}"
+              + (f"-{integration_steps}steps" if objective == "final_action" else ""))
+        if "objective" in cfg.get("labels", {}) else None,
         metadata=tracking_metadata,
         resume=bool(resume),
     ) as tracker:
         started = time.perf_counter()
         for step in range(start, steps):
             router.train()
-            indices = train_ids[torch.randint(len(train_ids), (batch,)).numpy()]
-            prediction = router(query[indices].to(device), candidate[indices].to(device))
-            loss = F.smooth_l1_loss(prediction, gain[indices].to(device) / scale)
+            # Retain the original CPU RNG draw and row order for exact resume.
+            indices = torch.from_numpy(train_ids[torch.randint(len(train_ids), (batch,)).numpy()]).to(device)
+            prediction = router(query[indices], candidate[indices])
+            loss = F.smooth_l1_loss(prediction, gain[indices] / scale)
             if not torch.isfinite(loss):
                 raise FloatingPointError("Nonfinite router loss")
             optimizer.zero_grad(set_to_none=True)
@@ -189,25 +409,10 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
                 }
                 if validation_due:
                     router.eval()
-                    with torch.no_grad():
-                        val_pred = torch.cat(
-                            [
-                                router(query[ids].to(device), candidate[ids].to(device)).cpu()
-                                for ids in np.array_split(val_ids, max(1, len(val_ids) // 1024 + 1))
-                            ]
-                        )
-                        val_loss = F.smooth_l1_loss(val_pred, gain[val_ids] / scale)
-                        sign_agreement = ((val_pred > 0) == (gain[val_ids] > 0)).float().mean()
-                    row.update(
-                        conditional_label_validation_loss=float(val_loss),
-                        validation_sign_agreement=float(sign_agreement),
-                    )
-                    if len(ranking_left):
-                        predicted_order = (val_pred[ranking_left] - val_pred[ranking_right]).sign()
-                        expected_order = (gain[val_ids][ranking_left] - gain[val_ids][ranking_right]).sign()
-                        row["validation_within_context_rank_agreement"] = float(
-                            (predicted_order == expected_order).float().mean()
-                        )
+                    row.update(_validation_metrics(
+                        router, query, candidate, gain, val_indices, ranking_left, ranking_right,
+                        scale, validation_batch,
+                    ))
                 row["seconds"] = time.perf_counter() - started
                 row["training_examples_per_second"] = row["training_examples_this_allocation"] / max(
                     row["seconds"], 1e-9
@@ -236,11 +441,17 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
                     "rng_by_rank": [capture_rng()],
                     "target_scale": scale,
                     "label_hashes": label_hashes,
+                    "label_identity": label_identity,
+                    "objective": objective,
+                    "integration_steps": integration_steps,
                     "provenance": {
                         "compact": identities[0]["compact"],
                         "teacher": identities[0]["teacher"],
                         "data": identities[0]["data"],
                         "partition": digest(identities[0]["partition"]),
+                        "cache": identities[0].get("cache"),
+                        "objective": objective,
+                        "integration_steps": integration_steps,
                     },
                 }
                 atomic_save(state, directory / "last.pt")

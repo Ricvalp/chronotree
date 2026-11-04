@@ -1,5 +1,54 @@
 # Implementation decisions — 17 October 2026
 
+## 4 November: velocity versus final-action router supervision
+
+The user authorized a matched four-scorer ablation: TREE and FLAT with velocity
+gains, and TREE and FLAT with final denoised-action gains. Both objectives share
+the frozen teacher/compact policies, initial decision/context/candidate schedule,
+Gaussian seeds, episode partition, budgets and optimizer exposure. Final actions
+use identical unmasked Gaussian initializations and Euler steps for teacher and
+compact predictions; normalized final outputs are compared with expert-validity
+masks. No expert target or future observation enters a router. Eight label
+integration steps are the default; four is an explicit named alternative and
+does not change closed-loop evaluation's saved integration setting.
+
+The combined label worker uses the action-only decision catalogue and persisted
+causal hierarchy, removes quadratic decision reconstruction/flat eligibility
+scans, batches compact before/after inference, and shares teacher work across
+readers. Whole teacher histories are never truncated to fit a batch. In-flight
+and active-batch payloads are byte-bounded separately, with oversized histories
+alone. Four independent one-GPU shards replace distributed gradient training.
+Every output has its own lock, atomic completion, committed context IDs and
+source/objective/dependency identity. Initial and refresh outputs are immutable.
+
+Scorers keep FP32 features/gains resident on one device, preserve batch 256,
+signed Smooth L1 regression and CPU sampling RNG, and validate in bounded
+batches. Refresh uses each objective's own frozen initial scorer; four matched
+scorers receive 5k initial and 10k total updates. The launcher freezes the
+user-designated compact checkpoint with an honest adoption record, without
+claiming an unperformed matched-validation checkpoint selection.
+
+Five exact runtime consumers (`gain_labels.py`, `routers.py`, `label_data.py`,
+`label_objectives.py`, `label_experiment.py`) are excluded from encoded-leaf
+identity after auditing that cache construction does not import them. The
+protected-source baseline was recomputed with these exclusions and remains
+bound to the original encoded-content revision. This preserves existing leaf
+and derived hierarchy caches; changes to encoder, alignment, geometry,
+aggregation or policy definitions still invalidate their scientific identities.
+Full source and label/objective provenance are recorded independently.
+
+Measured checks: 308 focused CPU tests passed, including both gain objectives,
+causal/reference parity, independent shards, exact episode partitions, interrupted
+output recovery, spawned workers and all four scorer refresh/resume paths. The
+actual RTX 5000 Ada passed the device doctor in all three precisions; a bounded
+synthetic CUDA check matched eight batched/serial gain vectors at eight Euler
+steps and completed one router optimizer update. These are diagnostics, not
+real-data learning or H200 throughput measurements. No Slurm job was submitted.
+The architecture layers and causal context boundary are unchanged; regenerated
+diagram provenance records the audited consumer-only cache migration.
+
+## Earlier decisions
+
 1. **Unified pinned environment.** Core uses Torch 2.9.1 CUDA12.8, Python3.11,
    NumPy1.26.4; the simulator extra pins the requested benchmark/fork and
    torchvision0.24.1. NumPy2 was incompatible with the pinned simulator, so it

@@ -1,4 +1,8 @@
-"""Paired flow-velocity utility labels with episode-disjoint scorer diagnostics."""
+"""Reference paired velocity/final-action labels and scorer diagnostics.
+
+The indexed, batched, jointly sharded experiment is in label_experiment.py.
+This serial reference remains useful for scientific parity checks.
+"""
 
 from __future__ import annotations
 import argparse
@@ -22,11 +26,26 @@ from stmem.training.runtime import load_policy, load_router, seed_all, validate_
 from stmem.training.checkpoints import file_sha256, atomic_json
 
 
-def paired_gains(teacher, compact, evidence, before, after, action, valid, *, noise=None, time=None):
-    """One shared x_u/u for teacher, before and all candidate after-contexts."""
+def paired_gains(teacher, compact, evidence, before, after, action, valid, *, noise=None, time=None,
+                 objective="velocity", integration_steps=None):
+    """One shared draw for teacher, before and all counterfactual contexts.
+
+    Final actions start from pure unmasked Gaussian noise, preserving inference
+    behavior even at terminal suffixes. Validity masks only the discrepancy.
+    """
+    from stmem.training.label_objectives import variant_name
+
+    integration_steps = teacher.config["model"].get("flow_steps", 8) if integration_steps is None else integration_steps
+    variant_name(objective, integration_steps)
     x, u, _, noise = flow_sample(action, valid, teacher.normalizer, noise=noise, time=time)
-    reference = teacher(None, x, u, evidence=evidence)
-    initial = compact(None, x, u, evidence=evidence, records=before)
+    if objective == "velocity":
+        reference = teacher(None, x, u, evidence=evidence)
+        initial = compact(None, x, u, evidence=evidence, records=before)
+    else:
+        teacher_context, teacher_bias = teacher.context(evidence, evidence.archive.leaves)
+        before_context, before_bias = compact.context(evidence, before)
+        reference = teacher.decoder.integrate(teacher_context, teacher_bias, steps=integration_steps, noise=noise)
+        initial = compact.decoder.integrate(before_context, before_bias, steps=integration_steps, noise=noise)
     base = masked_mse(initial, reference, valid)
     contexts = [compact.context(evidence, records) for records in after]
     if not contexts:
@@ -36,9 +55,14 @@ def paired_gains(teacher, compact, evidence, before, after, action, valid, *, no
     biases = torch.stack(
         [torch.nn.functional.pad(b, (0, max_tokens - len(b)), value=-torch.inf) for _, b in contexts]
     )
-    predictions = compact.decoder(
-        x[None].expand(len(contexts), -1, -1), u.expand(len(contexts)), padded, biases
-    )
+    if objective == "velocity":
+        predictions = compact.decoder(
+            x[None].expand(len(contexts), -1, -1), u.expand(len(contexts)), padded, biases
+        )
+    else:
+        predictions = compact.decoder.integrate(
+            padded, biases, steps=integration_steps, noise=noise[None].expand(len(contexts), -1, -1),
+        )
     gains = []
     for prediction, records in zip(predictions, after):
         cost = len(records) - len(before)
@@ -55,6 +79,11 @@ def label_path(cfg, refresh=False):
 @torch.no_grad()
 def generate(cfg, reader, *, refresh=False, router_checkpoint=None):
     cfg["reader"] = reader
+    if cfg["labels"].get("objective", "velocity") != "velocity":
+        raise ValueError(
+            "Final-action labels require objective-scoped, provenance-checked shards; "
+            "use hpc/train_routers.py or stmem.training.label_experiment"
+        )
     if cfg["model"].get("decoder", "flow") != "flow":
         raise ValueError(
             "Paired velocity labels require the flow decoder; regression is a standalone debugging control"
@@ -218,7 +247,9 @@ def generate(cfg, reader, *, refresh=False, router_checkpoint=None):
                     selected = {r.node_id for r in before if r.is_leaf}
                     state = FlatState(tuple(evidence.archive.leaves), selected).normalize_singletons()
                     before = state.records
-                    candidates = [r for r in state.unselected if state.move_cost(r) > 0]
+                    # normalize_singletons removed zero-cost groups. Rechecking
+                    # move_cost for every leaf rescans the entire archive O(N²).
+                    candidates = list(state.unselected)
                     rng.shuffle(candidates)
                     candidates = candidates[: cfg["labels"]["candidates"]]
                     after = [state.move(leaf).normalize_singletons().records for leaf in candidates]
@@ -236,6 +267,8 @@ def generate(cfg, reader, *, refresh=False, router_checkpoint=None):
                         decision.target_valid.to(device),
                         noise=noise,
                         time=u,
+                        objective=cfg["labels"].get("objective", "velocity"),
+                        integration_steps=cfg["labels"].get("integration_steps", cfg["model"].get("flow_steps", 8)),
                     )
                     n = len(candidates)
                     start = len(f["gain"])

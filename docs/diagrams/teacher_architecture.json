@@ -176,7 +176,7 @@
     "hpc/train_compact.py": "81cce0fe375a59968339a7a6204f1169192c2b951998cbb8e865ff5455c23550",
     "src/stmem/config.py": "f56dce4d219b972e2fd7256b538901dd90a63aa324d6153b5e8117ec8e22c3cb",
     "src/stmem/data/cache.py": "468f2da90e06af986c6f0a978ee34531e98110d783365f33179538aea3e4a0b6",
-    "src/stmem/data/cache_source.py": "9a36b0c333c3fe7054869fbb00c5867a88b1bb216169b52c5ac7dbfd3b40d0fa",
+    "src/stmem/data/cache_source.py": "15265ebe25e09b458818a451c79324da9338c27a6bc3f52d0674b4a67470c735",
     "src/stmem/data/canonical.py": "bdfa34d88e39ea779fca1bbdaab8853a4aac20a8a167936f2802999296189606",
     "src/stmem/data/center_sampling.py": "829973de64ed8909a3386627ae1e4575f3b3b294685b1df4af5062a07b976cdc",
     "src/stmem/data/dataset.py": "d14de301aa8707a90e1cbd11c03610a2bc87027aea1b39ea62ccbbe5c739cc06",

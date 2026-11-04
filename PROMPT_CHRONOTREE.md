@@ -521,7 +521,11 @@ This design saves training and isolates reader quality under a shared policy. It
 
 Teacher and compact policy remain in deterministic evaluation mode with all parameters frozen.
 
-For sampled decision t:
+The original velocity objective remains available. The user-authorized fixed-policy
+router-objective ablation additionally trains a matched TREE/FLAT pair with the
+final-action objective defined below; report the two pairs separately.
+
+For sampled decision t in the velocity objective:
 
 1. Construct a valid random or reader-generated context F below the target budget.
 2. Sample one expert chunk, one noise tensor epsilon, and one flow time u.
@@ -535,6 +539,27 @@ For the tree, a move replaces a parent by its children. For flat retrieval, it m
 Use the same expert-chunk/noise/time sample for the before/after contexts and teacher. One paired draw is sufficient initially; fresh draws on later visits provide variability. Do not compare independently sampled final action chunks.
 
 The expert future chunk is used only to construct training losses/noised inputs. It is **not an input to the retriever**.
+
+For the **final-action objective**, initialize the teacher and all compact
+before/after contexts with one shared pure Gaussian action chunk in the common
+normalized action coordinates. Integrate each flow independently using the same
+solver and number of steps, and define D_t(F) as masked, dimension-normalized MSE
+between the final normalized action chunks. Use the same signed discrepancy
+reduction per added token. Do not initialize this rollout from an expert/noise
+interpolation, independently resample candidates, compare velocities under a
+final-action label name, or let expert future actions enter router features.
+Reuse one teacher rollout across both readers for each paired decision/noise
+sample. Validity masks remain required for unavailable action coordinates.
+
+Use eight integration steps for final-action labels by default. Four steps is an
+explicit cheaper ablation with a distinct output/provenance identity; it does not
+change the frozen evaluation solver (normally eight steps). Record objective,
+solver, integration steps, noise/context seeds, validity semantics, and all
+frozen checkpoint/cache identities in labels and scorer checkpoints. Initial
+context IDs, task/budget sampling and episode partitions are matched across the
+two objectives. Refresh context construction uses each objective/reader's own
+frozen initial scorer. Never load velocity labels into final-action fitting or
+mix final-action labels from different solve settings.
 
 Limit label generation:
 
@@ -560,6 +585,16 @@ Suggested initial cap: 10k lightweight router updates, batch 256. Validate label
 Then perform **one small label refresh** using contexts visited by each learned reader, mixed with exploratory contexts. A default extra 8k decision-context pairs per reader is sufficient for the initial plan; resume scorer fitting with the mixture. The compact policy remains frozen, so labels change due to context coverage rather than a moving policy.
 
 Do not repeatedly regenerate huge label sets by default.
+
+For the authorized objective ablation, train four independent scorers: velocity
+TREE/FLAT and final-action TREE/FLAT. Each receives 16k initial contexts and one
+8k-context refresh, with four candidates per context, a fixed 80/20 episode
+partition, batch 256 and learning rate 3e-4. Fit 5k updates, freeze an immutable
+5k checkpoint for refresh context generation, then resume to 10k total updates.
+The teacher and shared compact checkpoint are identical across all four runs.
+A user-designated compact checkpoint may be frozen for this requested ablation
+with an explicit selection record; do not describe that designation as the
+matched validation selection protocol from Section 4.1.1.
 
 ### 9.6 Optional alternating adaptation, only if justified
 
@@ -615,6 +650,13 @@ Do not require reimplementing every VLA paper. Published external results may be
 The default job plan is `core_seed0`. A separate `central_3seed` plan expands only the important comparison. The user explicitly chooses submission of later phases.
 
 ### 10.3 Small analyses with high information value
+
+The authorized fixed-policy velocity versus final-action label experiment is a
+matched supervision ablation with four scorers, not four independently trained
+compact policies. Keep the six-method primary protocol and its velocity labels
+identifiable; report final-action TREE/FLAT as a separate pair, with eight-step
+labels by default or the explicitly named four-step approximation. Conditional
+label diagnostics and cost pilots are not closed-loop success measurements.
 
 Implement these analyses without automatically launching a large grid:
 
@@ -835,6 +877,20 @@ An illustrative DAG:
 - compact + cache + teacher -> tree/flat label jobs -> router jobs
 - cache + teacher -> Perceiver baseline
 - successful checkpoints -> evaluation shards -> aggregation
+
+The dedicated `hpc/train_routers.py` launcher implements the authorized dual
+objective chain: one four-worker initial-label array -> four initial scorers ->
+one four-worker refresh-label array -> four final scorers. Each label worker is
+an independent single-GPU allocation with 16 CPUs and 32 GB by default, sharing
+teacher computation across both readers/objectives for its fixed context IDs.
+Use untyped `gpu:1` on `gpuq`, without exclusive-node allocation, for at most four
+GPUs in total. Scorer jobs use one GPU, four CPUs, 16 GB, and one hour each. The
+site file supplies locations/account settings; saved compact/cache configurations
+own the scientific data and model settings. Immutable snapshots and startup
+guards, an atomic submission ledger, inactive-job checks, and explicit resumed
+submission protect frozen inputs and avoid duplicate jobs. See
+`docs/router_training_hpc.md` for the one-command dry-run, submission and resume
+interface. Resource limits are provisional until the bounded pilot is measured.
 
 Support selectively submitting/resuming one stage without rerunning all ancestors. Avoid duplicating teacher/cache work across methods. Budget/seed sweeps are explicit manifests, not nested shell loops that accidentally launch hundreds of jobs.
 

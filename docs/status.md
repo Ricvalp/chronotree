@@ -1,5 +1,35 @@
 # Implementation and verification status
 
+## Router objective ablation — 4 November 2026
+
+The velocity/final-denoised-action ablation is implemented. The combined label
+generator shares cached evidence and teacher work, uses the persisted causal
+hierarchy, batches inference, and resumes exact independent shards. Four
+equal-capacity scorers receive matched initial/refresh optimizer exposure and
+retain separate objectives/checkpoints. Existing encoded and hierarchy caches
+remain compatible through an audited consumer-only source migration.
+
+Verification: 308 focused CPU tests passed; all four scorers completed a tiny
+synthetic initial/refresh/resume pipeline; spawned-worker and interruption
+recovery checks passed. The RTX 5000 Ada passed the device doctor and a bounded
+synthetic CUDA label/optimizer check. The unchanged architecture diagram's
+provenance was regenerated. Full-data throughput, HPC execution and learned
+router closed-loop results remain unmeasured. No Slurm jobs were submitted.
+
+Next command on the HPC (dry-run):
+
+```bash
+.venv/bin/python hpc/train_routers.py --site hpc/site_b200_4gpu.env
+```
+
+Add `--submit` to launch the dependency chain. It freezes the latest compact
+checkpoint from `memory_fv_seed0_compact_hierarchy`, generates 16k initial and
+8k refresh contexts per reader/objective, and trains velocity TREE/FLAT plus
+eight-step final-action TREE/FLAT. See [router_training_hpc.md](router_training_hpc.md)
+for exact resources, outputs, four-step alternative and resume commands.
+
+## Earlier project-wide verification
+
 As of **22 October 2026**, the project installs and its complete bounded local
 pipeline runs. The research comparison has **not yet run**. There is no remaining
 known local installation, action-alignment, calibration or simulator blocker.

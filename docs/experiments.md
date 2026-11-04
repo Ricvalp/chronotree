@@ -76,3 +76,20 @@ a bounded diagnosis, not unbounded label generation or automatic sweeps.
 All scientific training, checkpoint-selection rollouts and benchmark success
 comparisons are **not yet run** at implementation time. Consult run artifacts for
 measured local tests; synthetic loss reductions are never benchmark evidence.
+
+The user-authorized router-objective ablation is implemented in
+`hpc/train_routers.py`; see [the launch protocol](router_training_hpc.md). It
+freezes one designated compact checkpoint and trains four scorers on the same
+teacher, cached evidence, and task/budget/episode sampling: velocity TREE/FLAT
+and final-action TREE/FLAT. Final-action discrepancy compares masked normalized
+action chunks generated independently from the same Gaussian initialization,
+using eight flow steps by default. Four-step labels are an explicitly named
+cheaper ablation and preserve the frozen evaluation step count. Each scorer gets
+16k initial contexts, 5k updates, one 8k-context refresh from its own immutable
+5k scorer, then fitting to 10k total updates. Both readers/objectives share
+teacher results during label generation; this is not a change to compact policy
+training. A designated `last.pt` snapshot is recorded honestly as user-selected,
+without claiming matched validation selection. The launcher and its synthetic
+CPU orchestration tests provide implementation evidence only; label throughput,
+HPC runs, learned-router validation and benchmark success remain unmeasured by
+this change.
