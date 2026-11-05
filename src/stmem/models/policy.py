@@ -146,6 +146,18 @@ class MemoryPolicy(nn.Module):
             proprioception_mode=self.proprioception_mode,
         )
 
+    def routing_inputs(self, evidence, budget, *, router=None):
+        """Prepare one allowed decision query, optionally retaining current tokens."""
+        inputs = {"query_input": self.routing_query(evidence, budget)}
+        if router is not None and router.requires_current:
+            from stmem.models.router import current_token_features
+
+            inputs["current"] = current_token_features(
+                evidence.current_records, evidence.clocks,
+                width=self.config["model"]["width"], device=self.device,
+            )
+        return inputs
+
     def encode_current_state(self, state):
         """Shared current-state input contract for serial and packed policies."""
         if (

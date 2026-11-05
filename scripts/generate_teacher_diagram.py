@@ -19,6 +19,7 @@ from stmem.data.center_sampling import CENTER_SAMPLING_VERSION, center_sampler_s
 from stmem.data.feature_prefetch import DEFAULT_FEATURE_PREFETCH_CHUNKS
 from stmem.data.pointcloud import POINT_SAMPLING_VERSION, point_sampler_settings
 from stmem.models.policy import MemoryPolicy
+from stmem.models.router import build_router
 from stmem.training.logging_options import resolve_logging
 from stmem.vision.frozen import _CLIPLayer1, visual_feature_identity
 
@@ -81,6 +82,10 @@ SOURCES = [
     "src/stmem/evaluation/robomme_adapter.py",
     "src/stmem/evaluation/runner.py",
     "src/stmem/models/policy.py",
+    "src/stmem/models/router.py",
+    "src/stmem/training/router_inputs.py",
+    "src/stmem/training/routers.py",
+    "hpc/router_architectures.py",
     "src/stmem/models/spacetime_encoder.py",
     "src/stmem/models/batched_spacetime.py",
     "src/stmem/models/batched_policy.py",
@@ -259,6 +264,24 @@ def snapshot():
                 "raw_history_pointcloud_reads": False,
                 "changes_model_parameters_or_causal_history": False,
             },
+            "router_architecture_experiments": {
+                "launcher": "hpc/router_architectures.py",
+                "stage": "frozen-policy router only",
+                "historical_attention_scan": False,
+                "current_tokens": cfg["model"]["current_tokens"],
+                "query_tokens": 8,
+                "attention_heads": 4,
+                "attention_layers": 2,
+                "key_width": 128,
+                "same_fixed_initial_gain_labels": True,
+                "teacher_and_compact_weights_changed": False,
+                "parameters": {
+                    name: count(build_router({"reader": "tree", "model": {
+                        "width": cfg["model"]["width"], "router_width": 128,
+                        "router_architecture": name,
+                    }})) for name in ("dot", "mlp", "children", "current_attention", "children_current_attention")
+                },
+            },
             "variants": {
                 **frozen_variants,
                 "current_only_fv_no_prop_10hz": current_only,
@@ -401,7 +424,7 @@ class Page:
         )
         return ident
 
-    def edge(self, source, target, label="", tone="data", entry=""):
+    def edge(self, source, target, label="", tone="data", entry="", points=()):
         cell = ET.SubElement(
             self.root,
             "mxCell",
@@ -416,7 +439,11 @@ class Page:
             source=source,
             target=target,
         )
-        ET.SubElement(cell, "mxGeometry", relative="1", attrib={"as": "geometry"})
+        geometry = ET.SubElement(cell, "mxGeometry", relative="1", attrib={"as": "geometry"})
+        if points:
+            waypoints = ET.SubElement(geometry, "Array", attrib={"as": "points"})
+            for x, y in points:
+                ET.SubElement(waypoints, "mxPoint", x=str(x), y=str(y))
 
     def section(self, x, y, w, label):
         self.text(x, y, w, 35, label, size=19, bold=True, color="#475569")
@@ -1345,7 +1372,7 @@ def frozen_vision(file, facts):
         "frozen",
         "Frozen RGB features · matched state-input experiment",
         "FV-Prop and FV-NoProp share visual evidence, initial shared weights, clocks, action cadence and training budget",
-        height=3150,
+        height=3750,
     )
     p.section(48, 225, 1704, "01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS")
     source = p.card(
@@ -1669,6 +1696,56 @@ def frozen_vision(file, facts):
             "Full-history teacher still reads every fine leaf. Stored parents and family-specific reads preserve context variability, causal availability and matched TREE/FLAT supervision.",
         ],
         tone="note", size=18,
+    )
+    p.section(48, 3135, 1704, "07  LATER ROUTER EXPERIMENTS · FROZEN TEACHER AND SHARED COMPACT POLICY")
+    queries = p.card(
+        48, 3195, 500, 320,
+        "Current query · attention ablation",
+        [
+            "Task, clocks and target budget are observed inputs.",
+            "Baseline: mean current features → query MLP.",
+            "Attention: all current contents + spatial metadata.",
+            "8 query slots · width 128 · 4 heads · 2 blocks.",
+            "Compute once per decision; padding is masked.",
+            "No attention over the historical archive.",
+        ], tone="visual", size=18,
+        tooltip="models/router.py. CurrentQueryBlock reads only current tokens plus an always-valid task/state/clock/budget token. No target actions, noisy flow inputs, future frames or oracle annotations enter the router.",
+    )
+    candidates = p.card(
+        640, 3195, 500, 320,
+        "Candidate key · children ablation",
+        [
+            "Baseline: parent/leaf mean, max and metadata.",
+            "TREE: encode each child's features + geometry.",
+            "Combine child embeddings symmetrically.",
+            "Cache immutable keys with frozen router weights.",
+            "Child-only, current-only and combined variants.",
+            "No change to leaves or their exact coverage.",
+        ], tone="data", size=18,
+        tooltip="Child-aware variants are TREE architecture diagnostics. Shared MLP/current-attention changes also have FLAT arms; do not claim a matched TREE advantage from strengthening only TREE.",
+    )
+    score = p.card(
+        1232, 3195, 520, 320,
+        "Score → budgeted historical context",
+        [
+            "Dot baseline; nonlinear interaction MLP ablation.",
+            "Score encountered TREE parents on cached keys.",
+            "FLAT scans its leaves with the shared scorer form.",
+            "Current query slots guide selection only.",
+            "Action head still receives budgeted records.",
+            "Same frozen decoder, labels and episode split.",
+        ], tone="decoder", size=18,
+        tooltip="hpc/router_architectures.py trains fresh independent routers from fixed initial labels. training/router_inputs.py reconstructs extra inputs and checks original query/candidate equality; no new teacher inference or raw preparation. CachedScorer runs selective nonlinear scoring on CPU, avoiding a GPU synchronization per split.",
+    )
+    p.edge(queries, score, "decision query", tone="visual", points=[(590, 3540), (1190, 3540)])
+    p.edge(candidates, score, "cached key", tone="data")
+    p.card(
+        48, 3590, 1704, 105,
+        "Scope · architecture diagnostics, not a new teacher or action decoder",
+        [
+            "Unchanged gain targets isolate router architecture. Input sidecars retain causal current tokens and candidate children from the existing encoded cache.",
+            "Measure held-out label ranking/regret and routing costs; these are not task-success results. Full-history attention is not part of these variants.",
+        ], tone="note", size=18,
     )
 
 

@@ -696,7 +696,7 @@
     </mxGraphModel>
   </diagram>
   <diagram id="frozen" name="05 · Frozen vision">
-    <mxGraphModel dx="1800" dy="3150" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="3150" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
+    <mxGraphModel dx="1800" dy="3750" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="3750" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
       <root>
         <mxCell id="0" />
         <mxCell id="1" value="Architecture" parent="0" />
@@ -738,7 +738,7 @@
           </mxCell>
         </object>
         <mxCell id="frozen-9" value="CHRONOTREE  /  Matched FV-Prop / FV-NoProp experiment     •     Click page tabs or linked blocks · hover for details · all shapes are editable" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=14;fontColor=#64748B;fontStyle=0;spacing=0;" vertex="1" parent="1">
-          <mxGeometry as="geometry" x="48" y="3102" width="1690" height="30" />
+          <mxGeometry as="geometry" x="48" y="3702" width="1690" height="30" />
         </mxCell>
         <mxCell id="frozen-10" value="01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
           <mxGeometry as="geometry" x="48" y="225" width="1704" height="35" />
@@ -864,6 +864,40 @@
         <object id="frozen-39" label="&lt;b&gt;Compact launch defaults · allocation, not an architecture change&lt;/b&gt;&lt;br&gt;&lt;br&gt;2 GPUs in gpuq · 64 CPU cores · effective batch 128 · microbatch 32/GPU · two accumulation passes/rank&lt;br&gt;Full-history teacher still reads every fine leaf. Stored parents and family-specific reads preserve context variability, causal availability and matched TREE/FLAT supervision." tooltip="Compact launch defaults · allocation, not an architecture change&#10;2 GPUs in gpuq · 64 CPU cores · effective batch 128 · microbatch 32/GPU · two accumulation passes/rank&#10;Full-history teacher still reads every fine leaf. Stored parents and family-specific reads preserve context variability, causal availability and matched TREE/FLAT supervision.">
           <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
             <mxGeometry as="geometry" x="48" y="2960" width="1704" height="120" />
+          </mxCell>
+        </object>
+        <mxCell id="frozen-40" value="07  LATER ROUTER EXPERIMENTS · FROZEN TEACHER AND SHARED COMPACT POLICY" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="3135" width="1704" height="35" />
+        </mxCell>
+        <object id="frozen-41" label="&lt;b&gt;Current query · attention ablation&lt;/b&gt;&lt;br&gt;&lt;br&gt;Task, clocks and target budget are observed inputs.&lt;br&gt;Baseline: mean current features → query MLP.&lt;br&gt;Attention: all current contents + spatial metadata.&lt;br&gt;8 query slots · width 128 · 4 heads · 2 blocks.&lt;br&gt;Compute once per decision; padding is masked.&lt;br&gt;No attention over the historical archive." tooltip="models/router.py. CurrentQueryBlock reads only current tokens plus an always-valid task/state/clock/budget token. No target actions, noisy flow inputs, future frames or oracle annotations enter the router.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EFF6FF;strokeColor=#2563EB;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="3195" width="500" height="320" />
+          </mxCell>
+        </object>
+        <object id="frozen-42" label="&lt;b&gt;Candidate key · children ablation&lt;/b&gt;&lt;br&gt;&lt;br&gt;Baseline: parent/leaf mean, max and metadata.&lt;br&gt;TREE: encode each child&amp;#x27;s features + geometry.&lt;br&gt;Combine child embeddings symmetrically.&lt;br&gt;Cache immutable keys with frozen router weights.&lt;br&gt;Child-only, current-only and combined variants.&lt;br&gt;No change to leaves or their exact coverage." tooltip="Child-aware variants are TREE architecture diagnostics. Shared MLP/current-attention changes also have FLAT arms; do not claim a matched TREE advantage from strengthening only TREE.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="640" y="3195" width="500" height="320" />
+          </mxCell>
+        </object>
+        <object id="frozen-43" label="&lt;b&gt;Score → budgeted historical context&lt;/b&gt;&lt;br&gt;&lt;br&gt;Dot baseline; nonlinear interaction MLP ablation.&lt;br&gt;Score encountered TREE parents on cached keys.&lt;br&gt;FLAT scans its leaves with the shared scorer form.&lt;br&gt;Current query slots guide selection only.&lt;br&gt;Action head still receives budgeted records.&lt;br&gt;Same frozen decoder, labels and episode split." tooltip="hpc/router_architectures.py trains fresh independent routers from fixed initial labels. training/router_inputs.py reconstructs extra inputs and checks original query/candidate equality; no new teacher inference or raw preparation. CachedScorer runs selective nonlinear scoring on CPU, avoiding a GPU synchronization per split.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFBEB;strokeColor=#B45309;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="1232" y="3195" width="520" height="320" />
+          </mxCell>
+        </object>
+        <mxCell id="frozen-44" value="decision query" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563EB;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="frozen-41" target="frozen-43">
+          <mxGeometry as="geometry" relative="1">
+            <Array as="points">
+              <mxPoint x="590" y="3540" />
+              <mxPoint x="1190" y="3540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="frozen-45" value="cached key" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#64748B;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="frozen-42" target="frozen-43">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <object id="frozen-46" label="&lt;b&gt;Scope · architecture diagnostics, not a new teacher or action decoder&lt;/b&gt;&lt;br&gt;&lt;br&gt;Unchanged gain targets isolate router architecture. Input sidecars retain causal current tokens and candidate children from the existing encoded cache.&lt;br&gt;Measure held-out label ranking/regret and routing costs; these are not task-success results. Full-history attention is not part of these variants." tooltip="Scope · architecture diagnostics, not a new teacher or action decoder&#10;Unchanged gain targets isolate router architecture. Input sidecars retain causal current tokens and candidate children from the existing encoded cache.&#10;Measure held-out label ranking/regret and routing costs; these are not task-success results. Full-history attention is not part of these variants.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="3590" width="1704" height="105" />
           </mxCell>
         </object>
       </root>

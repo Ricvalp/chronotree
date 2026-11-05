@@ -422,3 +422,16 @@ the shared decoder and all causal boundaries unchanged. All three artifacts
 were regenerated, and Chromium opened the HTML for a visual review of the
 updated section. Layout evidence is
 `runs/hierarchy_cache_diagnostic_20261103/diagram.png`.
+
+The **Frozen vision** page now also shows the subsequent router architecture
+screen: unchanged dot baseline, nonlinear interaction scoring, TREE child-aware
+candidate keys, task-conditioned attention over individual current tokens, and
+the combined variant. This section is explicitly separate from teacher and
+compact-policy training. Query attention does not read historical tokens; query
+slots guide selection rather than becoming extra action-head context. The JSON
+snapshot records variant parameter counts and fixed-label experimental settings.
+On 2026-11-05 all three artifacts were regenerated; the snapshot/XML check passed.
+Chromium opened all six pages without text overflow and the added router section
+was visually reviewed. Layout evidence is in
+`runs/architecture_diagram/router_architectures/`. This is a documentation check,
+not a measured architecture improvement.

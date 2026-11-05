@@ -45,18 +45,21 @@ CACHE_RUNTIME_EXCLUSIONS = frozenset({
     "src/stmem/training/label_data.py",
     "src/stmem/training/label_objectives.py",
     "src/stmem/training/label_experiment.py",
+    "src/stmem/training/router_inputs.py",
 })
 _SELF_PATH = "src/stmem/data/cache_source.py"
 
-# Encoding sources audited against repository 21d0b24392ce79598149b102da9ce1d785a4c603.
-# The 4 November router-objective change additionally excludes the five exact
-# label/scorer consumer paths above. None is imported during leaf construction;
-# all encoder, alignment, aggregation and policy definitions remain protected.
+# Encoding sources audited through the 5 November router-architecture change.
+# The new router-input consumer only reads existing encoded caches. The exact
+# protected baseline also includes audited routing-only changes to policy.py,
+# router.py, analyze.py, runtime.load_router and config validation; no encoder,
+# aggregation, alignment or cached-evidence production computation changed.
+# These model/configuration modules REMAIN protected against future changes.
 # The protected digest includes path names, file lengths and complete file bytes
 # after only the explicit exclusions above and this separately checked module.
-_AUDITED_PROTECTED_SHA256 = "1a9d6cc780fddfd02f0ad41982d951efc817483db92cd2616e956e4f5346c81d"
+_AUDITED_PROTECTED_SHA256 = "1dacc820ab1f2d8f2bf7b3454304051243133189665007ba008d8d32fccc6c20"
 _AUDITED_LEGACY_SHA256 = "9cddd3ea461824003854f5b0c42595f5f1f975224d4f59ca0be72d0e1e83dc34"
-_AUDITED_IMPLEMENTATION_SHA256 = "47c1f6fbecf30660c854ceebed8d5e613836c32094898dd3a0c3573979aef591"
+_AUDITED_IMPLEMENTATION_SHA256 = "78a4afdc62db83baa519e6e1abb5d29389db049f0a8f569c152fef5a7ee54eaf"
 
 
 def _implementation_fingerprint(root: Path) -> str:

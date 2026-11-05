@@ -227,7 +227,7 @@ def generate(cfg, reader, *, refresh=False, router_checkpoint=None):
                     )
                     scorer.retain(candidates_for_keys)
                     scorer.prepare(candidates_for_keys)
-                    scorer.set_query(query)
+                    scorer.set_query(**compact.routing_inputs(evidence, budget, router=scorer.router))
                 cap = rng.randint(max(root_count, 1), max(root_count, budget - 1))
                 selection = choose_records(
                     evidence, reader, cap, scorer=scorer if use_learned else None, rng=rng

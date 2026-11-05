@@ -203,11 +203,10 @@ def load_policy(path, device="cpu"):
 
 
 def load_router(path, device="cpu"):
-    from stmem.models.router import LocalRouter
+    from stmem.models.router import build_router
 
     state = load_checkpoint(path)
-    m = state["config"]["model"]
-    router = LocalRouter(m["width"], m["router_width"])
+    router = build_router(state["config"])
     router.load_state_dict(state["model"])
     router.to(device).eval().requires_grad_(False)
     return router, state

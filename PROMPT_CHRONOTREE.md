@@ -439,6 +439,35 @@ Avoid one GPU synchronization for every node split. A CPU heap using cached keys
 
 The true split gain depends on the entire frontier F. A fixed-query local scorer does not observe F, so it predicts **approximate expected gain across its training contexts**, not exact conditional marginal benefit. This approximation is deliberate for a simple, matched first implementation.
 
+#### Authorized router architecture ablations — 5 November 2026
+
+Keep the original dot-product scorer as a fresh baseline. The architecture
+experiment adds a nonlinear interaction MLP over query/key embeddings, a TREE
+variant that separately embeds both children's content and geometry before
+symmetric fusion, a task-conditioned current-observation attention variant,
+and their combination. Current attention reads every valid current token and
+its metadata through eight learned query slots (width 128, four heads, two
+blocks by default); it never attends over the full historical archive. The
+query is computed once per decision. Candidate projections remain immutable
+when router weights are frozen; selective scoring can use cached CPU keys.
+
+Use the same fixed initial gain labels, episode partitions, teacher and compact
+policy for all architecture fits. Reconstruct extra inputs from the encoded
+cache and require equality with the original query/candidate rows before
+publishing immutable input sidecars. No new teacher inference or raw preparation
+is required. IDs used to reconstruct decisions, frontiers and candidates remain
+bookkeeping, never learned inputs. Each architecture starts from scratch; old
+router checkpoints and runs remain separate.
+
+The default screen has five TREE arms (dot, MLP, children, current attention,
+combined) and three FLAT arms (dot, MLP, current attention). Child-specific arms
+are architecture diagnostics, not evidence of a matched TREE advantage over an
+unchanged FLAT scorer. Keep label objective, optimization, and data fixed during
+this screen. Report training/conditional validation ranking and label-based
+top-choice regret, with task success and full online latency measured separately.
+The launcher is `hpc/router_architectures.py`, defaults to dry-run, and sends
+explicitly submitted fits to the dedicated `chronotree-routers` W&B project.
+
 ### 8.2 Hierarchical retrieval
 
 Start from all roots. Score eligible nodes when encountered. Expand the best-scoring splittable node, insert its children, and continue to the budget. Cache scores for this decision; do not silently rescore all prior nodes while claiming O(B) evaluations.

@@ -1568,3 +1568,59 @@ diagram provenance records the audited consumer-only cache migration.
     `docs/compact_training_hpc.md` and ignored
     `runs/hierarchy_cache_diagnostic_20261103/`. The device doctor passed all
     three precisions; the diagram was regenerated and visually inspected.
+
+## 2026-11-05 — Efficient router architecture diagnostics
+
+The authorized architecture screen retains fixed initial utility targets and
+frozen teacher/compact policies. It trains fresh dot and nonlinear-MLP scorers,
+TREE child-aware keys, task-conditioned current-token attention, and the combined
+variant. All non-dot variants share the same interaction MLP. Child features are
+encoded independently before symmetric fusion, retaining content/geometry
+associations. Current attention has eight queries, width 128, four heads and two
+blocks by default; it sees current tokens and allowed task/state/clock/budget
+inputs only. Query attention is deduplicated per context during training and
+computed once per replanning decision online. No full-history attention or
+frontier-dependent rescoring was added.
+
+Immutable initial-label input sidecars reconstruct exact decisions and sampled
+refinements. They verify original query/candidate bytes and partition/budget/
+episode metadata; original gains are untouched. Input-only reconstruction reads
+current features and candidate/child records without materializing historical
+teacher banks. Sidecars carry source hashes, checksummed receipts, per-context
+commits and bookkeeping IDs; IDs and gains do not enter the model. Causal partial
+blocks and exact leaf coverage are unchanged. New input hashes and fixed optional
+training-context subsets are checked on resume.
+
+The cache identity migration is restricted to the audited encoding-equivalent
+source baseline: router_input replay is an explicit consumer exclusion;
+config.py changes only validate router options; policy.py only adds a routing
+input helper; runtime.py only changes load_router; analyze.py changes its routing
+call; models/router.py does not produce archived evidence. These protected
+model/config files remain protected against later changes. The legacy encoded
+cache fingerprint remains 9cddd3ea461824003854f5b0c42595f5f1f975224d4f59ca0be72d0e1e83dc34.
+
+The HPC launcher submits four independent CPU reconstruction tasks in the GPU
+partition (one untyped GPU reserved each), plus eight fresh fits: TREE five arms,
+FLAT dot/MLP/current attention. Dot/MLP can start immediately; richer fits depend
+on successful reconstruction. Training defaults are one untyped GPU, four CPUs,
+16 GB and two hours; reconstruction uses eight CPUs, 32 GB and two hours. Resource
+limits are provisional. W&B uses chronotree-routers with explicit variant names.
+No Slurm submission was performed by the assistant. Child-only arms are diagnostic
+and cannot support an unmatched TREE-versus-FLAT superiority claim.
+
+Validation: 244 focused CPU tests passed, covering direct/cache inference,
+source-label replay and causality, exact optimization resume, scientific cache
+identity, HPC dependency/duplicate-job handling and generated Bash syntax. The
+actual-device doctor passed FP32/BF16/FP16 on an RTX 5000 Ada. Five explicitly
+synthetic four-update CUDA fits passed with offline W&B tracking; this is 20 total
+updates, not real-data router training. Synthetic cached-selection component
+p50s ranged 1.48–3.42 ms; they are not full-policy or HPC speed claims. Evidence:
+`runs/router_architecture_synthetic_gpu_20261105T152226Z/summary.json`.
+
+A bounded real-cache VideoUnmask episode-0 replay checked 12 decisions and 48
+candidate rows per reader. Current-token and TREE child features matched direct
+online MemoryRecord helpers bit-exactly, and original label bytes stayed fixed.
+The diagnostic used artificial zero gains; it did not estimate utility or train
+on real data. Evidence: `runs/inspection/router_arch_real_inputs_20261105/report.json`.
+The diagram was regenerated; Chromium opened all six pages without text overflow,
+and the new router section was visually inspected.

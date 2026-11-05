@@ -329,6 +329,12 @@ python hpc/plan.py --plan core_seed0 --resume --dry-run
 python hpc/plan.py --plan core_seed0 --submit
 ```
 
+For the subsequent fixed-label router architecture screen (nonlinear scoring,
+TREE child descriptors, and task-conditioned current-token attention), use
+[`hpc/router_architectures.py`](hpc/router_architectures.py). The
+[submission guide](docs/router_architectures_hpc.md) launches isolated fresh
+fits in `chronotree-routers`, reusing existing utility labels and encoded caches.
+
 The rendered core plan has 45 jobs and at most two concurrent allocations by
 default. Costs remain unknown. Read [docs/hpc.md](docs/hpc.md) for selective stage
 resume, signals, resource profiles, final protocol freeze and accounting.

@@ -184,7 +184,16 @@ class LabelDataReader:
                 hierarchy["nodes"], rows[start:start + 4096], include_max=True, index=index,
             )
             records = list(_records_for_scoring(columns))
-            scorer.prepare(records)
+            child_features = None
+            if getattr(scorer.router, "requires_children", False):
+                pairs = index["children"][rows[start:start + 4096]]
+                if np.any(pairs < 0):
+                    raise ValueError("Child-aware scoring requires binary parent candidates")
+                child_columns = self.packed._columns(
+                    hierarchy["nodes"], pairs.reshape(-1), include_max=True, index=index,
+                )
+                child_features = candidate_features(child_columns, self.width).reshape(len(records), 2, -1)
+            scorer.prepare(records, children=child_features)
             values.extend(scorer(records))
         if not np.isfinite(values).all():
             raise ValueError("Router scores must be finite")
@@ -248,7 +257,11 @@ class LabelDataReader:
         return selected, codes, names
 
     @torch.no_grad()
-    def prepare(self, item, scorers=None):
+    def prepare(self, item, scorers=None, *, router_inputs=False, inputs_only=False, reader_family=None):
+        if inputs_only and not router_inputs:
+            raise ValueError("Input-only preparation requires router_inputs=True")
+        if reader_family not in (None, "tree", "flat"):
+            raise ValueError("Unknown router input reader")
         started = time.perf_counter()
         self.reference.reference = (item["episode_index"], item["index"])
         decision = self.decisions.decision(0)
@@ -272,11 +285,11 @@ class LabelDataReader:
         if len(leaves) != int(entry.attrs["history_leaf_count"]):
             raise ValueError("Indexed label leaf coverage differs from causal decision metadata")
         index = packed._index(hierarchy)
-        leaf_columns = packed._columns(hierarchy["nodes"], leaves, index=index)
+        leaf_columns = None if inputs_only else packed._columns(hierarchy["nodes"], leaves, index=index)
         base = packed.base_files.get(packed.cache_root / f"{info.task}.h5")[key]
         current_columns = packed._columns(base["current"][str(info.index)])
         current = columns_bank(current_columns, decision.clocks, self.width)
-        full = columns_bank(leaf_columns, decision.clocks, self.width)
+        full = None if inputs_only else columns_bank(leaf_columns, decision.clocks, self.width)
         text = torch.from_numpy(packed._read(base["text"])).float()
         state, clocks = decision.state.float(), torch.tensor(decision.clocks, dtype=torch.float32)
         observed = SimpleNamespace(proprio=state[:15], previous_action=state[15:23],
@@ -295,6 +308,8 @@ class LabelDataReader:
         selection_started = time.perf_counter()
         for name, frozen in (scorers.items() if scorers else (("tree", None), ("flat", None))):
             reader = name.rsplit("/", 1)[-1]
+            if reader_family is not None and reader != reader_family:
+                continue
             if reader not in ("tree", "flat"):
                 raise ValueError(f"Unknown label reader: {name}")
             rng = self._rng(item)
@@ -304,7 +319,8 @@ class LabelDataReader:
                 # Each context may belong to a different episode/prefix. Keep
                 # immutable keys only during this preparation; no unbounded LRU.
                 scorer.retain(())
-                scorer.set_query(query)
+                scorer.set_query(query, current=torch.cat((current.content[0], current.metadata[0]), -1),
+                                 current_valid=current.valid[0])
             cap = rng.randint(max(len(roots), 1), max(len(roots), budget - 1))
             if reader == "tree":
                 before_rows = self._tree(hierarchy, index, roots, cap, rng, scorer)
@@ -314,25 +330,37 @@ class LabelDataReader:
                 after_rows = [np.asarray([child for row in before_rows for child in (
                     index["children"][row] if row == candidate else (row,)
                 )], dtype=np.int64) for candidate in candidates]
-                union = np.unique(np.concatenate([before_rows, *after_rows]))
+                child_rows = index["children"][candidates].reshape(-1)
+                union = (np.unique(np.concatenate([np.asarray(candidates, dtype=np.int64), child_rows]))
+                         if inputs_only else np.unique(np.concatenate([before_rows, *after_rows])))
                 columns = packed._columns(hierarchy["nodes"], union, include_max=True, index=index)
                 lookup = {int(row): position for position, row in enumerate(union)}
                 def take(rows):
                     return _take(columns, [lookup[int(row)] for row in rows])
-                before = columns_bank(take(before_rows), decision.clocks, self.width)
-                after = [columns_bank(take(rows), decision.clocks, self.width) for rows in after_rows]
+                before = None if inputs_only else columns_bank(take(before_rows), decision.clocks, self.width)
+                after = [] if inputs_only else [columns_bank(take(rows), decision.clocks, self.width) for rows in after_rows]
                 candidate = candidate_features(take(candidates), self.width)
+                costs = torch.ones(len(candidates), dtype=torch.float32)
+                candidate_ids = [str(index["node_id"][row]) for row in candidates]
+                frontier_ids = [str(index["node_id"][row]) for row in before_rows]
+                children = (candidate_features(take(child_rows), self.width).reshape(len(candidates), 2, 2 * self.width + 23)
+                            if router_inputs else None)
             else:
                 selected, codes, groups = self._flat(hierarchy, index, leaves, cap, rng, scorer)
-                columns = flat_residual_columns(leaf_columns, selected, codes, groups)
-                before = columns_bank(columns, decision.clocks, self.width)
+                if not inputs_only:
+                    columns = flat_residual_columns(leaf_columns, selected, codes, groups)
+                    before = columns_bank(columns, decision.clocks, self.width)
+                    before_count = before.content.shape[1]
+                else:
+                    before = None
+                    before_count = int(selected.sum()) + len(set(codes[~selected]))
                 # Singleton residuals are normalized by selection. One group
                 # count pass replaces the reference O(N^2) move_cost filter.
                 counts = np.bincount(codes[~selected], minlength=len(groups))
                 candidates = [int(row) for row in np.flatnonzero(~selected) if counts[codes[row]] > 1]
                 rng.shuffle(candidates)
-                candidates = candidates[:self.cfg["labels"]["candidates"]] if before.content.shape[1] < budget else []
-                after = []
+                candidates = candidates[:self.cfg["labels"]["candidates"]] if before_count < budget else []
+                after, cost_values = [], []
                 for row in candidates:
                     moved = selected.copy()
                     moved[row] = True
@@ -340,18 +368,27 @@ class LabelDataReader:
                         remaining = (~moved) & (codes == group)
                         if int(remaining.sum()) == 1:
                             moved[remaining] = True
-                    after.append(columns_bank(flat_residual_columns(leaf_columns, moved, codes, groups),
-                                              decision.clocks, self.width))
+                    after_count = int(moved.sum()) + len(set(codes[~moved]))
+                    cost_values.append(after_count - before_count)
+                    if not inputs_only:
+                        after.append(columns_bank(flat_residual_columns(leaf_columns, moved, codes, groups),
+                                                  decision.clocks, self.width))
                 candidate = candidate_features(packed._columns(
                     hierarchy["nodes"], leaves[candidates], include_max=True, index=index,
                 ), self.width)
-            costs = torch.tensor([bank.content.shape[1] - before.content.shape[1] for bank in after],
-                                 dtype=torch.float32)
+                costs = torch.tensor(cost_values, dtype=torch.float32)
+                candidate_ids = [str(index["node_id"][leaves[row]]) for row in candidates]
+                frontier_ids = [str(index["node_id"][row]) for row in leaves[selected]]
+                children = None
             if (costs <= 0).any() or any(bank.content.shape[1] > budget for bank in after):
                 raise ValueError("Label moves require positive cost within the target budget")
             readers[name] = {"before": before, "after": after, "candidate": candidate, "costs": costs}
+            if router_inputs:
+                readers[name].update(children=children, candidate_ids=candidate_ids,
+                                     frontier_ids=frontier_ids)
         return {
             "context_id": item["context_id"], "seed": item["seed"], "budget": budget,
+            "decision_index": int(info.index),
             "episode_index": item["episode_index"], "episode": f"{info.task}/{info.episode_id}",
             "partition": int(self.partitions[item["episode_index"]] == "validation"),
             "target": decision.target.float(), "valid": decision.target_valid,

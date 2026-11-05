@@ -162,7 +162,7 @@ class OnlinePolicy:
                     candidates = archive.records if self.method == "TREE" else archive.leaves
                     self.scorer.retain(candidates)
                     self.scorer.prepare(candidates)
-                    self.scorer.set_query(policy.routing_query(evidence, self.budget))
+                    self.scorer.set_query(**policy.routing_inputs(evidence, self.budget, router=self.scorer.router))
             with timer.component("selection"):
                 selected = choose_records(
                     evidence, self.method, self.budget, scorer=self.scorer, rng=self.selection_rng

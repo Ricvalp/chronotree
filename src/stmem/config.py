@@ -108,6 +108,21 @@ def validate_config(cfg: dict) -> None:
         if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
             raise ValueError(f"tracking.scenes.{key} must be an integer in [{low}, {high}]")
     m, t = cfg["model"], cfg["training"]
+    router_architecture = m.get("router_architecture", "dot")
+    if router_architecture not in ("dot", "mlp", "children", "current_attention", "children_current_attention"):
+        raise ValueError("Unknown model.router_architecture")
+    if "children" in router_architecture and cfg.get("reader", "tree") != "tree":
+        raise ValueError("Child-aware router architectures require reader=tree")
+    for key, default in (("router_width", 128), ("router_attention_heads", 4),
+                         ("router_query_tokens", 8), ("router_attention_layers", 2)):
+        value = m.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"model.{key} must be a positive integer")
+    if "current_attention" in router_architecture and m.get("router_width", 128) % m.get("router_attention_heads", 4):
+        raise ValueError("Router width must be divisible by router attention heads")
+    fit_contexts = t.get("router_fit_contexts", 0)
+    if isinstance(fit_contexts, bool) or not isinstance(fit_contexts, int) or fit_contexts < 0:
+        raise ValueError("training.router_fit_contexts must be a nonnegative integer")
     history_mode = m.get("history_mode", "full")
     if history_mode not in ("full", "none"):
         raise ValueError("model.history_mode must be full or none")

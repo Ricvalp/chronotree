@@ -485,3 +485,19 @@ python hpc/smoke.py --render --updates 3 --output "$STMEM_RUN_ROOT/node_smoke.js
 The README supplies the installation, full-data preparation and subsequent stage
 commands. The planner submits only with `--submit`; standalone templates, including
 CPU preparation on the GPU queue, require an explicit user `sbatch` command.
+
+## Router architecture screen — 2026-11-05
+
+Implemented fixed-label dot/MLP, TREE child-feature, current-attention and combined
+router variants, verified enriched-input reconstruction, GPU-resident training,
+exact resume, and cached online scoring. The new launcher isolates all outputs,
+uses chronotree-routers and untyped GPU requests, and submits only with --submit.
+See [router architecture commands](router_architectures_hpc.md).
+
+244 focused CPU tests and five four-update explicitly synthetic CUDA fits passed.
+The real device doctor passed FP32/BF16/FP16. These checks do not establish improved
+router generalization, task success, or H200 throughput. Production label shards
+are on the HPC, so the real production replay/training screen remains for the
+user to launch. A bounded real-cache replay of 12 VideoUnmask decisions matched
+online current/child features bit-exactly, with artificial gain placeholders and
+no optimization. No cluster jobs were submitted here.

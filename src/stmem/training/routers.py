@@ -13,7 +13,7 @@ import torch
 from torch.nn import functional as F
 from stmem.config import run_dir, digest
 from stmem.evaluation.timing import process_memory
-from stmem.models.router import LocalRouter
+from stmem.models.router import build_router
 from stmem.tracking import RunTracker
 from stmem.training.gain_labels import label_path
 from stmem.training.logging_options import positive_log_every, resolve_logging
@@ -47,6 +47,83 @@ def _validation_ranking_pairs(context_arrays, validation_ids, validation_gain, e
     indices = torch.tensor(pairs, dtype=torch.long)
     distinct = (validation_gain[indices[:, 0]] - validation_gain[indices[:, 1]]).abs() > epsilon
     return indices[distinct, 0], indices[distinct, 1]
+
+
+def _context_groups(context_arrays, ids):
+    """Padded positions within a split, never joining initial and refresh draws."""
+    positions = {int(row): i for i, row in enumerate(ids)}
+    groups = defaultdict(list)
+    offset = 0
+    for phase, contexts in enumerate(context_arrays):
+        for row, context in enumerate(contexts):
+            if offset + row in positions:
+                groups[phase, int(context)].append(positions[offset + row])
+        offset += len(contexts)
+    members = [rows for rows in groups.values() if len(rows) > 1]
+    indices = torch.zeros((len(members), max(map(len, members), default=0)), dtype=torch.long)
+    valid = torch.zeros_like(indices, dtype=torch.bool)
+    for i, rows in enumerate(members):
+        indices[i, :len(rows)] = torch.tensor(rows)
+        valid[i, :len(rows)] = True
+    return indices, valid
+
+
+def _fit_training_ids(cfg, context_arrays, train_ids):
+    """Optional fixed *training-context* subset, independent of global RNG/validation."""
+    count = cfg["training"].get("router_fit_contexts", 0)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError("training.router_fit_contexts must be a nonnegative integer")
+    if not count:
+        return train_ids
+    allowed = set(map(int, train_ids))
+    groups, offset = defaultdict(list), 0
+    for phase, contexts in enumerate(context_arrays):
+        for row, context in enumerate(contexts):
+            if offset + row in allowed:
+                groups[phase, int(context)].append(offset + row)
+        offset += len(contexts)
+    keys = sorted(groups)
+    if count > len(keys):
+        raise ValueError(f"router_fit_contexts={count} exceeds {len(keys)} available training contexts")
+    chosen = np.random.default_rng(cfg["seed"]).choice(len(keys), count, replace=False)
+    return np.asarray(sorted(row for index in chosen for row in groups[keys[int(index)]]), dtype=np.int64)
+
+
+def _router_prediction(router, query, candidate, ids, inputs=None):
+    if not inputs:
+        return router(query[ids], candidate[ids])
+    children = inputs["children"][ids] if router.requires_children else None
+    if not router.requires_current:
+        return router(query[ids], candidate[ids], children=children)
+    # Several candidate moves share exactly the same current observation/task.
+    # Compute attention once per distinct context in this minibatch.
+    contexts, inverse = torch.unique(inputs["row_to_context"][ids], sorted=True, return_inverse=True)
+    encoded_query = router.encode_query(
+        inputs["context_query"][contexts], current=inputs["current"][contexts],
+        current_valid=inputs["current_valid"][contexts],
+    )
+    keys, bias = router.encode_candidates(candidate[ids], children=children)
+    return router.score_encoded(encoded_query[inverse], keys, bias)
+
+
+def _choice_metrics(predictions, gain, groups, scale, prefix):
+    indices, valid = groups
+    if not len(indices):
+        return {}
+    scores = predictions[indices].masked_fill(~valid, -torch.inf)
+    actual = gain[indices]
+    best = actual.masked_fill(~valid, -torch.inf).amax(dim=1)
+    # Give exact prediction ties their expected gain, not arbitrary row-order credit.
+    selected = valid & (scores == scores.amax(dim=1, keepdim=True))
+    chosen = (actual * selected).sum(dim=1) / selected.sum(dim=1)
+    random = (actual * valid).sum(dim=1) / valid.sum(dim=1)
+    values = [chosen.mean(), best.mean(), random.mean(), (best - chosen).mean(),
+              ((best - chosen) / scale).mean()]
+    names = [f"{prefix}_{name}" for name in (
+        "selected_label_gain", "best_candidate_label_gain", "random_candidate_label_gain",
+        "top_choice_label_regret", "top_choice_label_regret_scaled",
+    )]
+    return dict(zip(names, values))
 
 
 def _objective(cfg):
@@ -235,9 +312,10 @@ def _load_labels(cfg):
 
 
 @torch.no_grad()
-def _split_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size, *, training=False):
+def _split_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size, *,
+                   training=False, inputs=None, groups=None):
     predictions = torch.cat([
-        router(query[chunk], candidate[chunk]) for chunk in ids.split(batch_size)
+        _router_prediction(router, query, candidate, chunk, inputs) for chunk in ids.split(batch_size)
     ])
     expected_gain = gain[ids]
     metrics = [
@@ -252,12 +330,16 @@ def _split_metrics(router, query, candidate, gain, ids, left, right, scale, batc
         expected_order = (expected_gain[left] - expected_gain[right]).sign()
         metrics.append((predicted_order == expected_order).float().mean())
         names.append(f"{prefix}_within_context_rank_agreement")
+    if groups is not None:
+        choice = _choice_metrics(predictions, expected_gain, groups, scale, prefix)
+        names.extend(choice)
+        metrics.extend(choice.values())
     # A single small transfer; no per-validation-batch GPU synchronization.
     return dict(zip(names, torch.stack(metrics).cpu().tolist()))
 
 
-def _validation_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size):
-    return _split_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size)
+def _validation_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size, **kwargs):
+    return _split_metrics(router, query, candidate, gain, ids, left, right, scale, batch_size, **kwargs)
 
 
 @torch.no_grad()
@@ -292,6 +374,9 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
         raise ValueError("Router labels must contain nonempty disjoint train and validation episode sets")
     if set(merged["episode"][train_ids]) & set(merged["episode"][val_ids]):
         raise ValueError("Episode leakage in router-label diagnostic split")
+    available_train_labels = len(train_ids)
+    train_ids = _fit_training_ids(cfg, context_arrays, train_ids)
+    fit_ids_sha256 = digest(train_ids.tolist())
     gain_cpu = torch.from_numpy(merged["gain"]).float()
     scale = max(float(gain_cpu[train_ids].abs().median()), 1e-6)
     ranking_left, ranking_right = _validation_ranking_pairs(
@@ -302,6 +387,8 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
             context_arrays, train_ids, gain_cpu[train_ids], cfg.get("labels", {}).get("gain_epsilon", 1e-6)
         )
         train_left, train_right = train_left.to(device), train_right.to(device)
+    validation_groups = tuple(value.to(device) for value in _context_groups(context_arrays, val_ids))
+    training_groups = tuple(value.to(device) for value in _context_groups(context_arrays, train_ids)) if diagnostics else None
     # The full FP32 dataset is small (about 263 MiB for 64k default-width rows).
     # Transfer once; minibatches thereafter transfer only their sampled indices.
     query = torch.from_numpy(merged["query"]).to(device=device, dtype=torch.float32)
@@ -311,12 +398,30 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
     train_indices = torch.from_numpy(train_ids).to(device) if diagnostics else None
     ranking_left, ranking_right = ranking_left.to(device), ranking_right.to(device)
     feature_bytes = sum(value.numel() * value.element_size() for value in (query, candidate, gain))
+    router = build_router(cfg).to(device)
+    inputs, input_identity = {}, None
+    if router.requires_children or router.requires_current:
+        from stmem.training.router_inputs import load_router_inputs
+
+        arrays, input_identity = load_router_inputs(cfg, paths, merged)
+        if router.requires_children:
+            if arrays.get("children") is None:
+                raise ValueError("Child-aware router requires TREE child descriptors")
+            inputs["children"] = torch.as_tensor(arrays["children"], dtype=torch.float32, device=device)
+        if router.requires_current:
+            for key, dtype in (("current", torch.float32), ("current_valid", torch.bool),
+                               ("row_to_context", torch.long)):
+                inputs[key] = torch.as_tensor(arrays[key], dtype=dtype, device=device)
+            unique, first = np.unique(arrays["row_to_context"], return_index=True)
+            inputs["context_query"] = query.new_zeros((len(arrays["current"]), query.shape[-1]))
+            inputs["context_query"][torch.as_tensor(unique, device=device)] = query[torch.as_tensor(first, device=device)]
+        feature_bytes += sum(value.numel() * value.element_size() for value in inputs.values())
+        del arrays
     del merged, context_arrays, gain_cpu
     validation_batch = cfg["training"].get("router_validation_batch", 4096)
     if isinstance(validation_batch, bool) or not isinstance(validation_batch, int) or validation_batch < 1:
         raise ValueError("training.router_validation_batch must be a positive integer")
     label_hashes = [file_sha256(p) for p in paths]
-    router = LocalRouter(cfg["model"]["width"], cfg["model"]["router_width"]).to(device)
     optimizer = torch.optim.AdamW(
         router.parameters(), lr=cfg["training"]["lr"], weight_decay=cfg["training"]["weight_decay"]
     )
@@ -329,6 +434,12 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
             raise ValueError("Router resume objective/integration_steps mismatch")
         if old.get("label_identity", label_identity) != label_identity:
             raise ValueError("Router resume frozen label identity changed")
+        if old.get("router_input_identity") != input_identity:
+            raise ValueError("Router resume richer input identity changed")
+        if old["config"]["training"].get("router_fit_contexts", 0) != cfg["training"].get("router_fit_contexts", 0):
+            raise ValueError("Router resume training-context subset changed")
+        if cfg["training"].get("router_fit_contexts", 0) and old.get("fit_ids_sha256") != fit_ids_sha256:
+            raise ValueError("Router resume training-context IDs changed")
         if old["label_hashes"] != label_hashes[:len(old["label_hashes"])]:
             raise ValueError("Router resume labels changed; refresh may only append a new fixed shard")
         if len(old["label_hashes"]) < len(label_hashes):
@@ -372,6 +483,12 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
         "objective": objective,
         "integration_steps": integration_steps,
         "router_device": device,
+        "router_architecture": cfg["model"].get("router_architecture", "dot"),
+        "router_parameters": sum(p.numel() for p in router.parameters()),
+        "router_input_identity": input_identity,
+        "router_fit_contexts": cfg["training"].get("router_fit_contexts", 0),
+        "fit_ids_sha256": fit_ids_sha256,
+        "available_train_labels": available_train_labels,
         "feature_bytes": feature_bytes,
         "teacher_sha256": identities[0]["teacher"],
         "compact_sha256": identities[0]["compact"],
@@ -390,9 +507,9 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
         cfg,
         directory,
         job_type=f"router_{cfg['reader']}",
-        name=(f"seed{cfg.get('seed', 0)}-router-{'overfit-' if diagnostics else ''}{cfg['reader']}-{objective}"
+        name=cfg.get("tracking", {}).get("name") or ((f"seed{cfg.get('seed', 0)}-router-{'overfit-' if diagnostics else ''}{cfg['reader']}-{objective}"
               + (f"-{integration_steps}steps" if objective == "final_action" else ""))
-        if diagnostics or "objective" in cfg.get("labels", {}) else None,
+        if diagnostics or "objective" in cfg.get("labels", {}) else None),
         metadata=tracking_metadata,
         resume=bool(resume),
     ) as tracker:
@@ -404,11 +521,13 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
             result = _validation_metrics(
                 router, query, candidate, gain, val_indices, ranking_left, ranking_right,
                 scale, validation_batch,
+                inputs=inputs, groups=validation_groups,
             )
             if diagnostics:
                 result.update(_split_metrics(
                     router, query, candidate, gain, train_indices, train_left, train_right,
                     scale, validation_batch, training=True,
+                    inputs=inputs, groups=training_groups,
                 ))
                 result.update(baselines, training_rank_pairs=len(train_left))
             return result
@@ -435,7 +554,7 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
             router.train()
             # Retain the original CPU RNG draw and row order for exact resume.
             indices = torch.from_numpy(train_ids[torch.randint(len(train_ids), (batch,)).numpy()]).to(device)
-            prediction = router(query[indices], candidate[indices])
+            prediction = _router_prediction(router, query, candidate, indices, inputs)
             loss = F.smooth_l1_loss(prediction, gain[indices] / scale)
             if not torch.isfinite(loss):
                 raise FloatingPointError("Nonfinite router loss")
@@ -498,6 +617,8 @@ def train_router(cfg, *, resume=None, stop_file=None, log_every=None):
                     "target_scale": scale,
                     "label_hashes": label_hashes,
                     "label_identity": label_identity,
+                    "router_input_identity": input_identity,
+                    "fit_ids_sha256": fit_ids_sha256,
                     "objective": objective,
                     "integration_steps": integration_steps,
                     "provenance": {

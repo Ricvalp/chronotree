@@ -205,7 +205,7 @@ def routing_diagnostic(
             router, checkpoint_hash = learned_routers[family]
             scorer = CachedScorer(router, checkpoint_hash)
             scorer.prepare(evidence.archive.records if family == "tree" else evidence.archive.leaves)
-            scorer.set_query(compact.routing_query(evidence, budget))
+            scorer.set_query(**compact.routing_inputs(evidence, budget, router=router))
             selected = choose_records(evidence, family, budget, scorer=scorer)
             summary["families"][family]["learned_disagreement"] = disagreement(selected.records)
             summary["families"][family]["learned_stats"] = selected.stats
