@@ -191,7 +191,7 @@
     "configs/teacher_fv_prop.yaml": "bcf12b15fe6bf1c93f7a6454949ca3b10c9aa0424073cd01932b33c2f0f50237",
     "configs/teacher_fv_prop_10hz.yaml": "0cd5369a3f021aae9f101705b2b65112a50d8eebf84c4dda1fc8158939564a24",
     "hpc/cache_hierarchy.py": "5d687e928add05cc205a05c34b3863d4a8db62294ce5bdc2d9e94a4dcc08a16f",
-    "hpc/evaluate.py": "8c5ec4949f36e2ca2e39cc2b84ce7b756231fd381242604f7413fd7f95b9a3d5",
+    "hpc/evaluate.py": "51a5f8d632ca33d1c248a213341d231d9bc507098b0e1c5f02b70eb9d4e40193",
     "hpc/router_architectures.py": "1fa0a96691100267bd5e0680be0ab31f62a4ded7220e4cc46093e83523d2bc7d",
     "hpc/train_compact.py": "81cce0fe375a59968339a7a6204f1169192c2b951998cbb8e865ff5455c23550",
     "src/stmem/config.py": "374800f914082c848157fbf7eccbc6ed6bef0f1e2527107ffd7fd6dd0affe9ba",

@@ -1624,3 +1624,47 @@ The diagnostic used artificial zero gains; it did not estimate utility or train
 on real data. Evidence: `runs/inspection/router_arch_real_inputs_20261105/report.json`.
 The diagram was regenerated; Chromium opened all six pages without text overflow,
 and the new router section was visually inspected.
+
+## 2026-11-09: fixed-context noise repeatability and interpretable gain examples
+
+At the user's request, run local inference diagnostics for label repeatability
+and visual inspection, explicitly skipping small-set memorization. Prepare each
+causal decision/frontier/candidate set once, then vary only the prepared noise
+seed. Reuse the canonical paired velocity/final-action evaluator; retain all
+signed gains. Select high/low on eight draws and assess them on eight different
+draws. Include an identical-context no-op and an identical-seed replay. Compare
+normalized action outputs before clipping; display clipped target TCP geometry
+and separately report normalized expert error without changing label semantics.
+
+Use the existing verified local VideoUnmask data and cached teacher evidence.
+The available teacher is the exact 104110-step selected snapshot. The local
+compact is 83000 steps, while W&B/provenance establishes the production label
+snapshot as 90000 steps. Preserve this distinction in manifests and every HTML
+page; no weight-equivalence claim is made. Local 30-context results (21 decision
+times, one episode) cannot explain production generalization conclusively.
+
+All 60 TREE/FLAT context pages remain available. Featured stable/unstable and
+semantic-counterexample pages are explicitly post-hoc explanatory selections.
+Source images and token bounds suggest interpretations but are not object masks
+or causal feature attributions. A useful target-container refinement and a
+stable table refinement that worsens expert error both occur; do not equate
+teacher-agreement gain with semantic importance or task success. No model,
+training, production label, benchmark protocol, or diagram architecture changes.
+Measured checks and reproducible commands are in `docs/gain_repeatability.md`.
+
+## 2026-11-09: learned-router and random-FLAT closed-loop comparison
+
+Expose the existing parallel evaluator's learned-router path through
+`hpc/evaluate.py --router-checkpoint`. Pin both weights, require a compact policy,
+the matching TREE/FLAT router family, and exact policy SHA256 provenance. Include
+the router hash in named-plan identity; resume uses immutable snapshots even
+when original files advance. Keep random selection mutually exclusive with a
+learned router. An explicit `--wandb-project` overrides both checkpoint and site
+settings so these comparisons can stay in chronotree-routers.
+
+Use the retained FLAT-dot 50k checkpoint (51.98% label-ranking accuracy) with its
+exact 90k compact, against random FLAT on the same seeds, budget and action
+execution protocol. The 52.33% peak at 2k was not saved; do not claim that we
+can evaluate that exact peak. No change to architecture, training or labels,
+and no Slurm submission or measured closed-loop result in this implementation.
+Commands are in `docs/router_architectures_hpc.md`.

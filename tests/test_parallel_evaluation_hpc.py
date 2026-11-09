@@ -178,6 +178,156 @@ def test_random_selection_rejects_noncompact_weights(launcher):
     assert not (launcher.repo / "hpc/generated/example/evaluate.sbatch").exists()
 
 
+def _router_fixture(launcher, *, reader="flat"):
+    """Serialize identities only; the rendering tests never perform inference."""
+    compact = torch.load(launcher.source, weights_only=False)
+    compact["stage"] = "compact"
+    torch.save(compact, launcher.source)
+    config = deepcopy(launcher.cfg)
+    config["reader"] = reader
+    path = launcher.source.with_name("router last.pt")
+    torch.save({
+        "stage": "router", "reader": reader, "step": 50000,
+        "config": config, "model": {"synthetic_router_fixture": torch.zeros(1)},
+        "provenance": {"compact": launcher.module.sha256(launcher.source)},
+    }, path)
+    return path
+
+
+@pytest.mark.parametrize("family", ["tree", "flat"])
+def test_learned_router_plan_freezes_both_checkpoints_and_forwards_reader(launcher, family):
+    router = _router_fixture(launcher, reader=family)
+    plan = launcher.invoke("--method", family.upper(), "--router-checkpoint", str(router),
+                           "--budget", "128", "--execute-actions", "10")
+    snapshot = launcher.repo / "runs/evaluation_inputs/example/router.pt"
+    assert plan["source_router_checkpoint"] == str(router)
+    assert plan["router_checkpoint"] == str(snapshot)
+    assert plan["router_checkpoint_sha256"] == launcher.module.sha256(router)
+    assert plan["router_checkpoint_step"] == 50000
+    assert snapshot.read_bytes() == router.read_bytes()
+    assert plan["command"][plan["command"].index("--router-checkpoint") + 1] == str(snapshot)
+    assert plan["method"] == family.upper() and plan["selection_family"] is None
+    assert "--selection-family" not in plan["command"]
+    assert plan["budget"] == 128 and plan["execution"]["execute_actions"] == 10
+    saved_router = torch.load(snapshot, weights_only=False)
+    assert saved_router["provenance"]["compact"] == plan["checkpoint_sha256"]
+    config = yaml.safe_load(Path(plan["config"]).read_text())
+    assert config["evaluation"]["seed"] == launcher.cfg["evaluation"]["seed"]
+    assert config["data"]["tasks"] == launcher.cfg["data"]["tasks"]
+    subprocess.run(["bash", "-n", plan["script"]], check=True)
+
+
+def test_learned_and_random_flat_comparison_preserves_policy_and_episode_protocol(launcher):
+    router = _router_fixture(launcher)
+    learned = launcher.invoke("--method", "FLAT", "--router-checkpoint", str(router),
+                              "--budget", "128", "--execute-actions", "10")
+    launcher.module.main([
+        "--site", str(launcher.site), "--checkpoint", str(launcher.source), "--name", "baseline",
+        "--method", "FLAT", "--selection-family", "flat", "--budget", "128",
+        "--execute-actions", "10",
+    ])
+    baseline = json.loads((launcher.repo / "hpc/generated/baseline/plan.json").read_text())
+    for key in ("checkpoint_sha256", "checkpoint_step", "method", "budget", "execution",
+                "tasks", "planned_episodes", "episode_count_per_task", "split", "num_shards",
+                "workers_per_gpu", "video_cap_total"):
+        assert learned[key] == baseline[key]
+    learned_cfg = yaml.safe_load(Path(learned["config"]).read_text())
+    baseline_cfg = yaml.safe_load(Path(baseline["config"]).read_text())
+    assert learned_cfg == baseline_cfg
+    assert learned_cfg["evaluation"]["seed"] == launcher.cfg["evaluation"]["seed"]
+    assert learned["selection_family"] is None and baseline["selection_family"] == "flat"
+    assert "--router-checkpoint" in learned["command"]
+    assert "--router-checkpoint" not in baseline["command"]
+    assert learned["signature"] != baseline["signature"]
+
+
+@pytest.mark.parametrize("mismatch", ["router_stage", "reader", "compact_hash", "policy_stage"])
+def test_learned_router_rejects_incompatible_checkpoint_pair(launcher, mismatch):
+    router = _router_fixture(launcher)
+    state = torch.load(router, weights_only=False)
+    if mismatch == "router_stage":
+        state["stage"] = "compact"
+    elif mismatch == "reader":
+        state["reader"] = state["config"]["reader"] = "tree"
+    elif mismatch == "compact_hash":
+        state["provenance"]["compact"] = "0" * 64
+    else:
+        policy = torch.load(launcher.source, weights_only=False)
+        policy["stage"] = "teacher"
+        torch.save(policy, launcher.source)
+        # Isolate the stage check from the checkpoint-identity check.
+        state["provenance"]["compact"] = launcher.module.sha256(launcher.source)
+    torch.save(state, router)
+    with pytest.raises(SystemExit):
+        launcher.invoke("--method", "FLAT", "--router-checkpoint", str(router))
+    assert not (launcher.repo / "hpc/generated/example/evaluate.sbatch").exists()
+
+
+@pytest.mark.parametrize("arguments", [
+    ("--method", "FULL"),
+    ("--method", "FLAT", "--selection-family", "flat"),
+])
+def test_router_cannot_be_silently_ignored_or_combined_with_random_selection(launcher, arguments):
+    router = _router_fixture(launcher)
+    with pytest.raises(SystemExit):
+        launcher.invoke("--router-checkpoint", str(router), *arguments)
+    assert not (launcher.repo / "runs/evaluation_inputs").exists()
+
+
+def test_router_resume_uses_reviewed_pair_even_when_source_checkpoints_advance(launcher, monkeypatch):
+    router = _router_fixture(launcher)
+    arguments = ("--method", "FLAT", "--router-checkpoint", str(router))
+    calls = []
+
+    def submit(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=str(70000 + len(calls)) + "\n")
+
+    monkeypatch.setattr(launcher.module.subprocess, "run", submit)
+    monkeypatch.setattr(launcher.module, "active_user_job_ids", set)
+    original = launcher.invoke(*arguments, "--submit")
+    policy = torch.load(launcher.source, weights_only=False)
+    policy["step"] += 1
+    torch.save(policy, launcher.source)
+    state = torch.load(router, weights_only=False)
+    state["step"] = 100000
+    state["provenance"]["compact"] = launcher.module.sha256(launcher.source)
+    torch.save(state, router)
+    resumed = launcher.invoke(*arguments, "--resume", "--submit", "--walltime", "08:00:00")
+    assert len(calls) == 2 and "--resume" in resumed["command"]
+    assert resumed["signature"] == original["signature"]
+    for key in ("checkpoint", "checkpoint_sha256", "checkpoint_step", "router_checkpoint",
+                "router_checkpoint_sha256", "router_checkpoint_step"):
+        assert resumed[key] == original[key]
+    assert torch.load(resumed["router_checkpoint"], weights_only=False)["step"] == 50000
+    assert resumed["router_checkpoint_sha256"] != launcher.module.sha256(router)
+
+
+def test_router_resume_rejects_different_source_or_tampered_snapshot(launcher):
+    router = _router_fixture(launcher)
+    original = launcher.invoke("--method", "FLAT", "--router-checkpoint", str(router))
+    other = router.with_name("another router.pt")
+    shutil.copyfile(router, other)
+    with pytest.raises(SystemExit):
+        launcher.invoke("--method", "FLAT", "--router-checkpoint", str(other), "--resume")
+    Path(original["router_checkpoint"]).write_bytes(b"incomplete router transfer")
+    with pytest.raises(SystemExit):
+        launcher.invoke("--method", "FLAT", "--router-checkpoint", str(router), "--resume")
+    assert json.loads(Path(original["script"]).with_name("plan.json").read_text()) == original
+
+
+def test_explicit_wandb_project_overrides_site_and_checkpoint_config(launcher):
+    plan = launcher.invoke("--wandb-project", "chronotree-routers")
+    config = yaml.safe_load(Path(plan["config"]).read_text())
+    assert config["tracking"]["project"] == "chronotree-routers"
+    script = Path(plan["script"]).read_text()
+    assert "export WANDB_PROJECT=chronotree-routers\n" in script
+    assert "export WANDB_PROJECT=fixture\n" not in script
+    with pytest.raises(SystemExit):
+        launcher.invoke("--wandb-project", "another-project")
+    assert json.loads(Path(plan["script"]).with_name("plan.json").read_text()) == plan
+
+
 def test_generated_script_launches_one_supervisor_with_quoted_paths(launcher, monkeypatch, tmp_path):
     plan = launcher.invoke("--execute-actions", "8", "--workers-per-gpu", "8")
     fake_bin = tmp_path / "bin"

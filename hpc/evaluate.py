@@ -56,6 +56,37 @@ def snapshot_checkpoint(source, destination):
         temporary.unlink(missing_ok=True)
 
 
+def prepare_router_checkpoint(source, snapshot, previous, checkpoint_hash, method):
+    """Pin a learned reader to its exact compact policy, including on resume."""
+    record_path = snapshot.with_suffix(".json")
+    if previous:
+        if previous.get("source_router_checkpoint") != str(source):
+            raise ValueError("Named plan has a different router source; choose a new --name")
+        router_hash = previous.get("router_checkpoint_sha256")
+        if not snapshot.is_file() or sha256(snapshot) != router_hash:
+            raise ValueError("Immutable router checkpoint snapshot is missing or changed")
+        state = load_checkpoint(snapshot)
+    elif snapshot.exists():
+        if not record_path.is_file():
+            raise ValueError("Router snapshot has no identity record; choose a new --name")
+        record = json.loads(record_path.read_text())
+        router_hash = record.get("sha256")
+        if record.get("source_checkpoint") != str(source) or sha256(snapshot) != router_hash:
+            raise ValueError("Existing router snapshot identity differs; choose a new --name")
+        state = load_checkpoint(snapshot)
+    else:
+        state, router_hash = snapshot_checkpoint(source, snapshot)
+        save_json(record_path, {"source_checkpoint": str(source), "sha256": router_hash,
+                                "step": state["step"]})
+    if state.get("stage") != "router":
+        raise ValueError("--router-checkpoint must be a trained router checkpoint")
+    if state.get("reader") != method.lower() or state["config"].get("reader") != method.lower():
+        raise ValueError("Router reader must match --method TREE or FLAT")
+    if state.get("provenance", {}).get("compact") != checkpoint_hash:
+        raise ValueError("Router was trained against a different compact checkpoint (SHA256 mismatch)")
+    return state, router_hash
+
+
 def render_script(plan, site, cfg):
     directives = {
         "job-name": f"stmem_eval_{plan['name']}", "nodes": "1", "ntasks": "1",
@@ -121,6 +152,9 @@ def main(argv=None):
     parser.add_argument("--method", choices=("FULL", "CURRENT", "UNIFORM", "PERCEIVER", "TREE", "FLAT"), default="FULL")
     parser.add_argument("--selection-family", choices=("tree", "flat"),
                         help="Random compact checkpoint selection; must match TREE/FLAT method")
+    parser.add_argument("--router-checkpoint", type=Path,
+                        help="Learned TREE/FLAT router trained against this exact compact checkpoint")
+    parser.add_argument("--wandb-project", help="Override the checkpoint and site W&B project")
     parser.add_argument("--budget", type=positive_integer, help="History token budget; default from checkpoint")
     parser.add_argument("--gpus", type=positive_integer, default=4)
     parser.add_argument("--workers-per-gpu", type=positive_integer, default=4)
@@ -137,8 +171,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.selection_family is not None and args.method != args.selection_family.upper():
         parser.error("--selection-family must match --method TREE or FLAT")
-    if args.method in ("TREE", "FLAT") and args.selection_family is None:
-        parser.error("This launcher requires --selection-family for random TREE/FLAT; learned-router evaluation uses stmem.evaluation.parallel --router-checkpoint")
+    if args.router_checkpoint is not None and args.selection_family is not None:
+        parser.error("--router-checkpoint and --selection-family are mutually exclusive")
+    if args.router_checkpoint is not None and args.method not in ("TREE", "FLAT"):
+        parser.error("--router-checkpoint requires --method TREE or FLAT")
+    if args.method in ("TREE", "FLAT") and args.selection_family is None and args.router_checkpoint is None:
+        parser.error("TREE/FLAT requires --selection-family for random selection or --router-checkpoint")
+    if args.wandb_project is not None and not args.wandb_project.strip():
+        parser.error("--wandb-project must be nonempty")
     if args.resume and not args.name:
         parser.error("--resume requires the original --name")
     if args.episode_count > 50:
@@ -153,6 +193,8 @@ def main(argv=None):
     if not args.partition:
         parser.error("--partition must be nonempty")
     site = read_site(args.site)
+    if args.wandb_project is not None:
+        site["WANDB_PROJECT"] = args.wandb_project
     repo = absolute_path(site.get("STMEM_REPO_ROOT", REPO), REPO)
     name = args.name or ("evaluation_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                          + "_" + secrets.token_hex(3))
@@ -207,8 +249,24 @@ def _prepare_and_submit(args, site, repo, name, generated):
         state, checkpoint_hash = snapshot_checkpoint(source, snapshot)
         save_json(snapshot_record, {"source_checkpoint": str(source), "sha256": checkpoint_hash,
                                     "step": state["step"]})
+    router_snapshot = None
+    router_fields = {}
+    if args.router_checkpoint is not None:
+        if state.get("stage") != "compact":
+            raise ValueError("Learned router evaluation requires a compact policy checkpoint")
+        router_source = absolute_path(args.router_checkpoint, repo)
+        router_snapshot = snapshot.parent / "router.pt"
+        router_state, router_hash = prepare_router_checkpoint(
+            router_source, router_snapshot, previous, checkpoint_hash, args.method,
+        )
+        router_fields = {
+            "source_router_checkpoint": str(router_source), "router_checkpoint": str(router_snapshot),
+            "router_checkpoint_sha256": router_hash, "router_checkpoint_step": router_state["step"],
+        }
+    elif previous and previous.get("router_checkpoint") is not None:
+        raise ValueError("Named plan requires its original --router-checkpoint")
     validate_selection_protocol(
-        args.method, args.selection_family, None, checkpoint_stage=state.get("stage"), split="val",
+        args.method, args.selection_family, router_snapshot, checkpoint_stage=state.get("stage"), split="val",
     )
     cfg = deepcopy(state["config"])
     if args.config:
@@ -221,6 +279,8 @@ def _prepare_and_submit(args, site, repo, name, generated):
         cfg["paths"][key] = str(absolute_path(site.get(env) or cfg["paths"][key], repo))
     cfg["paths"]["run_root"] = str(absolute_path(cfg["paths"]["run_root"], repo))
     cfg["evaluation"].update(episode_count=args.episode_count, video_cap=args.video_cap, split="val")
+    if args.wandb_project is not None:
+        cfg.setdefault("tracking", {})["project"] = args.wandb_project
     validate_config(cfg)
     effective, override = evaluation_execution_config(
         state["config"], cfg, execute_actions=args.execute_actions, split="val",
@@ -246,6 +306,8 @@ def _prepare_and_submit(args, site, repo, name, generated):
         command.extend(["--budget", str(budget)])
     if args.selection_family is not None:
         command.extend(["--selection-family", args.selection_family])
+    if router_snapshot is not None:
+        command.extend(["--router-checkpoint", str(router_snapshot)])
     if args.resume:
         command.append("--resume")
     signature_inputs = {
@@ -256,6 +318,8 @@ def _prepare_and_submit(args, site, repo, name, generated):
     }
     if args.selection_family is not None or args.budget is not None:
         signature_inputs.update(selection_family=args.selection_family, budget=budget)
+    if router_snapshot is not None:
+        signature_inputs["router_checkpoint_sha256"] = router_fields["router_checkpoint_sha256"]
     signature = digest(signature_inputs)
     if previous and previous["signature"] != signature:
         raise ValueError("Named evaluation inputs, code or worker assignment changed; choose a new --name")
@@ -279,6 +343,7 @@ def _prepare_and_submit(args, site, repo, name, generated):
         "execution": override or {"execute_actions": effective["model"]["execute"],
                                    "action_stride": effective["model"].get("action_stride", 1)},
         "estimated_gpu_hours": "unknown; throughput must be measured on the allocated hardware",
+        **router_fields,
     }
     script = render_script(plan, site, cfg)
     if args.submit and receipt_path.exists():

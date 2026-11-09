@@ -159,3 +159,65 @@ is not the full fitting-set loss. Held-out label performance is conditional on
 the frozen policies/encoders, which may already have seen those episodes;
 it is not a benchmark success rate. Closed-loop and routing-latency evaluation
 remain necessary before claiming better control or efficiency.
+
+## Matched closed-loop check
+
+The completed final-action architecture screen's highest FLAT-dot ranking
+accuracy was 52.33% at 2,000 updates. That checkpoint was not retained: this
+trainer does not save a validation-best checkpoint automatically. Its retained
+50,000-update snapshot reached 51.98%, the best ranking accuracy among the
+retained suite snapshots. These are label-ranking scores, not task success.
+Evidence: W&B run `d422829bd22e63d1`, retrieved 2026-11-09.
+
+Evaluate that router against random FLAT selection using the exact frozen
+90k compact policy used for its labels. Both retain the same residual summaries,
+128-token budget, four validation episodes per task, ten executed targets per
+chunk, and checkpoint-defined action solver and seeds. Action-noise and random
+selection RNGs are separate. The trajectories can diverge after selection affects
+the action, as intended. This comparison measures the effect of learned ranking;
+it does not remove history or replace the compact policy with the teacher.
+
+After updating the HPC checkout, run in Bash:
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+
+EVAL_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+ROUTER_EVAL_ARGS=(
+  --site hpc/site_b200_4gpu.env
+  --checkpoint hpc/generated/memory_fv_seed0_routers/frozen/compact.pt
+  --method FLAT --budget 128 --execute-actions 10
+  --partition gpuq --gpu-type ""
+  --gpus 4 --workers-per-gpu 4 --cpus 64 --mem 128G
+  --walltime 06:00:00 --episode-count 4 --video-cap 10
+  --wandb-project chronotree-routers
+)
+
+.venv/bin/python hpc/evaluate.py "${ROUTER_EVAL_ARGS[@]}" \
+  --name "router_dot50k_execute10_${EVAL_STAMP}" \
+  --router-checkpoint runs/memory_fv_seed0_router_arch_final8/dot/flat/seed0/router_flat/step_00050000.pt \
+  --submit
+
+.venv/bin/python hpc/evaluate.py "${ROUTER_EVAL_ARGS[@]}" \
+  --name "random_flat90k_execute10_${EVAL_STAMP}" \
+  --selection-family flat \
+  --submit
+```
+
+The jobs are independent. Each requests four untyped GPUs on gpuq, 64 CPUs,
+128 GB RAM, and runs up to 16 simulations concurrently. Neither requests
+`--exclusive`. Each evaluates 64 episodes and saves at most ten videos.
+The explicit W&B project overrides the site's `WANDB_PROJECT`.
+
+For each name, results are in `runs/evaluation/<name>/summary.json` and
+`runs/evaluation/<name>/videos/`; Slurm logs are in
+`hpc/generated/<name>/logs/`. Video links refer to files in the corresponding
+`shards/`, which must be kept. W&B records separate evaluation runs.
+
+The launcher snapshots the policy and router under
+`runs/evaluation_inputs/<name>/`, checks reader family and exact compact SHA256,
+and records both hashes in the plan. It never follows a moving `last.pt` on
+resume. Reusing a name requires the original source paths and identical
+experimental settings; use the original arguments plus `--resume` for an
+interrupted evaluation. Replacing `--submit` with `--dry-run` only snapshots
+and renders. Keep source code unchanged while evaluations are queued/running.

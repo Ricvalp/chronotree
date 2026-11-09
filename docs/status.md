@@ -501,3 +501,42 @@ are on the HPC, so the real production replay/training screen remains for the
 user to launch. A bounded real-cache replay of 12 VideoUnmask decisions matched
 online current/child features bit-exactly, with artificial gain placeholders and
 no optimization. No cluster jobs were submitted here.
+
+## Local gain-repeatability inspection — 2026-11-09
+
+Implemented and ran `stmem.inspection.gain_repeatability`: 30 fixed contexts,
+both readers, four candidates and 16 paired draws on one real VideoUnmask
+demonstration. Both velocity and eight-step final-action labels were measured;
+interactive HTML includes every candidate, source RGB/point clouds, parent-child
+geometry, action-target paths and separate expert errors. No memorization fit.
+See [protocol, findings, and rerun commands](gain_repeatability.md).
+
+Noise-dependent ranking changes coexist with stable signal. Final-action
+cross-draw pair-order agreement is 74.2% TREE and 67.2% FLAT in this local sample.
+Featured examples include target-container utility, ranking reversal, and a
+teacher-agreement/expert-error disagreement. These are not task success rates.
+The local 83k compact differs from the 90k compact used for production labels;
+the teacher is exact. Exact production-policy reproduction awaits that checkpoint.
+
+The actual-device doctor and 45 focused CPU tests passed, with
+real HTML rendering and interaction checks. Identical-input/no-op controls gave
+zero differences. Architecture outputs still match the unchanged model code.
+Generated measurements, images and HTML remain ignored under
+`runs/inspection/gain_repeatability_20261109/`.
+
+## Matched learned-router evaluation launcher — 2026-11-09
+
+`hpc/evaluate.py` now accepts `--router-checkpoint` and `--wandb-project`.
+It snapshots and validates the router alongside the exact compact policy,
+rejects incompatible reader/provenance or mixed random/learned selection, and
+protects both snapshots across resume. Commands for retained FLAT-dot 50k
+versus random FLAT with the frozen 90k compact are in
+[router architecture instructions](router_architectures_hpc.md#matched-closed-loop-check).
+
+87 CPU-safe launcher, parallel-evaluation, aggregation and execution tests
+passed. They include matched seeds/configuration, immutable-input resume and
+generated Bash checks. The architecture snapshot was regenerated: only the
+launcher source hash changed, with identical HTML/draw.io content; `--check`
+passes. No HPC job was submitted and no router closed-loop success is measured
+by these implementation checks. The 52.33% ranking peak at 2k was not saved;
+the selected retained 50k router recorded 51.98% offline ranking accuracy.
