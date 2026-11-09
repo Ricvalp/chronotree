@@ -6,6 +6,7 @@ sampler states before saving and restore their own rank on resume.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -14,9 +15,32 @@ import random
 import shutil
 import tempfile
 from typing import Any
+from numbers import Integral
 
 import numpy as np
 import torch
+
+
+def positive_checkpoint_every(value):
+    """Validate a runtime checkpoint interval without changing training hashes."""
+    if isinstance(value, bool) or not isinstance(value, (str, Integral)):
+        raise argparse.ArgumentTypeError("checkpoint interval must be a positive integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise argparse.ArgumentTypeError("checkpoint interval must be a positive integer") from error
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("checkpoint interval must be a positive integer")
+    return parsed
+
+
+def resolve_checkpointing(cfg, every=None):
+    """Explicit overrides retain numbered snapshots as well as rolling recovery."""
+    return {
+        "periodic_every": positive_checkpoint_every(cfg["training"]["checkpoint_every"] if every is None else every),
+        "retain_periodic": every is not None,
+        "step_basis": "absolute_completed_optimizer_steps",
+    }
 
 
 def file_sha256(path: str | Path) -> str:

@@ -603,6 +603,78 @@ def test_dry_run_forwards_runtime_flags_without_changing_configs_or_signatures(p
     assert not (generated / "submitted.json").exists()
 
 
+def test_checkpoint_cadence_is_runtime_only_and_only_reaches_policy_trainers(planning):
+    _, invoke, _, _, generated = planning
+    initial = invoke()
+    original_jobs = {job["name"]: job for job in initial["jobs"]}
+    configs_before = {path.name: path.read_bytes() for path in (generated / "configs").glob("*.yaml")}
+    assert "checkpointing_override" not in initial
+    changed = invoke("--checkpoint-every", "20000")
+    assert changed["checkpointing_override"] == {
+        "every_optimizer_steps": 20000,
+        "interval_basis": "global_optimizer_step",
+        "retain_numbered_snapshots": True,
+    }
+    assert {path.name: path.read_bytes() for path in (generated / "configs").glob("*.yaml")} == configs_before
+    for job in changed["jobs"]:
+        assert job["signature"] == original_jobs[job["name"]]["signature"]
+        policy_training = job["stage"] in ("teacher", "compact", "perceiver")
+        for command in job["commands"]:
+            if policy_training:
+                assert option(command, "--checkpoint-every") == "20000"
+            else:
+                assert "--checkpoint-every" not in command
+        assert ("--checkpoint-every 20000" in Path(job["script"]).read_text()) == policy_training
+    assert not (generated / "submitted.json").exists()
+
+
+def test_teacher_resume_72_hours_checkpoint_override_preserves_scientific_identity(planning, tmp_path):
+    planner, invoke, repo, run_root, generated = planning
+    site = tmp_path / "site.env"
+    site.write_text(site.read_text() + (
+        "STMEM_PARTITION=aiq\nSTMEM_GPU_TYPE=\nSTMEM_CPUS=64\nSTMEM_MEM=128G\n"
+        "STMEM_WALLTIME=48:00:00\n"
+    ))
+    saved = planner.resolved_config(repo / "configs/teacher_fv_no_prop_10hz.yaml")
+    snapshot = tmp_path / "teacher_resume.yaml"
+    snapshot.write_text(yaml.safe_dump(saved, sort_keys=False))
+    original_snapshot = snapshot.read_bytes()
+    checkpoint = run_root / "seed0/teacher/last.pt"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"Presence-only stopped teacher checkpoint; never loaded")
+    checkpoint_before = checkpoint.read_bytes()
+    options = (
+        "--teacher-config", str(snapshot), "--only", "seed0_teacher", "--profile", "b200_4gpu",
+        "--resume", "--train-until-stopped",
+    )
+    before = invoke(*options)
+    configs_before = {path.name: path.read_bytes() for path in (generated / "configs").glob("*.yaml")}
+    resumed = invoke(*options, "--walltime", "72:00:00", "--checkpoint-every", "20000")
+    assert resumed["training_continuation"] == before["training_continuation"]
+    job = resumed["jobs"][0]
+    assert job["signature"] == before["jobs"][0]["signature"]
+    assert job["walltime"] == "72:00:00" and job["gpus"] == 4
+    command = job["commands"][0]
+    assert option(command, "--checkpoint-every") == "20000"
+    assert option(command, "--resume") == str(checkpoint)
+    assert command.count("--train-until-stopped") == 1
+    resolved = planner.resolved_config(Path(option(command, "--config")))
+    assert resolved["training"] == saved["training"]
+    assert resolved["model"] == saved["model"]
+    script = Path(job["script"]).read_text()
+    for directive in (
+        "--partition=aiq", "--gres=gpu:4", "--cpus-per-task=64", "--mem=128G", "--time=72:00:00",
+    ):
+        assert f"#SBATCH {directive}" in script
+    assert "gpu:b200" not in script and "--exclusive" not in script
+    assert "export STMEM_WALLTIME=72:00:00" in script
+    assert "--nproc-per-node=4" in script and "--checkpoint-every 20000" in script
+    subprocess.run(["bash", "-n", job["script"]], check=True)
+    assert {path.name: path.read_bytes() for path in (generated / "configs").glob("*.yaml")} == configs_before
+    assert snapshot.read_bytes() == original_snapshot and checkpoint.read_bytes() == checkpoint_before
+    assert not (generated / "submitted.json").exists()
+
+
 def test_resume_second_render_retains_runtime_flags_and_original_stage_identity(planning):
     _, invoke, _, run_root, generated = planning
     before = invoke("--only", "seed0_teacher", "seed0_router_tree_final")
@@ -663,6 +735,16 @@ def test_resume_second_render_retains_runtime_flags_and_original_stage_identity(
         ("--attention-every", "nan"),
         ("--attention-every", "inf"),
         ("--attention-every", "nope"),
+        ("--checkpoint-every", "0"),
+        ("--checkpoint-every", "-1"),
+        ("--checkpoint-every", "1.5"),
+        ("--checkpoint-every", "nan"),
+        ("--checkpoint-every", "inf"),
+        ("--walltime", "00:00:00"),
+        ("--walltime", "-72:00:00"),
+        ("--walltime", "72:60:00"),
+        ("--walltime", "72:00:60"),
+        ("--walltime", "72:00:00\n#SBATCH --exclusive"),
     ],
 )
 def test_invalid_runtime_flags_fail_before_any_plan_output(planning, flag, value):
@@ -676,7 +758,8 @@ def test_invalid_runtime_flags_fail_before_any_plan_output(planning, flag, value
 def test_signature_normalization_removes_only_valid_exact_training_pairs(planning):
     planner, _, _, _, _ = planning
     command = [sys.executable, "-m", "stmem.train", "--stage", "teacher"]
-    runtime = ["--log-every", "5", "--progress-every-seconds", "1.5", "--attention-every", "10"]
+    runtime = ["--log-every", "5", "--progress-every-seconds", "1.5", "--attention-every", "10",
+               "--checkpoint-every", "20000"]
     assert planner.scientific_training_command(command + runtime) == command
     assert planner.scientific_training_command(command + ["--attention-every", "0"]) == command
     assert planner.scientific_training_command(command + ["--attention-every", "-1"]) == (
@@ -687,6 +770,12 @@ def test_signature_normalization_removes_only_valid_exact_training_pairs(plannin
     )
     assert planner.scientific_training_command(command + ["--log-every", "0"]) == (
         command + ["--log-every", "0"]
+    )
+    assert planner.scientific_training_command(command + ["--checkpoint-every", "0"]) == (
+        command + ["--checkpoint-every", "0"]
+    )
+    assert planner.scientific_training_command(command + ["--checkpoint-every"]) == (
+        command + ["--checkpoint-every"]
     )
     scientific = ["--config", "/tmp/--log-every.yaml", "--stage", "perceiver"]
     assert planner.scientific_training_command(command + scientific) == command + scientific

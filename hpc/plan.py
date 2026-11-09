@@ -62,14 +62,23 @@ def nonnegative_integer(value: str) -> int:
     return parsed
 
 
+def positive_walltime(value: str) -> str:
+    if not re.fullmatch(r"(?:\d+-)?\d{1,3}:[0-5]\d:[0-5]\d", value) or not any(
+        char in "123456789" for char in value
+    ):
+        raise argparse.ArgumentTypeError("walltime must be a positive [days-]hours:minutes:seconds")
+    return value
+
+
 def scientific_training_command(command: list[str]) -> list[str]:
-    """Remove only validated runtime logging flag/value pairs from identity."""
+    """Remove only validated runtime telemetry/checkpoint flag pairs from identity."""
     if command[1:3] != ["-m", "stmem.train"]:
         return command
     validators = {
         "--log-every": positive_integer,
         "--progress-every-seconds": positive_seconds,
         "--attention-every": nonnegative_integer,
+        "--checkpoint-every": positive_integer,
     }
     result = []
     index = 0
@@ -235,6 +244,7 @@ def build_jobs(
     progress_every_seconds: float | None = None,
     teacher_config: Path | None = None,
     attention_every: int | None = None,
+    checkpoint_every: int | None = None,
     train_until_stopped: bool = False,
 ) -> list[Job]:
     jobs: list[Job] = []
@@ -285,6 +295,8 @@ def build_jobs(
                     item += ["--progress-every-seconds", str(progress_every_seconds)]
                 if attention_every is not None and stage != "router":
                     item += ["--attention-every", str(attention_every)]
+                if checkpoint_every is not None and stage != "router":
+                    item += ["--checkpoint-every", str(checkpoint_every)]
                 if train_until_stopped and stage == "teacher":
                     item.append("--train-until-stopped")
         jobs.append(
@@ -800,6 +812,12 @@ def main() -> None:
     parser.add_argument("--site", type=Path, default=REPO / "hpc/site.env")
     parser.add_argument("--profile", choices=PROFILES)
     parser.add_argument(
+        "--walltime",
+        type=positive_walltime,
+        help="Override STMEM_WALLTIME for training/preprocessing allocations; "
+        "evaluation retains STMEM_EVAL_WALLTIME",
+    )
+    parser.add_argument(
         "--teacher-config",
         type=Path,
         help="Teacher source YAML, relative to the site repository; default: configs/teacher.yaml",
@@ -836,11 +854,20 @@ def main() -> None:
         "safe to change on resume and not passed to router training",
     )
     parser.add_argument(
+        "--checkpoint-every",
+        type=positive_integer,
+        help="Resume-safe policy checkpoint interval in global optimizer updates; "
+        "updates last.pt and retains numbered periodic snapshots, without changing scientific config; "
+        "not passed to router training",
+    )
+    parser.add_argument(
         "--only", nargs="+", help="Stage categories or exact job names, without rerunning ancestors"
     )
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     site = read_site(args.site)
+    if args.walltime is not None:
+        site["STMEM_WALLTIME"] = args.walltime
     repo = Path(site.get("STMEM_REPO_ROOT", str(REPO))).resolve()
     run_root = Path(site.get("STMEM_RUN_ROOT", str(repo / "runs"))).resolve()
     manifest = yaml.safe_load((repo / "configs" / f"experiment_{args.plan}.yaml").read_text())
@@ -940,6 +967,7 @@ def main() -> None:
         progress_every_seconds=args.progress_every_seconds,
         teacher_config=teacher_config,
         attention_every=args.attention_every,
+        checkpoint_every=args.checkpoint_every,
         train_until_stopped=args.train_until_stopped,
     )
     # Configuration provenance contains bounded label totals explicitly.
@@ -1049,6 +1077,12 @@ def main() -> None:
             "schedule_steps": training.get("schedule_steps", training["steps"]),
             "final_learning_rate": 0.1 * training["lr"],
             "automatic_resubmission": False,
+        }
+    if args.checkpoint_every is not None:
+        details["checkpointing_override"] = {
+            "every_optimizer_steps": args.checkpoint_every,
+            "interval_basis": "global_optimizer_step",
+            "retain_numbered_snapshots": True,
         }
     save_json(generated / "plan.json", details)
     print(json.dumps(details, indent=2))

@@ -1758,3 +1758,33 @@ The intervention is after block encoding: local temporal information already
 inside a latent is not removed. Matching FULL results are again reused. This
 control avoids the deletion controls' token-count confound, but its scrambled
 encoded observations are still not a physically realizable history.
+
+## Resume-safe teacher save cadence and allocation walltime — 2026-11-10
+
+The requested 72-hour teacher continuation must retain its existing optimizer,
+LR floor, sample order and W&B identity. Add runtime `--checkpoint-every` to
+policy training and the planner rather than editing `training.checkpoint_every`,
+which is part of strict checkpoint provenance. An explicit override controls
+rolling recovery frequency and retains numbered snapshots at global optimizer
+step multiples. Original candidate and checkpointed-stop saves remain enabled.
+Record the runtime policy separately in checkpoints, manifest and W&B summary;
+do not change model/training hashes. Without the flag, existing save behavior
+is unchanged. Repeating the flag on subsequent allocations preserves the chosen
+cadence; it can also be changed safely on resume.
+
+Add planner `--walltime` with explicit precedence over the site file. Reuse the
+existing B200 site (`aiq`, generic `gpu:4`, 64 CPUs, 128G), overriding only the
+allocation time and runtime saving. Resume from the original run's saved config,
+not current inherited defaults. Existing accepted teacher/cache/label snapshots
+are immutable and remain separate from the advancing original training run.
+
+111 focused CPU tests pass across checkpoint cadence, continuation, logging and
+planner behavior. Synthetic checks include two-rank checkpoint-stop/resume and
+bit-identical weights, optimizer, scheduler, scaler, RNG and sample position
+after changing cadence across the original schedule endpoint. Existing candidate
+bytes and W&B identity are preserved. A read-only dry-run using the actual synced
+104110 teacher checkpoint verified four GPUs, 72 hours, 20k cadence, original
+1e-5 LR floor and generated Bash syntax. Evidence is under
+`runs/inspection/teacher_resume72h_20261110/`. Hardware doctor passes on the RTX
+5000 Ada; diagram regeneration changes only the training source fingerprint.
+No real-data training or Slurm job was submitted.

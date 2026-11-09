@@ -626,3 +626,19 @@ demonstration/policy-start controls, paired outcomes and fixed-current probes:
 All were browser-checked; 52 focused CPU tests, Ruff and unchanged architecture
 snapshot checks pass. Details, limitations and commands are recorded in
 `docs/gain_repeatability.md`. Diagnostic artifacts and weights remain ignored.
+
+## Teacher continuation with retained 20k checkpoints — 2026-11-10
+
+Implemented resume-safe `--checkpoint-every` in policy training/the planner and
+planner `--walltime`. The requested frozen-vision teacher command resumes its
+existing `last.pt` and W&B run on four untyped `aiq` GPUs for a requested 72 hours,
+retaining `step_XXXXXXXX.pt` every 20k total optimizer steps plus rolling and
+checkpointed-stop `last.pt` saves. It preserves the original 1e-5 LR floor and
+scientific configuration. Commands are in `docs/hpc.md`.
+
+111 focused CPU tests pass, including exact resumed-state comparison, two-rank
+save/resume, W&B identity preservation and literal 72-hour Slurm rendering.
+The actual synced teacher's configuration was dry-run with checked shell syntax;
+no training or Slurm submission occurred. Doctor passes FP32/BF16/FP16 on the
+available RTX 5000 Ada. Ruff and diagram snapshot checks pass; regenerated diagram
+layout/content are unchanged, with only the training source hash updated.

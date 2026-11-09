@@ -227,7 +227,7 @@
     "src/stmem/models/spacetime_encoder.py": "0337f2550eb2e159737bc328569e203bb20d22b9272738c34e022887d8883265",
     "src/stmem/models/text_encoder.py": "84fafb56b901b9883e0f6ef548574a885f77f35d5960dfb2d6df5290b4a5e503",
     "src/stmem/tracking.py": "711933bc1ee2d15babec3d579c46121165337f80688fcbc632c5e9fef0f3ca02",
-    "src/stmem/train.py": "925a2ab3217eda5f80199d386cfc8a88b0f53d90fc857761dfa29fdab6330d79",
+    "src/stmem/train.py": "b0ad78548e24489cd85c313be571afb46787f119ad0f6abd13ad735253e757bb",
     "src/stmem/training/attention.py": "a7e8cb691300a5c8a05bda80e9025876dd664048fe23c37ead3b1104570dd71e",
     "src/stmem/training/cached_loader.py": "dfffdc32e7d5678a080db8c5dea116d42474466fa38592665117cb0db61bc38b",
     "src/stmem/training/cached_policy.py": "7a5fd19563f53a407768589ea8b61ec36a583e5ba80e965e75d7de2421f73fef",

@@ -40,6 +40,8 @@ from stmem.training.checkpoints import (
     restore_rng,
     mark_complete,
     file_sha256,
+    positive_checkpoint_every,
+    resolve_checkpointing,
 )
 from stmem.tracking import RunTracker
 from stmem.evaluation.timing import process_memory
@@ -117,6 +119,7 @@ def train_policy(
     log_every=None,
     progress_every_seconds=None,
     attention_every=None,
+    checkpoint_every=None,
     train_until_stopped=False,
     continue_to_step=None,
 ):
@@ -138,6 +141,7 @@ def train_policy(
     if fork_from and stage != "teacher":
         raise ValueError("Only teacher checkpoints support matched continuations")
     logging = resolve_logging(cfg, log_every, progress_every_seconds, attention_every)
+    checkpointing = resolve_checkpointing(cfg, checkpoint_every)
     rank = int(os.environ.get("RANK", "0"))
     directory = run_dir(cfg, stage)
     if fork_from:
@@ -161,6 +165,7 @@ def train_policy(
             "fork_checkpoint": str(fork_from) if fork_from else None,
             "fork_sha256": fork_sha256,
             "logging": logging,
+            "checkpointing": checkpointing,
             "train_until_stopped": train_until_stopped,
             "continue_to_step": continue_to_step,
         },
@@ -179,6 +184,7 @@ def train_policy(
                     stop_file=stop_file,
                     tracker=tracker,
                     logging=logging,
+                    checkpointing=checkpointing,
                     progress=progress,
                     resources=resources,
                 )
@@ -199,6 +205,7 @@ def _train_policy(
     stop_file=None,
     tracker,
     logging,
+    checkpointing,
     progress,
     resources,
 ):
@@ -383,6 +390,7 @@ def _train_policy(
                 "environment": environment_manifest(),
                 "synthetic": data.synthetic,
                 "logging": logging,
+                "checkpointing": checkpointing,
                 "fork": fork,
                 "continuation": continuation,
                 "feature_io": feature_io_settings,
@@ -424,6 +432,7 @@ def _train_policy(
             "provenance": provenance,
             "environment": environment_manifest(),
             "logging": logging,
+            "training/checkpointing": checkpointing,
             "training/feature_io": feature_io_settings,
             "training/input_pipeline": (
                 "packed_hierarchy_workers_v1" if packed_hierarchy
@@ -525,6 +534,7 @@ def _train_policy(
                 "environment": environment_manifest(),
                 "tracking": dict(tracker.identity),
                 "logging": logging,
+                "checkpointing": checkpointing,
                 "fork": fork,
                 "continuation": continuation,
             }
@@ -674,15 +684,20 @@ def _train_policy(
         stopped = bool(flag.item())
         step_seconds = time.perf_counter() - update_started
         progress.finish_update(current_step)
+        periodic_checkpoint_due = current_step % checkpointing["periodic_every"] == 0
+        retain_checkpoint = (
+            current_step in cfg["training"]["checkpoint_steps"]
+            or (periodic_checkpoint_due and checkpointing["retain_periodic"])
+        )
         checkpoint_due = (
-            current_step % cfg["training"]["checkpoint_every"] == 0
+            periodic_checkpoint_due
             or current_step in cfg["training"]["checkpoint_steps"]
             or stopped
             or current_step == steps
         )
         if checkpoint_due:
             progress.update("checkpoint")
-            save(current_step, current_step in cfg["training"]["checkpoint_steps"])
+            save(current_step, retain_checkpoint)
         if (
             current_step == start + 1
             or current_step % logging["log_every"] == 0
@@ -867,6 +882,12 @@ def main():
         help="Resume a completed compact run to this total step count, keeping its original final LR",
     )
     parser.add_argument(
+        "--checkpoint-every",
+        type=positive_checkpoint_every,
+        help="Save last.pt and a retained numbered checkpoint every N total optimizer updates; "
+        "runtime-only override, safe to change on resume; stop and original candidate saves remain enabled",
+    )
+    parser.add_argument(
         "--log-every",
         type=positive_log_every,
         help="Log scalar metrics every N optimizer updates; runtime-only override, safe to change on resume",
@@ -901,6 +922,8 @@ def main():
             parser.error("--progress-every-seconds applies to teacher, compact and perceiver training")
         if args.attention_every is not None:
             parser.error("--attention-every applies to policy training, not router training")
+        if args.checkpoint_every is not None:
+            parser.error("--checkpoint-every applies to policy training, not router training")
         result = train_router(cfg, resume=args.resume, stop_file=args.stop_file, log_every=args.log_every)
     else:
         result = train_policy(
@@ -913,6 +936,7 @@ def main():
             log_every=args.log_every,
             progress_every_seconds=args.progress_every_seconds,
             attention_every=args.attention_every,
+            checkpoint_every=args.checkpoint_every,
             train_until_stopped=args.train_until_stopped,
             continue_to_step=args.continue_to_step,
         )

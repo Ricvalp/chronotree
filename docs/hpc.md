@@ -1319,6 +1319,60 @@ instead of silently restoring the old 100k stopping point. Keep `tracking.json`
 to continue the same W&B run. This feature changes training exposure and should
 be recorded when comparing results with the original bounded experiments.
 
+## Resume the frozen-vision teacher for 72 hours with 20k snapshots
+
+After pushing/pulling the updated code, the existing frozen-vision run can be
+resumed with the original saved scientific configuration. The runtime
+`--checkpoint-every 20000` replaces the rolling save interval and retains an
+immutable `step_XXXXXXXX.pt` at each global multiple of 20,000 completed optimizer
+updates. Original declared candidate checkpoints remain enabled. A stop signal
+still saves `last.pt` at the next optimizer boundary, including between periodic
+checkpoints. The override is recorded separately in checkpoint/manifest/W&B
+metadata; it does not change the training hash or LR schedule. Repeat the flag
+on later resumes to retain this cadence.
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+
+.venv/bin/python - <<'PY'
+import json
+from pathlib import Path
+import yaml
+
+teacher = Path("runs/teacher_fv_no_prop_10hz/seed0/teacher")
+for name in ("last.pt", "config.json", "tracking.json"):
+    if not (teacher / name).is_file() or not (teacher / name).stat().st_size:
+        raise SystemExit(f"Missing {teacher / name}")
+cfg = json.loads((teacher / "config.json").read_text())
+destination = Path("hpc/generated/teacher_fv_no_prop_10hz_resume72h/inputs/teacher_resume.yaml")
+destination.parent.mkdir(parents=True, exist_ok=True)
+destination.write_text(yaml.safe_dump(cfg, sort_keys=False))
+print(destination)
+PY
+
+.venv/bin/python hpc/plan.py \
+  --site hpc/site_b200_4gpu.env --profile b200_4gpu \
+  --teacher-config hpc/generated/teacher_fv_no_prop_10hz_resume72h/inputs/teacher_resume.yaml \
+  --plan core_seed0 --only seed0_teacher \
+  --run-root runs/teacher_fv_no_prop_10hz \
+  --output-dir hpc/generated/teacher_fv_no_prop_10hz_resume72h \
+  --walltime 72:00:00 --checkpoint-every 20000 \
+  --resume --train-until-stopped \
+  --log-every 1 --progress-every-seconds 30 --attention-every 10 \
+  --dry-run
+```
+
+Replace `--dry-run` with `--submit` to launch one allocation: four untyped GPUs
+(`--gres=gpu:4`) on `aiq`, 64 CPUs, 128G RAM and a 72-hour requested walltime.
+`--walltime` takes precedence over the site file's 48-hour default. The existing
+run directory, latest `last.pt` and W&B identity are reused. The frozen teacher's
+original 100k schedule has already reached its constant 1e-5 LR floor; warmup
+does not restart. The selected teacher snapshot for memory experiments remains
+immutable, so their cache/labels still refer to their original teacher.
+
+Logs use `hpc/logs/stmem_seed0_teacher_<JOBID>.out` and `.err`; numbered snapshots
+and `last.pt` remain under `runs/teacher_fv_no_prop_10hz/seed0/teacher/`.
+
 ## Frozen visual features and measured-state ablation
 
 Use the [frozen-vision experiment workflow](frozen_vision_experiment.md) for the
