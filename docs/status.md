@@ -540,3 +540,89 @@ launcher source hash changed, with identical HTML/draw.io content; `--check`
 passes. No HPC job was submitted and no router closed-loop success is measured
 by these implementation checks. The 52.33% ranking peak at 2k was not saved;
 the selected retained 50k router recorded 51.98% offline ranking accuracy.
+
+## Visible-cue refinement diagnostic — 2026-11-09
+
+Verified the transferred 90k compact against the production-label SHA256 and ran
+`stmem.inspection.cue_refinement` on one real VideoUnmask demonstration. Nine
+decision/budget cases, six exact-coverage resolution arms, two separate reference
+arms and eight shared noise draws are saved with an interactive HTML viewer.
+Primary reset/B128 target-cue exposure changes targets by1.506 mm on average,
+not a new movement toward a different object. Later covered-region detail can
+cause much larger adverse changes. See `docs/gain_repeatability.md` for the
+causal controls, limitations and reproducible command.
+
+44 focused CPU tests passed; doctor passed on the actual GPU. Same-input replay
+has zero numerical error. Architecture diagram check passed unchanged. No
+training, simulated rollout or HPC submission in this diagnostic.
+
+## Target-appearance counterfactual — 2026-11-09
+
+Implemented and ran `stmem.inspection.cue_counterfactual` with exact 90k compact
+and full-history teacher checkpoints. Blue/red appearance is swapped in both
+cameras throughout the retained reveal interval, with recomputed CLIP features
+and learned history tokens and unchanged current input. Sixteen paired draws
+show no intended target redirection in the first chunk of the one tested scene.
+Mean target-path changes range from 0.017 to 0.762 mm across tested models/readers.
+Encoded evidence changes are verified; unchanged-input rebuild/replay controls
+are exact. Results and interactive paired RGB/path views are in
+`runs/inspection/cue_counterfactual_verified_20261109/`.
+
+35 focused CPU tests and real HTML browser checks passed. No simulator rollout,
+training or Slurm submission. See `docs/gain_repeatability.md` for the measured
+scope and limitations; this is not a claim about all episodes or later decisions.
+
+## Normal VideoUnmaskSwap container-choice check — 2026-11-09
+
+Ran the selected full-history frozen-vision teacher (step 104110) on official
+validation configurations 0–9 with original reveal/swap histories and ordinary
+closed-loop execution: 16 predicted targets, 10 executed, action/observation
+stride 2, eight flow-integration steps. Two local simulator workers completed all
+10 episodes; all videos and read-only container/contact traces are retained.
+
+Official outcome: 1/10 success, nine failures, no timeouts or infrastructure
+errors. Eight episodes first grasp a wrong container. Episode 6 briefly contacts
+the correct one without lifting it, then picks a distractor and fails. Episode 8
+performs both requested pickups and succeeds. Grasped containers vary in identity
+and world position; this contradicts an always-fixed-container explanation but
+does not establish reliable use of the reveal history.
+
+Report: `runs/inspection/video_unmask_swap_normal10_20261109/index.html`.
+W&B: https://wandb.ai/ricvalp/chronotree-routers/runs/c16dbb018a75f627 .
+The new standalone runner is `stmem.inspection.swap_rollouts`; the read-only
+observer and offline report have 13 passing CPU tests. Architecture snapshot
+check passes unchanged. This is a small validation diagnostic, not test tuning.
+
+## Paired teacher history-use investigation — 2026-11-09
+
+Completed 56 fresh local simulator rollouts with the same full-history frozen
+teacher at step 104110: official validation scenes 0–3 on SwingXtimes,
+VideoRepick and VideoPlaceOrder with four history reads, plus two four-scene
+Swing controls. Settings stay at 16 predicted/10 executed targets, 10 Hz action
+and observation sampling, and eight flow steps. No training or Slurm jobs.
+
+FULL succeeds 4/4 Swing, 1/4 Repick and 0/4 PlaceOrder. Erasing execution history
+or all history gives 0/4 on each task. Erasing the initial demonstration gives
+4/4 Swing (an exact no-op), 0/4 Repick and 3/4 PlaceOrder. Swing's recent-window
+and count-preserving payload/time permutation controls both give 0/4 versus
+matching FULL 4/4. All 56 episodes have valid task outcomes and no infrastructure
+or observer errors. All paired reset inputs match; 52 fixed-current shadow
+probes reproduce unmodified actions exactly, with unchanged RNG state.
+
+The concrete positive case is Repick1: FULL performs three correct pick/drop
+cycles and presses the button; without the demonstration it carries the same
+correct cube toward the button during the first cycle and fails. Swing controls
+break pickup or transport before the first completed swing, supporting useful
+movement-history dependence without proving an abstract counter. PlaceOrder
+provides no consistent semantic benefit: FULL has three wrong-pad drops and
+one near-correct-pad timeout, while video-free successes are compatible with a
+location preference. Preserve these negative cases alongside the successes.
+
+Reusable runner: `stmem.inspection.history_use`. Reports with videos, explicit
+demonstration/policy-start controls, paired outcomes and fixed-current probes:
+`runs/inspection/history_use_20261109/index.html`,
+`runs/inspection/history_recent_swing_20261109/index.html`, and
+`runs/inspection/history_permuted_swing_20261109/index.html`.
+All were browser-checked; 52 focused CPU tests, Ruff and unchanged architecture
+snapshot checks pass. Details, limitations and commands are recorded in
+`docs/gain_repeatability.md`. Diagnostic artifacts and weights remain ignored.

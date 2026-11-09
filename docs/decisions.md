@@ -1668,3 +1668,93 @@ execution protocol. The 52.33% peak at 2k was not saved; do not claim that we
 can evaluate that exact peak. No change to architecture, training or labels,
 and no Slurm submission or measured closed-loop result in this implementation.
 Commands are in `docs/router_architectures_hpc.md`.
+
+## 2026-11-09: target-cue resolution intervention
+
+Replace the previous interpretive shortcut (useful refinement near a covered
+container) with a direct observed-cue resolution diagnostic. Use the exact 90k
+compact checkpoint newly transferred from HPC. Define the reveal interval and
+blue/red spatial regions from observed RGB before comparing predictions. Keep
+the full causal archive and identical token budgets for six resolution arms;
+protect the reveal subtree for a coarse control. Use fixed noise draws and
+measure complete physical target-path displacement as well as normalized action
+changes. Include full teacher and current-only references separately.
+
+The actual visible-target refinement makes only millimetre-scale changes in this
+one scene. Coarse summaries retain the information, so this is not evidence that
+history is irrelevant. Covered-region reallocations can produce larger adverse
+changes; preserve all results rather than selecting only visually attractive
+examples. No training or production sampling changes. The implementation and
+measured scope are recorded in `docs/gain_repeatability.md`.
+
+## 2026-11-09: counterfactual target appearance in conditioning video
+
+At the user's request, swap saturated blue/red appearance consistently in both
+cameras and canonical point RGB across all retained reveal frames. Preserve
+observed geometry and sampling, recompute complete frozen CLIP maps, then rebuild
+historical leaves and summaries. Restrict the primary diagnostic to reset so the
+current robot pose does not already encode an expert approach to the old target.
+Fix all selection IDs and pair Gaussian noise; include the full teacher and four
+compact readers. The appearance masks are explicitly diagnostic and not learned
+inputs. Original expert actions are not labels for the changed target.
+
+The verified input changes reach 80 cue leaves but cause no intended target
+redirection in the first chunk. Keep the claim limited to this scene/phase and
+show every paired draw. No training, benchmark scoring or new router fitting is
+authorized or performed by this diagnostic. Measurements and commands are in
+`docs/gain_repeatability.md`.
+
+## Read-only choice observations in ordinary VideoUnmaskSwap — 2026-11-09
+
+Use the standard OnlinePolicy/run_episode path with untouched original histories
+for the ten-configuration check. Diagnostics observe actors only after actions
+and never enter policy Frames or conditioning. The actual requested actors in
+the pinned task are `selected_bins` in order, not its unrelated `target_bin`
+attribute. Report grasp contacts separately from lifts and official success; a
+brief contact alone is not successful selection. Exclude automatic terminal
+observations, which can hide the instant a wrong pickup crosses the failure
+height; official outcome and prior grasp contact remain valid. Preserve all
+planned episodes in the denominator and retain every video.
+
+## Paired teacher history-use diagnostics — 2026-11-09
+
+Use the selected full-history teacher at step 104110 on fixed official validation
+indices 0–3 for SwingXtimes, VideoRepick and VideoPlaceOrder. These tasks were
+chosen from earlier teacher results before this comparison; no seed search is
+performed. Four reads share checkpoint, current encoder, goal, clocks, flow
+noise protocol and execution settings: FULL, conditioning erased, execution
+erased and CURRENT (the same teacher with no history read, not a separately
+trained model). The simulator always plays the original conditioning video;
+erasure changes only the action head's archive read. All 48 planned rollouts
+remain in the denominator, including failures, errors and timeouts.
+
+Record exact reset-input fingerprints excluding only random event UUIDs. A
+read-only observer saves goals, task-state/actor diagnostics and trajectories
+without modifying reset/step objects or calling potentially mutating predicates.
+At five fixed decision indices on FULL trajectories, shadow decodes share the
+current observation, text, clocks and exact flow noise. Their unmodified replay
+must match the actual actions; probes preserve all global and policy RNG state
+and never execute counterfactual actions. Closed-loop trajectories can diverge
+after the first different action; fixed-current probes isolate that distinction.
+
+A separate four-rollout Swing follow-up keeps every conditioning leaf and only
+the latest two complete execution blocks plus the pending prefix. It selects
+already encoded complete blocks, preserving local contextualization and all
+current/goal/clock/noise inputs. The four matching FULL results/videos are reused
+with hashes and configuration checks, rather than rerun or counted as new
+simulations. Both reports preserve all cases and link complete raw JSON/video.
+
+History deletion/windowing changes the model's input distribution and token
+count. Success differences show dependence under these interventions, not proof
+of abstract counting, semantic target tracking, or non-Markovianity. Distinguish
+pickup/control failures from incorrect target choices and task-phase failures.
+No core model, training configuration or production evaluation protocol changes.
+
+A final four-rollout Swing control preserves the full leaf count, all encoded
+payloads and geometry as a multiset, and all original time slots. It permutes
+execution payloads across those slots using the existing `permute_execution`
+definition. This tests content-to-time association, not token-order sensitivity.
+The intervention is after block encoding: local temporal information already
+inside a latent is not removed. Matching FULL results are again reused. This
+control avoids the deletion controls' token-count confound, but its scrambled
+encoded observations are still not a physically realizable history.
