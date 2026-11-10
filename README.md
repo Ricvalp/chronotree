@@ -17,6 +17,9 @@ No benchmark performance or scaling result is claimed.
 For transferred HPC checkpoints, the [reusable local inspection workflow](docs/checkpoint_inspection.md)
 checks integrity and conditioning sensitivity, renders cube-position point clouds,
 and produces bounded rollout and expert-prefix videos in one HTML report.
+The [teacher continuation workflow](docs/teacher_inspection_workflow.md) also
+runs matched history controls and automatically compares with the 104k reference,
+with durable background execution and resume of unfinished episodes.
 
 ## Run these next
 

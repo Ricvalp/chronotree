@@ -1,0 +1,8 @@
+# Fixed comparison anchor. Paths are relative to the repository, not this file.
+# These existing diagnostic results are read only; they are never rerun here.
+model: frozen_10hz
+checkpoint_step: 104110
+checkpoint_sha256: eb57ccd4c131888a5f5d6225a3a0cbe5cd14b3afc5c6ff0a1a17ee319cd70918
+usual: runs/inspection/eval_20261102T120621Z_analysis
+history: runs/inspection/history_use_20261109
+recent: runs/inspection/history_recent_swing_20261109

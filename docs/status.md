@@ -1,5 +1,22 @@
 # Implementation and verification status
 
+## Reusable teacher continuation inspection — 10 November 2026
+
+`scripts/inspect_teacher.py` now orchestrates the existing usual checks, 48 fixed
+history-control rollouts, four fresh recent-window rollouts, and generic paired
+checkpoint reports. `--detach` avoids terminal/tool-session interruption;
+`--resume` fills missing trials under a sealed identity without replacing
+published outcomes. Comparisons and observer-based behavior summaries are
+repository modules rather than checkpoint-specific scripts under ignored runs.
+Source/runtime differences remain explicit review items. See the
+[workflow](teacher_inspection_workflow.md).
+
+The saved 104k/120k analysis was reproduced on CPU, including the complete
+112-video audit and all 240 prior offline metric means. No new simulations or
+140k evaluation were launched for this change. 111 targeted CPU tests pass, covering resume integrity,
+interruption/locking, copied controls, comparison math and bounded orchestration.
+The training architecture and diagnostic scientific protocol are unchanged.
+
 ## Fixed-label longer router fit — 4 November 2026
 
 The user-run initial router jobs are now observable through W&B. TREE/velocity

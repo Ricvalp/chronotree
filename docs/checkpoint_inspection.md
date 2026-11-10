@@ -1,5 +1,10 @@
 # Repeating the local checkpoint inspection
 
+For teacher continuations that also need the matched history comparisons, use
+the [complete teacher workflow](teacher_inspection_workflow.md). It wraps the
+usual checks below, adds history controls, and supports automatic resume and
+comparison against the fixed 104k reference.
+
 [`scripts/inspect_checkpoints.py`](../scripts/inspect_checkpoints.py) runs the
 usual checkpoint checks, input-sensitivity probes, cube-position visualizations,
 and bounded simulator rollouts. It produces a local HTML report and videos. It
