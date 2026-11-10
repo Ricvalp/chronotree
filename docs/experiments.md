@@ -1,5 +1,33 @@
 # Reproducible experiment protocol
 
+## Student training and refinement utility addendum — 10 November 2026
+
+The current bounded follow-up is specified in
+[`chronotree_router_utility_addendum.md`](../chronotree_router_utility_addendum.md)
+and implemented by the [study workflow](refinement_utility_pilot.md). It fixes the
+104,110-step teacher, production 90k S0 compact checkpoint, and existing encoded
+and hierarchy caches. Three new students share initialization, retained training
+episodes, example/noise streams and the user-amended 100k schedule; only context
+exposure and allocation differ. Fresh optimization uses LR 1e-4, 1k warmup and
+cosine decay to 1e-5 at 100k. Rolling `last.pt` is saved every 1k updates, with
+numbered snapshots every 5k. The fixed 100k endpoints are primary; earlier
+snapshots, including 15k and 30k, support development only. The three jobs total
+300k updates and 38.4 million example exposures. This requested extension has
+not been run by Codex and replaces neither the original benchmark protocol
+below nor its validation/test boundary. Immutable older studies retain their
+recorded endpoint.
+
+The 256 diagnostic states are excluded by whole episode from new optimization.
+The fitting-tagged half is development; the validation-tagged half is reserved
+for a frozen-protocol comparison. Every student receives the same candidate
+contexts and independent discovery/confirmation noise banks. Expert FM utility
+is primary, teacher agreement secondary. Loss-selected packets are diagnostic
+selections, not deployed routers. Matched learned-router/adaptation comparisons
+remain separately activated follow-ups; old teacher-agreement labels cannot be
+relabeled as expert/packet supervision.
+
+## Original bounded benchmark protocol
+
 `configs/experiment_core_seed0.yaml` is the bounded primary manifest. It uses all
 100 released training demonstrations for each of the 16 tasks. Validation and
 test are official seeded environment configurations; expert HDF5 for those splits

@@ -1,0 +1,29 @@
+# Fixed before examining held-out episodes. Paths belong to the HPC/local launcher.
+schema_version: 1
+seed: 20261110
+episodes_per_partition: 4
+budgets: [64, 128]
+packet_cost: 8
+max_candidates: 8
+audit_candidates: 4
+discovery_draws: 4
+confirmation_draws: 4
+additional_draw_cap: 16
+# BF16 pilot batch-shape loss differences reached 3.3e-4, above gain deadband.
+# Frozen diagnostics use FP32/no TF32; student optimization remains BF16.
+precision: fp32
+gain_epsilon: 0.000001
+relative_thresholds: [0.005, 0.01, 0.05]
+max_generated_cases: 16
+generated_seeds: 2
+integration_steps: 8
+execute_targets: 10
+primary_loss: expert_full
+tie_policy: uniform_average_over_discovery_near_ties
+bootstrap_unit: episode_stratified_by_task
+primary_endpoints: [S0, S_STD, S_STAGE, S_PACKET]
+student_training:
+  steps: 100000
+  checkpoint_every: 1000
+  snapshot_every: 5000
+confirmation_partition: validation

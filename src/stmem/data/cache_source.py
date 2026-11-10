@@ -46,20 +46,28 @@ CACHE_RUNTIME_EXCLUSIONS = frozenset({
     "src/stmem/training/label_objectives.py",
     "src/stmem/training/label_experiment.py",
     "src/stmem/training/router_inputs.py",
+    # The utility study consumes the same immutable indexed evidence. These
+    # modules change context selection/optimization only, never encoded leaves.
+    "src/stmem/training/utility_study.py",
+    "src/stmem/training/utility_sampler_audit.py",
 })
 _SELF_PATH = "src/stmem/data/cache_source.py"
 
-# Encoding sources audited through the 5 November router-architecture change.
+# Encoding sources audited through the 10 November utility-study change.
 # The new router-input consumer only reads existing encoded caches. The exact
 # protected baseline also includes audited routing-only changes to policy.py,
 # router.py, analyze.py, runtime.load_router and config validation; no encoder,
 # aggregation, alignment or cached-evidence production computation changed.
 # These model/configuration modules REMAIN protected against future changes.
+# Since the previous audit, the only protected change is checkpoints.py's
+# positive_checkpoint_every/resolve_checkpointing argument handling (7e1d169).
+# Neither function participates in data preparation or encoded-cache production.
+# Checkpoint serialization, encoder weights and content computations are intact.
 # The protected digest includes path names, file lengths and complete file bytes
 # after only the explicit exclusions above and this separately checked module.
-_AUDITED_PROTECTED_SHA256 = "1dacc820ab1f2d8f2bf7b3454304051243133189665007ba008d8d32fccc6c20"
+_AUDITED_PROTECTED_SHA256 = "8279311076306ac43916396287d17437cd13464b92359354efccfb0e0131c5ae"
 _AUDITED_LEGACY_SHA256 = "9cddd3ea461824003854f5b0c42595f5f1f975224d4f59ca0be72d0e1e83dc34"
-_AUDITED_IMPLEMENTATION_SHA256 = "78a4afdc62db83baa519e6e1abb5d29389db049f0a8f569c152fef5a7ee54eaf"
+_AUDITED_IMPLEMENTATION_SHA256 = "de04a198b148d1cd404321a83740e59b0e771f2baca38331856f044b4e691aa3"
 
 
 def _implementation_fingerprint(root: Path) -> str:

@@ -83,6 +83,7 @@ class PackedContext:
     index_hits: int
     index_misses: int
     debug: dict | None = None
+    study_context: dict | None = None
 
 
 def context_family(cfg, position, root_count):
@@ -282,7 +283,10 @@ class PackedContextReader:
             return found[0]
         self.misses += 1
         nodes = group["nodes"]
-        values = {key: self._read(nodes[key]) for key in ("node_id", "children", "count", "source", "modality")}
+        fields = ["node_id", "children", "count", "source", "modality"]
+        if self.cfg["training"].get("utility_study"):
+            fields.extend(["anchor", "time_anchor", "depth"])
+        values = {key: self._read(nodes[key]) for key in fields}
         size = sum(_resident_bytes(value) for value in values.values())
         if self.maximum_indices and size <= self.maximum_index_bytes:
             self.indices[key] = values, size
@@ -340,12 +344,43 @@ class PackedContextReader:
         if int(entry.attrs["nfull"]) != nfull or prefix != expected_prefix:
             raise ValueError("Indexed hierarchy decision cadence differs from the requested prefix")
         started = time.perf_counter()
-        method, budget, rng = context_family(self.cfg, position, len(roots))
+        study = self.cfg["training"].get("utility_study")
+        if study:
+            from stmem.training.utility_study import ordinary_family
+
+            method, budget, rng, _ = ordinary_family(self.cfg, position, len(roots))
+        else:
+            method, budget, rng = context_family(self.cfg, position, len(roots))
         selection_seconds = time.perf_counter() - started
         residual_seconds = 0.0
         selected = _empty_columns(self.width)
         leaves = selected_nodes = None
-        if method in ("TREE", "UNIFORM"):
+        study_metadata = None
+        if study:
+            from stmem.inspection.refinement_candidates import IndexedArchive
+            from stmem.training.utility_study import study_context
+
+            index = self._index(hierarchy) if method != "CURRENT" else {}
+            leaves = self._active_leaves(hierarchy, entry) if method != "CURRENT" else np.empty(0, dtype=np.int64)
+            if method != "CURRENT" and len(leaves) != leaf_count:
+                raise ValueError("Study archive differs from the causal prefix leaf count")
+            started = time.perf_counter()
+            context, study_metadata = study_context(index, roots, leaves, self.cfg, position)
+            selected_nodes = np.asarray(context["rows"], dtype=np.int64)
+            selection_seconds += time.perf_counter() - started
+            if context["reader"] == "FLAT":
+                archive = IndexedArchive(index, roots, leaves)
+                chosen, group_codes, group_names = archive.flat_arrays(context)
+                all_leaves = self._columns(hierarchy["nodes"], leaves, include_max=debug, index=index)
+                started = time.perf_counter()
+                selected = flat_residual_columns(all_leaves, chosen, group_codes, group_names)
+                residual_seconds = time.perf_counter() - started
+            elif method != "CURRENT":
+                selected = self._columns(hierarchy["nodes"], selected_nodes, include_max=debug, index=index)
+            if len(selected["count"]) != context["token_count"]:
+                raise ValueError("Study route token count disagrees with assembled records")
+            study_metadata["actual_count"] = context["token_count"]
+        elif method in ("TREE", "UNIFORM"):
             index = self._index(hierarchy)
             started = time.perf_counter()
             selected_nodes = _tree_indices(index, roots, budget, rng, uniform=method == "UNIFORM")
@@ -376,6 +411,7 @@ class PackedContextReader:
             index_hits=self.hits - before_hits, index_misses=self.misses - before_misses,
             debug={"method": method, "budget": budget, "columns": selected, "roots": roots,
                    "selected_nodes": selected_nodes, "leaves": leaves} if debug else None,
+            study_context=study_metadata,
         )
 
     def close(self):

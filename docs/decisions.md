@@ -1,5 +1,56 @@
 # Implementation decisions — 17 October 2026
 
+## 10 November: matched students and refinement utility
+
+Implement revision 2 of the utility addendum as an opt-in study. Preserve the
+accepted 104,110-step teacher, existing encoded/hierarchy caches and immutable
+90k S0. The three primary students use a common retained episode pool and fresh
+100k optimization from teacher weights, following the user's amendment to the
+initially specified 30k schedule. Exclude whole diagnostic episodes and
+the full router-validation partition. Derive FM noise/time from global example
+position in a stream independent of context construction. Keep S_STD's original
+context selection unchanged; use a shared constructor for full local/packet
+routes, every integer prefix and matched structural fallbacks in S_STAGE/PACKET.
+
+The amended schedule retains LR 1e-4, 1k warmup and cosine decay to 1e-5, with
+the floor now reached at 100k. Save rolling recovery checkpoints every 1k and
+numbered snapshots every 5k, including 100k. The latter is the predeclared primary
+endpoint; earlier snapshots, including 15k and 30k, are development-only.
+Three arms total 300k updates/38.4 million example exposures. Pin these settings
+in the panel protocol and student provenance. New source/schedule identities
+require fresh named plans; never rewrite queued jobs or silently reinterpret a
+recorded 30k endpoint. This is a requested experiment change, not measured
+evidence of improved convergence.
+
+Freeze candidate backgrounds and supports before evaluating losses. Preserve
+exact TREE and FLAT residual coverage, causal partial blocks and actual positive
+token costs. The unrestricted one-move audit is separate from packet eligibility.
+Measure raw expert FM and teacher disagreement from one shared prediction;
+discovery selects and independent confirmation evaluates the unchanged tie set.
+Teacher predictions are reusable across students only under an identical
+evidence/draw/precision identity. Compact measurements remain checkpoint-specific.
+
+Use FP32 with TF32 disabled for frozen utility diagnostics. The bounded real
+BF16 pilot showed serial/batched expert-loss differences up to 3.30e-4, and
+FP32/BF16 differences up to 2.87e-3, above the configured 1e-6 gain deadband.
+This is a numerical-control decision, not selection based on favorable gains.
+Student optimization retains the existing BF16 policy. Do not silently change
+the original terminal/unavailable-action convention.
+
+The local cache covers only VideoUnmask episode 0. Its explicitly diagnostic
+manifest has no production training pool. It can validate code and timing but
+cannot replace the multi-task smoke, 4,096-context production audit, 256-state
+panel, or three 100k jobs. Reports show missing arms and qualified H1–H8 findings.
+Generated paths use pure Gaussian noise and eight Euler steps; FK paths alone
+are not closed-loop success. Conditional rehearsal and router/adaptation branches
+remain separately activated, with implementation readiness reported honestly.
+See [the study workflow](refinement_utility_pilot.md) for commands and evidence.
+
+The cache compatibility exception names only the two new runtime consumer
+modules. An exact audit of the preceding checkpoint-cadence helpers preserves
+the recorded cache-content fingerprint; encoder, aggregation, alignment and
+normalization code remains protected. Unknown files still invalidate it.
+
 ## 4 November: fixed-label longer-fit diagnostic
 
 The user requested longer fitting after TREE/velocity validation loss remained

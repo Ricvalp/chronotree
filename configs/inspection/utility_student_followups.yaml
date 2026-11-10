@@ -1,0 +1,50 @@
+# Unactivated, bounded follow-up protocol. This is a study specification, not a
+# standalone stmem.train configuration. Never submit it as a primary student.
+schema_version: 1
+status: not_activated
+rehearsal:
+  activation_evidence: detailed_or_full_inputs_support_choices_lost_after_compact_training
+  parent: selected_student_checkpoint_and_sha256_required
+  paired_arms: [unchanged_sampler, richer_history_rehearsal]
+  updates_per_arm: 10000
+  learning_rate: 0.00001
+  optimizer_policy: reset_identically
+  effective_batch: 128
+  replacement_fraction_of_noncurrent: 0.1
+  replacement: all_available_cached_leaves
+  truncation_allowed: false
+  length_aware_accumulation_required: true
+  fallback: separately_declared_common_higher_budget_if_full_is_infeasible
+  launcher: hpc/student_utility_rehearsal.py
+  implementation_status: implemented_unactivated_requires_development_finding_and_long_history_memory_probe
+  batching: singleton_history_microbatches_with_effective_batch_128_accumulation
+router_adaptation:
+  activation_evidence: learned_selector_has_usable_development_evidence
+  parent: same_frozen_student_checkpoint_for_both_arms
+  paired_arms: [gain_blind_routes, frozen_router_routes]
+  updates_per_arm: 10000
+  learning_rate: 0.00001
+  optimizer_policy: reset_identically
+  effective_batch: 128
+  unchanged_sampler_fraction: 0.5
+  route_fraction: 0.5
+  route_scope: coarse_roots_to_budget_with_matched_prefix_counts
+  objective: expert_flow_matching_only
+  refresh_labels_after_student_freeze: true
+  maximum_cycles: 1
+  implementation_status: configuration_prepared_requires_selected_frozen_router_and_matched_route_loader
+learned_router_pilot:
+  status: not_activated
+  maximum_selected_student_variants: 2
+  fitting_states_per_student: 4096
+  episodes: fixed_training_pool_excluding_panel_and_reserved_validation
+  credits: [first_move_expert_utility, completed_packet_expert_utility]
+  readers: [TREE, FLAT]
+  architecture: existing_lightweight_scorer_with_matched_capacity
+  label_identity_includes_student_hash: true
+  evaluate_crossed_students_and_routers: true
+  screening_validation_episodes_per_task: 2
+  screening_budget: 128
+  screening_flow_steps: 8
+  screening_execute_actions: 10
+  test_seeds_allowed: false

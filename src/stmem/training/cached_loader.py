@@ -38,6 +38,7 @@ class CachedDecisionInfo:
     index: int
     conditioning_frames: int
     execution_history_frames: int
+    phase: str = "unknown"
 
 
 @dataclass
@@ -65,6 +66,7 @@ class LoadedCachedBatch:
     hierarchy_residual_seconds: float = 0.0
     hierarchy_read_bytes: int = 0
     hierarchy_enabled: bool = False
+    study_contexts: tuple[dict, ...] = ()
 
     def pin_memory(self):
         def bank(value):
@@ -212,7 +214,8 @@ class LightweightDecisions:
                 previous = episode.actions[command_index]
         state = torch.cat([episode.proprio[index], previous, previous.new_tensor([float(available)])]).float()
         return _CachedDecision(
-            CachedDecisionInfo(episode.task, episode.episode_id, index, len(conditioning), execution_count),
+            CachedDecisionInfo(episode.task, episode.episode_id, index, len(conditioning), execution_count,
+                               ("early", "middle", "late")[min(2, index * 3 // len(episode.actions))]),
             target, valid, state,
             (float(conditioning[-1]) if len(conditioning) else 0.0, float(episode.execution_indices[index])),
         )
@@ -383,6 +386,7 @@ class CachedPolicyDataset(Dataset):
         hits, misses = reader.hits, reader.misses
         policy = SimpleNamespace(config=self.data.cfg, device=torch.device("cpu"))
         current, history, text, decisions, leaves = [], [], [], [], []
+        study_contexts = []
         load_seconds = cache_seconds = context_seconds = pack_seconds = 0.0
         hierarchy_read_seconds = hierarchy_select_seconds = hierarchy_residual_seconds = 0.0
         hierarchy_read_bytes = 0
@@ -404,6 +408,8 @@ class CachedPolicyDataset(Dataset):
                 hierarchy_residual_seconds += prepared.residual_seconds
                 hierarchy_read_bytes += prepared.read_bytes
                 context_seconds += prepared.selection_seconds
+                if prepared.study_context is not None:
+                    study_contexts.append(prepared.study_context)
                 continue
             evidence = reader.evidence(decision)
             cache_seconds += time.perf_counter() - started
@@ -438,6 +444,7 @@ class CachedPolicyDataset(Dataset):
             hierarchy_enabled=hierarchy_enabled, hierarchy_read_seconds=hierarchy_read_seconds,
             hierarchy_select_seconds=hierarchy_select_seconds, hierarchy_residual_seconds=hierarchy_residual_seconds,
             hierarchy_read_bytes=hierarchy_read_bytes,
+            study_contexts=tuple(study_contexts),
         )
         result.pack_seconds = pack_seconds + time.perf_counter() - started
         return result

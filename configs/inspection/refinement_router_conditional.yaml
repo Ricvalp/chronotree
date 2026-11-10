@@ -1,0 +1,71 @@
+# Conditional follow-up specification. This file does not launch jobs.
+# Fresh expert/packet label IO and deployed packet scoring are deliberately not
+# disguised as the existing teacher-agreement single-refinement implementation.
+schema: refinement_router_conditional_v1
+enabled: false
+activation_requirement: documented_development_selection_benefit_and_absolute_student_quality
+maximum_students: 2
+fitting_states_per_student: 4096
+fitting_partition: remaining_router_fitting_pool
+exclude_all_diagnostic_episodes: true
+exclude_all_reserved_validation_episodes: true
+diagnostic_episodes_never_fit_router: true
+readers: [TREE, FLAT]
+credit_targets: [expert_first_move, expert_completed_packet]
+primary_loss: expert_full_h16_fm
+teacher_agreement: diagnostic_only
+discovery_draws: 4
+confirmation_draws: 4
+candidate_limit: 8
+target_budget: 128
+packet_maximum_cost: 8
+short_packet_rule: largest_feasible_equal_positive_cost
+route_contexts: full_coarse_to_budget_reachable_prefixes
+initial_route_distribution:
+  gain_blind: 1.0
+one_refresh_route_distribution:
+  gain_blind: 0.75
+  frozen_initial_router: 0.25
+refresh_is_separately_activated: true
+scorer:
+  implementation_family: LocalRouter
+  architecture: mlp
+  key_width: 128
+  trainable_capacity_matched: true
+  query_features: [current_visual, task, source_clocks, current_budget, remaining_budget]
+  candidate_features: [content_mean, content_max, geometry_time_source_metadata, feasible_packet_cost]
+  prohibited_features: [expert_action, gaussian_action_noise, flow_time, offline_gain, object_id, simulator_mask]
+fit:
+  steps: 5000
+  batch: 256
+  lr: 0.0003
+  validation_checkpoint_selection: false
+  objective: training_scaled_robust_signed_gain_regression
+  ranking_term: existing_matched_router_default
+  tracking_project: chronotree-routers
+credit_comparison:
+  candidate_pool: identical_equal_cost_packet_pool
+  choices: [predicted_first_move, predicted_completed_packet]
+  execute: identical_completed_packet
+controller_comparison:
+  choices: [positive_cost_single_move_replanning, completed_packet_commitment]
+  start: exact_causal_coarse_roots_or_residuals
+  fill_budget_even_when_scores_negative: true
+crossed_student_evaluation: true
+closed_loop:
+  split: val
+  episodes_per_task: 2
+  episode_indices: [0, 1]
+  methods: [local_router, packet_router, fixed_random, UNIFORM]
+  budget: 128
+  integration_steps: 8
+  executed_targets: 10
+  native_commands_per_target: 2
+  official_test_allowed: false
+resource_plan:
+  labels: {gpus: 1, cpus: 8, mem: 64G, walltime: "04:00:00"}
+  scorer: {gpus: 1, cpus: 4, mem: 16G, walltime: "01:00:00"}
+  screening: {gpus: 4, workers_per_gpu: 4, cpus: 64, mem: 128G, walltime: "06:00:00"}
+  partition: gpuq
+  gpu_type: ""
+  exclusive: false

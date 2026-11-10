@@ -338,6 +338,13 @@ TREE child descriptors, and task-conditioned current-token attention), use
 [submission guide](docs/router_architectures_hpc.md) launches isolated fresh
 fits in `chronotree-routers`, reusing existing utility labels and encoded caches.
 
+The [student-training × refinement-utility study](docs/refinement_utility_pilot.md)
+implements the 10 November addendum: three matched compact students, protected
+TREE/FLAT packet comparisons, independent discovery/confirmation draws, and
+expert-action-loss measurements alongside teacher agreement. It reuses the
+accepted teacher/cache and preserves the production 90k student as a reference.
+The guide distinguishes completed local checks from the jobs awaiting HPC runs.
+
 The rendered core plan has 45 jobs and at most two concurrent allocations by
 default. Costs remain unknown. Read [docs/hpc.md](docs/hpc.md) for selective stage
 resume, signals, resource profiles, final protocol freeze and accounting.

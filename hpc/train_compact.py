@@ -138,6 +138,25 @@ def compact_config(cfg, args):
     # checkpoint's unchanged action contract. This is the fixed selection subset.
     result["evaluation"]["selection_episode_count"] = 4
     result.setdefault("checkpoints", {})["compact"] = str(run_dir(result, "compact") / "selected.pt")
+    study = getattr(args, "utility_study", None)
+    if study:
+        result["training"]["utility_study"] = deepcopy(study)
+        result["tracking"]["project"] = "chronotree-routers"
+        result["tracking"]["group"] = study["experiment_id"]
+        if study.get("initialization_checkpoint"):
+            endpoint = study["continuation_updates"]
+            result["training"].update(steps=endpoint, schedule_steps=endpoint, warmup_steps=0,
+                                      lr=study["continuation_lr"], checkpoint_steps=[endpoint])
+        elif "primary_updates" in study:
+            from stmem.training.utility_study import primary_schedule
+
+            schedule = primary_schedule(study["primary_updates"], study["checkpoint_every"],
+                                        study["snapshot_every"])
+            if any(study.get(key) != value for key, value in schedule.items()):
+                raise ValueError("Student checkpoint declarations differ from its primary schedule")
+            result["training"].update(steps=schedule["primary_updates"], schedule_steps=schedule["primary_updates"],
+                                      checkpoint_steps=schedule["checkpoint_steps"],
+                                      checkpoint_every=schedule["checkpoint_every"])
     validate_config(result)
     validate_policy_config(cfg, result)
     return result
@@ -155,6 +174,17 @@ def ready_plan(plan_path):
             or cache_plan["checkpoint_sha256"] != plan["checkpoint_sha256"]):
         raise ValueError("Compact job's frozen dependencies changed")
     requested = yaml.safe_load(Path(plan["config"]).read_text())
+    if requested["training"].get("utility_study"):
+        from stmem.training.utility_study import read_study_manifest
+
+        study = requested["training"]["utility_study"]
+        read_study_manifest(study["manifest"], study["manifest_sha256"])
+        if study.get("initialization_checkpoint"):
+            require_hash(study["initialization_checkpoint"], study["initialization_sha256"],
+                         "Study initialization checkpoint")
+        if study.get("activation_evidence"):
+            require_hash(study["activation_evidence"], study["activation_evidence_sha256"],
+                         "Conditional-study activation evidence")
     validate_policy_config(cfg, requested)
     expected_paths = {**cfg["paths"], "run_root": plan["run_root"]}
     if requested["data"] != cfg["data"] or requested["paths"] != expected_paths:
@@ -255,6 +285,17 @@ def prepare(args, site, repo, cache_plan_path, generated):
         cfg["paths"]["run_root"] = str(absolute_path(args.run_root, repo))
     cfg = compact_config(cfg, args)
     initial = load_checkpoint(cache_plan["checkpoint"])
+    if cfg["training"].get("utility_study"):
+        from stmem.training.utility_study import read_study_manifest
+
+        study = cfg["training"]["utility_study"]
+        panel = read_study_manifest(study["manifest"], study["manifest_sha256"])
+        if (cache_plan["checkpoint_sha256"] != study["teacher_sha256"]
+                or cache_root.name != study["encoded_cache_id"]
+                or Path(args.hierarchy_root).name != study["hierarchy_cache_id"]):
+            raise ValueError("Student study requires the accepted teacher and recorded frozen caches")
+        if set(cfg["data"]["tasks"]) != {row["task"] for row in panel["episode_partitions"]}:
+            raise ValueError("Student study panel must partition every configured training task")
     if initial["stage"] != "teacher":
         raise ValueError("Selected input is not a teacher checkpoint")
     validate_policy_config(initial["config"], cfg)
@@ -312,6 +353,9 @@ def prepare(args, site, repo, cache_plan_path, generated):
         expected = {"teacher": cache_plan["checkpoint_sha256"], "cache": digest(manifest)}
         if hierarchy is not None:
             expected["hierarchy"] = digest(hierarchy)
+        study = cfg["training"].get("utility_study")
+        if study and study.get("initialization_checkpoint"):
+            expected["study_initialization"] = study["initialization_sha256"]
         if (saved["stage"] != "compact" or saved["config"] != cfg
                 or saved["provenance"]["world_size"] != args.gpus
                 or saved["provenance"]["dependencies"] != expected):
@@ -359,7 +403,8 @@ def prepare(args, site, repo, cache_plan_path, generated):
         "restart_unstarted": args.restart_unstarted,
         "start_step": start, "remaining_updates": endpoint - start,
         "continue_to_step": args.continue_to_step, "continuation": continuation,
-        "candidate_checkpoints": [str(output / f"step_{step:08d}.pt") for step in (15000, 30000)],
+        "candidate_checkpoints": [str(output / f"step_{step:08d}.pt")
+                                  for step in cfg["training"]["checkpoint_steps"]],
         "accepted_evaluation_execution": cache_plan.get("evaluation_execution"),
         "estimated_gpu_hours": "unknown; cached compact training has not been measured on this allocation",
         "cache_verification": "manifest hash, identity, receipt consistency and shard sizes; no full-shard byte scan",

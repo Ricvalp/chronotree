@@ -254,6 +254,10 @@ def _train_policy(
 
     data_started = time.perf_counter()
     data = TrainingData(cfg, progress=data_progress if rank == 0 else None)
+    from stmem.training.utility_study import restrict_training_pool, study_settings
+
+    study = study_settings(cfg)
+    study_pool = restrict_training_pool(data, cfg)
     data_seconds = time.perf_counter() - data_started
     startup_progress("model_initializing", data_seconds=data_seconds)
     policy = MemoryPolicy(cfg)
@@ -287,6 +291,30 @@ def _train_policy(
                 cache.root, cfg["training"]["hierarchy_cache_root"]
             )
             dependencies["hierarchy"] = digest(hierarchy_manifest)
+        if study:
+            if dependencies["teacher"] != study["teacher_sha256"]:
+                raise ValueError("Student study teacher identity changed")
+            if Path(cache.root).name != study["encoded_cache_id"]:
+                raise ValueError("Student study encoded cache identity changed")
+            if Path(cfg["training"]["hierarchy_cache_root"]).name != study["hierarchy_cache_id"]:
+                raise ValueError("Student study hierarchy identity changed")
+            initialization = study.get("initialization_checkpoint")
+            if initialization:
+                if file_sha256(initialization) != study["initialization_sha256"]:
+                    raise ValueError("Student study initialization checkpoint changed")
+                parent = load_checkpoint(initialization)
+                if parent["stage"] != "compact":
+                    raise ValueError("Study continuation must initialize from a compact checkpoint")
+                validate_policy_config(parent["config"], cfg)
+                if parent["provenance"]["dependencies"]["teacher"] != dependencies["teacher"]:
+                    raise ValueError("Study initialization uses a different accepted teacher")
+                for key, value in initial["model"].items():
+                    if key.startswith(("encoder.", "text_encoder.", "normalizer.")):
+                        if key not in parent["model"] or not torch.equal(value, parent["model"][key]):
+                            raise ValueError(f"Study initialization changed frozen tensor {key}")
+                policy.load_state_dict(parent["model"])
+                policy.freeze_encoders()
+                dependencies["study_initialization"] = study["initialization_sha256"]
         # Frozen training uses final encoder outputs, not CLIP descriptor I/O.
         feature_io_enabled = False
         feature_io_settings.update(active=False, pinned_host_buffers=False, asynchronous_transfer=False)
@@ -318,7 +346,7 @@ def _train_policy(
     warmup = cfg["training"]["warmup_steps"]
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
-        lambda s: min((s + 1) / max(warmup, 1), 1.0)
+        lambda s: 1.0 if study and study.get("initialization_checkpoint") else min((s + 1) / max(warmup, 1), 1.0)
         * (
             0.1
             + 0.9 * (1 + math.cos(math.pi * min(max(s - warmup, 0) / max(decay_steps - warmup, 1), 1))) / 2
@@ -394,6 +422,8 @@ def _train_policy(
                 "fork": fork,
                 "continuation": continuation,
                 "feature_io": feature_io_settings,
+                "student_study": study,
+                "student_training_pool": study_pool,
             },
             directory / "manifest.json",
         )
@@ -565,6 +595,7 @@ def _train_policy(
         block_cache_hits = block_cache_misses = 0
         hierarchy_read_seconds = hierarchy_select_seconds = hierarchy_residual_seconds = 0.0
         hierarchy_read_bytes = 0
+        study_rows = []
         progress.begin_update(step, local_n)
         positions = rank_positions(step, batch, rank, world)
         prepared_batches = loader.read_update(step)
@@ -627,7 +658,13 @@ def _train_policy(
             # encoders run inside model.forward so DDP tracks their gradients.
             with sync:
                 with torch.autocast(device.type, dtype=dtype, enabled=precision != "fp32"):
-                    noisy, flow_time, target, _ = flow_sample(action, valid, policy.normalizer)
+                    flow_options = {}
+                    if study:
+                        from stmem.training.utility_study import paired_flow_randomness
+
+                        flow_noise, paired_time = paired_flow_randomness(action, batch_positions, cfg["seed"])
+                        flow_options = {"noise": flow_noise, "time": paired_time}
+                    noisy, flow_time, target, _ = flow_sample(action, valid, policy.normalizer, **flow_options)
                     if cfg["model"].get("decoder") == "regression":
                         target = policy.normalizer.normalize(action).masked_fill(~valid, 0)
                     if cached_compact:
@@ -645,6 +682,15 @@ def _train_policy(
                             packed_batch=packed,
                         )
                     loss = masked_mse(prediction, target, valid)
+                    if study:
+                        example_losses = masked_mse(prediction.detach(), target, valid, reduction="none")
+                        for row, info, value, u, history_length in zip(
+                            loaded.study_contexts, decisions, example_losses.float().cpu().tolist(),
+                            flow_time.float().cpu().tolist(), lengths,
+                        ):
+                            study_rows.append({**row, "task": info.task, "episode_id": info.episode_id,
+                                               "decision_index": info.index, "loss": value, "flow_time": u,
+                                               "history_frames": history_length, "phase": info.phase})
                 if not torch.isfinite(loss):
                     raise FloatingPointError(f"Nonfinite loss at optimizer step {step}")
                 progress.update("backward")
@@ -676,6 +722,13 @@ def _train_policy(
         consecutive_overflows = 0
         scheduler.step()
         current_step = step + 1
+        if study and study_rows:
+            from stmem.training.utility_study import summarize_training_rows
+
+            # Rank-local rows retain all strata without thousands of W&B panels.
+            with (run_dir(cfg, stage) / f"study_strata_rank{rank}.jsonl").open("a") as handle:
+                for row in summarize_training_rows(study_rows):
+                    handle.write(json.dumps({"step": current_step, **row}, sort_keys=True) + "\n")
         flag = torch.tensor(
             [int(bool(stop_file and Path(stop_file).exists())) if rank == 0 else 0], device=device
         )
@@ -798,6 +851,12 @@ def _train_policy(
                 **process_memory(),
             }
             if rank == 0:
+                if study:
+                    record.update({
+                        f"study_{row['dimension']}_{row['value']}_loss_rank": row["mean_expert_fm_loss"]
+                        for row in summarize_training_rows(study_rows)
+                        if row["dimension"] in ("task", "phase", "family", "flow_time", "allocation")
+                    })
                 with (directory / "metrics.jsonl").open("a") as stream:
                     stream.write(json.dumps(record) + "\n")
                 print_json(record)

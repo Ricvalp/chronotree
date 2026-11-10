@@ -1,0 +1,374 @@
+{
+  "date": "2026-11-10",
+  "kind": "bounded_real_data_implementation_diagnostic",
+  "scope": "One VideoUnmask episode, eight offline states, S0 only; not the production multi-task study.",
+  "experiment_id": "c9f7713587993c211a058f228c3bf68820d10366f11aeab957ec25e9c1a3059c",
+  "source": {
+    "dirty": true,
+    "git": "c1df96a7aadd2f7bb34bf9c89adc536389feed6e",
+    "source_sha256": "4ceb1227d185325e1aa832ea2beadd033466833d3909d93850c819c8f3177757"
+  },
+  "teacher_sha256": "eb57ccd4c131888a5f5d6225a3a0cbe5cd14b3afc5c6ff0a1a17ee319cd70918",
+  "compact_sha256": "4fe22fd00fbc64dc740ba046d6ce1e58ade2a70580f8792e152477caad316427",
+  "device": "NVIDIA RTX 5000 Ada Generation, 32 GB",
+  "precision": "fp32, TF32 disabled",
+  "offline": {
+    "states": 8,
+    "compact_examples": 9664,
+    "teacher_examples": 64,
+    "assembly_seconds": 3.424215929582715,
+    "model_measurement_wall_seconds": 0.8764754459261894,
+    "compact_forward_seconds": 0.41960163973271847,
+    "teacher_forward_seconds": 0.1045026108622551,
+    "max_gpu_allocated_bytes": 207440896,
+    "max_gpu_reserved_bytes": 306184192,
+    "max_loss_numerical_floor": 2.1606683731079102e-07,
+    "worker_seconds": 4.419487068429589
+  },
+  "training_probe": {
+    "artifact": "runs/inspection/utility_student_training_probe_20261110/results/summary.json",
+    "updates_per_sampler": 5,
+    "microbatch": 4,
+    "precision": "bf16",
+    "weights_saved": false,
+    "full_leaf_context_max_abs": 0.0,
+    "full_leaf_velocity_max_abs": 0.0,
+    "full_leaf_tokens": 1056,
+    "frozen_encoder_gradients": false,
+    "scope": "Same teacher initialization, one episode, no DDP; not production training or a throughput forecast."
+  },
+  "generated": {
+    "states": 1,
+    "seeds": 2,
+    "task": "VideoUnmask",
+    "episode": "episode_0",
+    "decision_index": 36,
+    "selection": "Gain-blind first cached decision >=32, fixed TREE/B120; alternatives selected with discovery only.",
+    "original_partition": "validation",
+    "scope": "exploratory local asset check, not independent production confirmation",
+    "mean_expert_mse": {
+      "base": 0.007817288395017385,
+      "dispersed": 0.007943378295749426,
+      "immediate_completed": 0.007837047800421715,
+      "packet_completed": 0.006784537341445684,
+      "teacher_full": 0.006360569270327687
+    },
+    "paired_comparisons": {
+      "base_vs_immediate_completed": {
+        "normalized_action_mse_full": [
+          1.4243978512240574e-05,
+          6.374152235366637e-06
+        ],
+        "normalized_action_mse_prefix": [
+          4.4967250687477645e-06,
+          3.813481498582405e-06
+        ],
+        "tcp_target_distance_mm_by_target": [
+          [
+            0.1782737351676655,
+            0.170411769320003,
+            0.24598260869140767,
+            0.24439351183527477,
+            0.2969552994497601,
+            0.25310041749861467,
+            0.27841476784827357,
+            0.4248273982365465,
+            0.5805668040925578,
+            1.015075538390184,
+            1.631395716929308,
+            2.536034186888848,
+            2.693531628068422,
+            2.2981296571229337,
+            1.7081087944771651,
+            1.2312859272680896
+          ],
+          [
+            0.14444372681673343,
+            0.1261443461811476,
+            0.20599008120269502,
+            0.2264140706407263,
+            0.2509180016552099,
+            0.2725064586899578,
+            0.300993627805965,
+            0.2783556246285333,
+            0.3178750277780922,
+            0.3610694212578538,
+            0.4945520603924018,
+            0.6764959886269567,
+            0.9835850169660398,
+            1.357888815495523,
+            1.458328283274835,
+            1.2289425249972281
+          ]
+        ],
+        "tcp_target_distance_mm_prefix_mean": [
+          0.36880018505302875,
+          0.24847103866569142
+        ],
+        "tcp_target_distance_mm_tail_mean": [
+          2.016414318459127,
+          1.0332987816254973
+        ]
+      },
+      "base_vs_packet_completed": {
+        "normalized_action_mse_full": [
+          0.00039635912980884314,
+          0.0003234365431126207
+        ],
+        "normalized_action_mse_prefix": [
+          0.00038721878081560135,
+          0.000316515943268314
+        ],
+        "tcp_target_distance_mm_by_target": [
+          [
+            2.452879036892075,
+            1.7289807044421495,
+            0.764644913797303,
+            0.44300878944699673,
+            1.0012425719366274,
+            1.0116134300896984,
+            1.3234229608177734,
+            0.9703383278700346,
+            0.7852225151205543,
+            0.837667950082979,
+            0.82988671499527,
+            1.0557091871592428,
+            1.2005527214579699,
+            1.2594291897394052,
+            1.1373189763392848,
+            2.3186406026433364
+          ],
+          [
+            2.769411952660533,
+            1.85096408102898,
+            0.6049598776986628,
+            0.1872558675229817,
+            1.1526551388188437,
+            1.4448176661515542,
+            1.4686547080152828,
+            1.0813070835211287,
+            1.0122005170325696,
+            0.8180030719014658,
+            0.6950872582790512,
+            0.7229875351342944,
+            0.9553977390547036,
+            1.3884106069903024,
+            1.7283607654249733,
+            2.0842333548889638
+          ]
+        ],
+        "tcp_target_distance_mm_prefix_mean": [
+          1.1319021200496193,
+          1.2390229964352
+        ],
+        "tcp_target_distance_mm_tail_mean": [
+          1.3002562320557514,
+          1.2624128766287148
+        ]
+      },
+      "immediate_completed_vs_packet_completed": {
+        "normalized_action_mse_full": [
+          0.00037524927756749094,
+          0.0003127718809992075
+        ],
+        "normalized_action_mse_prefix": [
+          0.0003691914607770741,
+          0.0003098699380643666
+        ],
+        "tcp_target_distance_mm_by_target": [
+          [
+            2.285988320395767,
+            1.5827127240277359,
+            0.5403115012825929,
+            0.45567131097684455,
+            1.1455153932126676,
+            1.2405131088957086,
+            1.426819953534487,
+            0.8672063525209704,
+            0.6306364281246952,
+            0.755308242466094,
+            1.1587043139887752,
+            1.6718440226738451,
+            1.8123761609769764,
+            1.3034860219833464,
+            0.9802099184149562,
+            1.1930582561330938
+          ],
+          [
+            2.6381693875949517,
+            1.8117232111417376,
+            0.5608733523140584,
+            0.30961320135066717,
+            1.1566186663145486,
+            1.5091385587584354,
+            1.5290961243216523,
+            1.17550532770812,
+            0.9983582029375669,
+            0.9344230131686351,
+            0.958935494062864,
+            0.8288753620273387,
+            1.010762285319196,
+            0.9436889533170513,
+            0.883279041920503,
+            1.1286701190305957
+          ]
+        ],
+        "tcp_target_distance_mm_prefix_mean": [
+          1.0930683335437563,
+          1.262351904561037
+        ],
+        "tcp_target_distance_mm_tail_mean": [
+          1.353279782361832,
+          0.9590352092795915
+        ]
+      },
+      "packet_completed_vs_dispersed": {
+        "normalized_action_mse_full": [
+          0.0004089072172064334,
+          0.0003400410641916096
+        ],
+        "normalized_action_mse_prefix": [
+          0.0003964044735766947,
+          0.00033022131538018584
+        ],
+        "tcp_target_distance_mm_by_target": [
+          [
+            2.4568997490741427,
+            1.7114297270266008,
+            0.702095068779574,
+            0.4428253816493746,
+            1.1065885147974326,
+            1.1243598153228644,
+            1.491943849120228,
+            1.135700253836786,
+            0.9714884929461454,
+            1.0523370423871556,
+            1.1201792471690606,
+            1.4506731265377613,
+            1.62413106194658,
+            1.6608301759650443,
+            1.428622093211078,
+            2.5235791140695927
+          ],
+          [
+            2.789925192472664,
+            1.8459778128163264,
+            0.5835163629855004,
+            0.28269585490816734,
+            1.2218469441576056,
+            1.567986437868754,
+            1.6138845773794805,
+            1.2351711430603076,
+            1.1375255753823292,
+            0.9298795869703999,
+            0.8024314882874258,
+            0.8725006069966778,
+            1.1417409873697593,
+            1.6447192361201204,
+            2.0431546525343487,
+            2.41463432052555
+          ]
+        ],
+        "tcp_target_distance_mm_prefix_mean": [
+          1.2195667894940303,
+          1.3208409488001533
+        ],
+        "tcp_target_distance_mm_tail_mean": [
+          1.6346691364831862,
+          1.486530215305647
+        ]
+      }
+    },
+    "simulation_status": "separate continuation below"
+  },
+  "continuation": {
+    "checks": [
+      {
+        "branch": "base",
+        "causal_counts_verified": true,
+        "first_chunk_once_then_uniform": true,
+        "first_grasp_step": 75,
+        "prefix_and_handoff_exact": true,
+        "status": "success",
+        "target_index": 0,
+        "terminal_native_step": 102,
+        "video_frames": 169,
+        "video_seconds": 8.45,
+        "video_sha256": "6960532cf41d1fb962ce17e21aeb89e1c2288766c63798c5f2b7e15ba5eb7402"
+      },
+      {
+        "branch": "dispersed",
+        "causal_counts_verified": true,
+        "first_chunk_once_then_uniform": true,
+        "first_grasp_step": 82,
+        "prefix_and_handoff_exact": true,
+        "status": "success",
+        "target_index": 0,
+        "terminal_native_step": 105,
+        "video_frames": 172,
+        "video_seconds": 8.6,
+        "video_sha256": "abf440fdf7d5abdef1b0a5d2b2140c3f900912cf331e9d2836578ac1622366b2"
+      },
+      {
+        "branch": "immediate_completed",
+        "causal_counts_verified": true,
+        "first_chunk_once_then_uniform": true,
+        "first_grasp_step": 82,
+        "prefix_and_handoff_exact": true,
+        "status": "success",
+        "target_index": 0,
+        "terminal_native_step": 99,
+        "video_frames": 166,
+        "video_seconds": 8.3,
+        "video_sha256": "f090d2f75318ef417c3ea76b2f5bc9acb76a1d652ceb0539d0a4c99d83902ba8"
+      },
+      {
+        "branch": "packet_completed",
+        "causal_counts_verified": true,
+        "first_chunk_once_then_uniform": true,
+        "first_grasp_step": 75,
+        "prefix_and_handoff_exact": true,
+        "status": "success",
+        "target_index": 0,
+        "terminal_native_step": 101,
+        "video_frames": 168,
+        "video_seconds": 8.4,
+        "video_sha256": "af46dbcfa206ac4935ae10cb5344a525bd3de908fe91d0f0a6705bb56d5d1ba3"
+      }
+    ],
+    "identity": "ba1a9868ef48f4b480767517eeb91049a32ecacc48333dfa564843c5114e081a",
+    "scope": "one expert-prefix local diagnostic; not benchmark success",
+    "status": "passed"
+  },
+  "interpretation": "All four first-context branches grasped container0 and succeeded after the same genuine expert prefix. No differential target-choice benefit; the prefix already placed the TCP nearest the correct container. This is not autonomous benchmark success or evidence that new student training works.",
+  "numerical_controls": {
+    "bf16_pilot_batch_loss_max_abs": 0.00032991915941238403,
+    "bf16_pilot_vs_fp32_loss_max_abs": 0.002867303788661957,
+    "fp32_loss_max_abs": 2.1606683731079102e-07,
+    "configured_deadband": 1e-06,
+    "reason_for_fp32": "Numerical control, not selection on favorable utility gains."
+  },
+  "resume": "First FP32 pilot resumed byte-identically with no new state inference; final rerun arrays matched exactly. Generated NPZ/metadata resumed byte-identically without inference.",
+  "tests": {
+    "full_cpu_suite_passed": 1739,
+    "full_cpu_suite_skipped": 4,
+    "device_doctor": "FP32/BF16/FP16 passed",
+    "architecture_check": "passed",
+    "final_focused_passed": 108
+  },
+  "pending": [
+    "production 4096-state sampler audit",
+    "required >=3-task smoke",
+    "256-state panel",
+    "three 30000-update matched students",
+    "crossed primary endpoint measurements",
+    "conditional learned-router/adaptation backend integration if activated"
+  ],
+  "slurm_submitted": false,
+  "artifacts": {
+    "root": "runs/inspection/refinement_utility_final_20261110",
+    "offline_report": "runs/inspection/refinement_utility_final_20261110/report.md",
+    "generated_html": "runs/inspection/refinement_utility_final_20261110/generated_asset_plan_results/index.html",
+    "continuation_report": "runs/inspection/refinement_utility_final_20261110/first_chunk_continuation/report.md"
+  }
+}

@@ -1,5 +1,50 @@
 # Implementation and verification status
 
+## Matched student and refinement-utility study — 10 November 2026
+
+Revision 2 of the user's utility addendum, with the user's subsequent 100k-update
+amendment, is implemented as an opt-in study.
+Three matched teacher-initialized 100k jobs (S_STD, S_STAGE, S_PACKET) preserve
+the accepted teacher, production 90k S0 and existing caches. Whole diagnostic
+episodes and the original router-validation partition are excluded from new
+optimization. Shared per-example FM randomness is independent of context RNG.
+Complete local/packet construction routes preserve every integer prefix and
+exact coverage. Fixed candidate panels, shared teacher predictions, raw expert
+FM utilities, independent confirmation, numerical controls, capability inputs,
+episode-clustered reports and bounded generated-action checks are implemented.
+The [HPC workflow](refinement_utility_pilot.md) gives exact launch commands.
+
+The amended schedule uses LR 1e-4, 1k warmup and a cosine floor of 1e-5 at 100k,
+rolling recovery checkpoints every 1k and numbered snapshots every 5k. Earlier
+snapshots are development-only; the three 100k endpoints are the primary
+comparison. This is a user-requested plan change, not completed training or new
+benchmark evidence. Existing 30k studies are not reinterpreted or overwritten.
+
+Verification: the full CPU suite passed **1,739 tests**, with four expected
+skips. After final additions, **108 focused tests** passed. Ruff, whitespace and
+architecture snapshot/XML checks pass. The device doctor passes FP32/BF16/FP16.
+Bounded real-data training probes preserve cached FULL teacher parity exactly
+and leave encoders frozen. Final FP32 inspection of eight VideoUnmask states
+measured 9,664 compact and 64 shared teacher model examples in about 4.42 seconds
+after startup, including serial cache/context assembly. Maximum serial/batched
+loss difference was 2.16e-7. These small local histories cannot predict full-HPC
+throughput; the production multi-task smoke remains required.
+
+One gain-blind generated-action case and four exact-state first-chunk
+continuations also completed, with four MP4s. All four contexts grasped the
+correct container and succeeded after the same 36-command expert prefix. The
+expert prefix had already approached that container, and generated TCP paths
+differed by only about 1 mm: there is no differential task-choice benefit or
+autonomous benchmark claim. See [the continuation record](refinement_continuation.md)
+and [machine-readable evidence](evidence/refinement_utility_20261110.json).
+
+The full production caches are on the HPC. The 4,096-state sampler audit,
+256-state utility panel and three 100k student runs have **not** been submitted
+or completed locally. Conditional rehearsal has an unactivated launcher;
+learned-router/adaptation protocols are prepared but still require their
+explicitly listed label/controller integration if activated. The main report
+does not depend on those later branches.
+
 ## Reusable teacher continuation inspection — 10 November 2026
 
 `scripts/inspect_teacher.py` now orchestrates the existing usual checks, 48 fixed
