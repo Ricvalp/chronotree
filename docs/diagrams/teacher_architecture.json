@@ -217,7 +217,7 @@
     "src/stmem/evaluation/robomme_adapter.py": "759a25d71936968b2de644509f8d31917166af180dceb861b21e62ee58a157f8",
     "src/stmem/evaluation/runner.py": "727f852ccab38f4d5138fc73807a96a0f696946ce1e814538f8337c5990e49be",
     "src/stmem/evaluation/workload.py": "d57d5c902b4bec22e47610647efa514675be08ee03ad7321b1464c187cdee66e",
-    "src/stmem/inspection/refinement_candidates.py": "08806915c508064d9814708238d1eb061fcffefec12143d6bbdbbc5cdaf8ed50",
+    "src/stmem/inspection/refinement_candidates.py": "dd7a5231154c9f92d326a70ade060396d569bf70b11bb33b134416a4d811a192",
     "src/stmem/models/action_flow.py": "0f4e91469f7ff1726e2835ae5d370eee7a4fc75b7c76b3683c5c37df0976db6e",
     "src/stmem/models/attention_diagnostics.py": "1456e5645ccc4706e4615bf7b87b42e5cdf0105c8dcd3d57b686c7afa17ba5bd",
     "src/stmem/models/batched_policy.py": "299d5bf061b8d286d084b8a28f5bd207f2a9cc678d4650eabf6d5e100e5f1c97",

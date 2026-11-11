@@ -1,5 +1,24 @@
 # Implementation and verification status
 
+## Empty-history sampler audit repair — 11 November 2026
+
+HPC audit job 72962 failed before producing `sampler_audit/summary.json`.
+The traceback was reproduced locally for all three student variants: an empty
+causal FLAT archive made NumPy infer a floating-point selection mask, so
+inverting it for residual accounting raised `TypeError`. The shared archive
+helper now declares Boolean masks and integer group/count arrays explicitly.
+Zero-history examples remain in the experiment with zero history tokens;
+no padding, future leaves, example skipping or coverage relaxation was added.
+The same dtype correction covers empty packet-eligibility queries.
+
+Verification: **79 focused CPU tests passed**, including 20 new empty-history
+cases across candidate construction, context sampling, audit statistics and
+hydration. The original FLAT exception was observed before the fix for S_STD,
+S_STAGE and S_PACKET. Device doctor passed FP32/BF16/FP16; lint and architecture
+snapshot/XML checks passed. Encoder-cache fingerprint remains unchanged.
+The complete 4,096-example production audit still needs its HPC retry; no jobs
+were submitted locally. See the [recovery commands](refinement_utility_pilot.md#recovering-the-empty-history-audit-failure).
+
 ## Matched student and refinement-utility study — 10 November 2026
 
 Revision 2 of the user's utility addendum, with the user's subsequent 100k-update

@@ -1,5 +1,22 @@
 # Implementation decisions — 17 October 2026
 
+## 11 November: preserve empty causal histories in utility samplers
+
+Audit job 72962 exposed `IndexedArchive.flat_arrays` inferring float64 for an
+empty selection mask. Specify `bool` for that mask and `int64` for group-index
+and remaining-count arrays, including empty arrays. A valid zero-leaf history
+continues to produce exactly zero history records and no refinement moves.
+Keep these examples in all three recipes; do not fabricate a residual or
+replace a missing history with current/future observations. Nonempty selection
+and residual reduction order are unchanged.
+
+Do not rewrite the failed study's source-bound manifest or resume into its
+nonempty audit output. Reprepare the small utility panel under a fresh study
+name using the same immutable teacher/leaf/hierarchy caches, then render fresh
+student plans and repeat the audit/smoke checks. An isolated checkout lets the
+running teacher retain its original source and checkpoint provenance. This is
+a consumer repair, so it requires no raw-data or teacher-cache reconstruction.
+
 ## 10 November: matched students and refinement utility
 
 Implement revision 2 of the utility addendum as an opt-in study. Preserve the

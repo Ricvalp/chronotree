@@ -90,7 +90,8 @@ class IndexedArchive:
         self.sorted_leaves = sorted(self.leaf_set, key=lambda row: self.names[row])
         self.interval_array = np.asarray([self.intervals[row] for row in self.sorted_active], dtype=np.int64).reshape(-1, 2)
         self.group_numbers = {group: i for i, group in enumerate(self.group_names)}
-        self.node_group_codes = np.asarray([self.group_numbers[self.groups[row]] for row in self.sorted_active])
+        self.node_group_codes = np.asarray(
+            [self.group_numbers[self.groups[row]] for row in self.sorted_active], dtype=np.int64)
         self.coverage = _hash(sorted(self.names[row] for row in self.leaves))
         self.balancing = ("observed_space_time_balanced_partition" if "anchor" in index and "time_anchor" in index
                           else "observed_hierarchy_interleaving")
@@ -162,7 +163,10 @@ class IndexedArchive:
             raise ValueError("flat_arrays requires a FLAT context")
         canonical = self.context("FLAT", context["rows"])
         selected = set(canonical["rows"])
-        mask = np.asarray([int(row) in selected for row in self.leaves])
+        # An episode can legitimately start without any historical leaves.
+        # NumPy otherwise infers float64 for [], which cannot be inverted or
+        # used as the Boolean mask required by residual aggregation.
+        mask = np.asarray([int(row) in selected for row in self.leaves], dtype=bool)
         return mask, self.group_codes.copy(), list(self.group_names)
 
     def describe(self, context):
@@ -305,7 +309,8 @@ class IndexedArchive:
             return [row for row in context["rows"] if self.counts[row] >= cost + 1]
         selected = set(context["rows"])
         selected_counts = Counter(self.groups[row] for row in selected)
-        remaining = np.asarray([self.group_sizes[group] - selected_counts[group] for group in self.group_names])
+        remaining = np.asarray(
+            [self.group_sizes[group] - selected_counts[group] for group in self.group_names], dtype=np.int64)
         # Every subtree is an interval in DFS leaf order. After deleting selected
         # leaves, equal prefix-index intervals identify exactly equal descendant
         # support sets. This deduplicates regions without materializing O(N log N)

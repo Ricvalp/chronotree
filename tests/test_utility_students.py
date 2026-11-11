@@ -97,6 +97,30 @@ def test_consumed_packet_lengths_stop_at_the_sampled_prefix():
         consumed_packet_costs(route, 24)
 
 
+@pytest.mark.parametrize("family", ["tree", "flat", "uniform", "current"])
+@pytest.mark.parametrize("variant", ["S_STD", "S_STAGE", "S_PACKET"])
+def test_sampler_and_audit_preserve_empty_causal_history(family, variant):
+    import numpy as np
+    from test_refinement_candidates import forest
+    from stmem.config import load_config
+    from stmem.training.utility_sampler_audit import context_statistics
+    from stmem.training.utility_study import study_context
+
+    cfg = study_cfg(load_config("configs/debug/compact.yaml"), "synthetic-hierarchy", variant)
+    cfg["training"]["context_mix"] = {family: 1.0}
+    # Later rows may exist in the episode cache. At this decision none are
+    # causal, so the empty archive must stay empty for every recipe and family.
+    index, _, _ = forest((4, 4))
+    roots = leaves = np.empty(0, dtype=np.int64)
+    for position in range(20):
+        context, metadata = study_context(index, roots, leaves, cfg, position)
+        assert context["rows"] == [] and context["token_count"] == 0
+        assert metadata["family"] == family.upper()
+        statistics = context_statistics(index, roots, leaves, context)
+        assert statistics == {"token_count": 0, "leaf_fraction": 0.0, "mean_depth": 0.0,
+                              "max_depth": 0, "source_coverage": [], "root_record_concentration": 0.0}
+
+
 def test_paired_flow_draws_independent_of_microbatch_order_and_global_rng():
     actions = torch.zeros(4, 16, 8)
     a, u = paired_flow_randomness(actions, [1, 9, 15, 40], 0)

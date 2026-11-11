@@ -204,6 +204,74 @@ loading policies. The report command is CPU-only. Results live under
 previous allocation/array is inactive. Committed state rows are checksum-checked
 and reused; changed code/checkpoint/configuration requires a new study identity.
 
+## Recovering the empty-history audit failure
+
+The 11 November fix repairs an empty FLAT Boolean mask and empty group indices.
+It preserves zero-history examples, causal boundaries and the existing caches.
+Job 72962's failed audit output and the original `router_utility_v1` source-bound
+manifest must remain historical artifacts. Use fresh `router_utility_v2` and
+`utility_students_v2` names. `--resume` cannot apply the fix to an old source
+identity, and the audit refuses to overwrite a nonempty output directory.
+
+After committing/pushing the repair, the following creates an isolated checkout
+on the HPC so the still-running teacher can keep its main checkout unchanged.
+The detached worktree creates no branch. Links share the environment and output
+directories; the prepared data and teacher caches are read from their existing
+absolute paths. `git fetch` updates remote references without changing the main
+checkout's files or HEAD.
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+git fetch origin
+git worktree add --detach ../chronotree_utility_fix origin/master
+
+cd /hpc/home/phi/rvalperga/chronotree_utility_fix
+ln -s /hpc/home/phi/rvalperga/chronotree/.venv .venv
+ln -s /hpc/home/phi/rvalperga/chronotree/runs runs
+ln -s /hpc/home/phi/rvalperga/chronotree/hpc/generated hpc/generated
+
+cp /hpc/home/phi/rvalperga/chronotree/hpc/site_b200_4gpu.env hpc/site_utility.env
+cat >> hpc/site_utility.env <<'ENV'
+
+STMEM_REPO_ROOT=/hpc/home/phi/rvalperga/chronotree_utility_fix
+STMEM_PYTHON=/hpc/home/phi/rvalperga/chronotree/.venv/bin/python
+ENV
+export PYTHONPATH="$PWD/src"
+
+.venv/bin/python hpc/refinement_utility.py \
+  --site hpc/site_utility.env --cache-name memory_fv_seed0 \
+  --name router_utility_v2 --stage prepare --submit
+```
+
+This submits only the utility preparation job. Wait for
+`runs/router_utility_v2/contexts_complete.json` with `status: complete`, then
+render the new student configurations and submit the independent checks:
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree_utility_fix
+export PYTHONPATH="$PWD/src"
+
+.venv/bin/python hpc/student_utility.py \
+  --site hpc/site_utility.env --cache-name memory_fv_seed0 \
+  --manifest runs/router_utility_v2/manifest.json \
+  --name utility_students_v2 --steps 100000 --dry-run
+
+.venv/bin/python hpc/refinement_utility.py \
+  --site hpc/site_utility.env --name router_utility_v2 \
+  --stage audit --student-study-name utility_students_v2 --submit
+
+.venv/bin/python hpc/refinement_utility.py \
+  --site hpc/site_utility.env --name router_utility_v2 \
+  --stage smoke --student S0 --panel-partition train --submit
+```
+
+After successful checks, use the same student command with `--submit` in place
+of `--dry-run`. Continue using this checkout, `hpc/site_utility.env`, and the
+v2 names for subsequent measurements. Physical outputs remain under the main
+checkout's `runs/` and `hpc/generated/` through the links. The old v1 artifacts
+remain available. These recovery commands were source-reviewed and shell syntax
+checked locally; no HPC resubmission has been performed here.
+
 ## Generated actions and conditional follow-ups
 
 `python -m stmem.inspection.refinement_generated` creates a common at-most-16-case

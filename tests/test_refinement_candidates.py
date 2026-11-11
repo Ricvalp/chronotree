@@ -31,6 +31,76 @@ def forest(sizes=(1024, 512), *, geometry=False):
     return index, roots, leaves
 
 
+def empty_causal_forest(empty_storage):
+    # At the first decision, the sidecar can already contain future nodes even
+    # though none are yet causal. Also cover a physically empty indexed cache.
+    index, _, _ = forest((16,), geometry=True)
+    if empty_storage:
+        index = {key: values[:0] for key, values in index.items()}
+    return index, [], []
+
+
+@pytest.mark.parametrize("empty_storage", [False, True])
+def test_empty_flat_archive_has_typed_selection_and_exact_zero_coverage(empty_storage):
+    index, roots, leaves = empty_causal_forest(empty_storage)
+    archive = IndexedArchive(index, roots, leaves)
+    context = archive.coarse("FLAT")
+    assert archive.validate(context) == context
+    assert context["rows"] == [] and archive.records_count(context) == 0
+    mask, codes, groups = archive.flat_arrays(context)
+    assert mask.shape == codes.shape == (0,) and mask.dtype == np.bool_
+    assert np.issubdtype(codes.dtype, np.integer) and groups == []
+    # This is the ordinary FLAT token-accounting operation used by the audit
+    # and training loader; an empty float mask cannot be inverted or indexed.
+    assert int(mask.sum()) + len(set(codes[~mask])) == 0
+    assert archive.leaves[mask].shape == (0,)
+    description = archive.describe(context)
+    assert description["residuals"] == [] and description["source_leaf_counts"] == {}
+    assert description["maximum_record_mass"] == description["maximum_depth"] == 0
+    assert description["leaf_fraction"] == 0
+    assert archive.coverage_hash(context) == archive.coverage_hash(archive.coarse("TREE"))
+    panel = archive.diagnostic_panel(seed=37)
+    assert panel["leaf_count"] == panel["root_count"] == 0
+    assert panel["contexts"] == {} and panel["families"] == []
+    assert len(panel["eligibility"]) == 6
+    assert all(not row["eligible"] and row["reason"] for row in panel["eligibility"])
+    with pytest.raises(ValueError, match="noncausal"):
+        archive.context("FLAT", [0])
+
+
+@pytest.mark.parametrize("empty_storage", [False, True])
+@pytest.mark.parametrize("reader", ["TREE", "FLAT"])
+def test_empty_history_routes_are_saturated_without_moves_or_fabricated_records(empty_storage, reader):
+    index, roots, leaves = empty_causal_forest(empty_storage)
+    archive = IndexedArchive(index, roots, leaves)
+    initial = archive.coarse(reader)
+    routes = training_routes(index, roots, leaves, reader, target_budget=128, seed=37)
+    assert routes["eligible"] and routes["saturated"]
+    assert routes["initial_count"] == routes["target_count"] == 0
+    for route in (routes["stage"], routes["packet"]):
+        assert route["contexts"] == {0: initial}
+        assert route["moves"] == route["packets"] == []
+    assert archive.positive_moves(initial) == []
+    assert archive.feasible_regions(initial, 1) == []
+    assert np.issubdtype(archive.node_group_codes.dtype, np.integer)
+
+
+@pytest.mark.parametrize("empty_storage", [False, True])
+def test_empty_flat_hydration_keeps_zero_history_tokens(empty_storage):
+    from stmem.training.packed_context import _empty_columns, columns_bank, flat_residual_columns
+
+    index, roots, leaves = empty_causal_forest(empty_storage)
+    archive = IndexedArchive(index, roots, leaves)
+    context = archive.coarse("FLAT")
+    columns = flat_residual_columns(_empty_columns(4), *archive.flat_arrays(context))
+    bank = columns_bank(columns, clocks=(0., 0.), width=4)
+    assert bank.content.shape == (1, 0, 4)
+    assert bank.metadata.shape == (1, 0, 23)
+    assert bank.valid.shape == bank.log_count.shape == (1, 0)
+    assert not bank.valid.any()
+    assert len(columns["count"]) == context["token_count"] == 0
+
+
 @pytest.mark.parametrize("reader", ["TREE", "FLAT"])
 def test_full_routes_cover_each_leaf_once_at_every_integer_count(reader):
     index, roots, leaves = forest((160, 140), geometry=True)
