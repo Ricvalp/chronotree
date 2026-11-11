@@ -6,6 +6,23 @@
 **Companion report:** `PROJECT_HANDOFF_FOR_CHATGPT.md`, dated 10 November 2026  
 **Report/code reference:** `7e1d169e3bbfbffb77dba724cf6b1cb4a7b73184`
 
+**11 November teacher-selection amendment (explicit user instruction):** The new
+primary study uses the accepted 140,000-step teacher, SHA256
+`d17dee6cfe70caae8ff8d1013b0fe50aee01d1cd816feda4a25f0f4d388c0d34`.
+Its completed FULL validation obtained 25/64 successes (39.0625%) with eight
+executed targets. Rebuild only its learned encoded-token and hierarchy caches;
+reuse prepared observations and frozen CLIP features. Train S_STD, S_STAGE and
+S_PACKET from this identical teacher for 100k updates each. Keep the old S0 and
+its caches/results as a separate historical study; do not include S0 in the new
+matched matrix or feed it the new encodings. A frozen teacher-weight `S_INIT`
+compact-context smoke check is diagnostic only, with zero compact updates.
+New generated-action/prefix checks use eight executed targets, matching the
+accepted rollout. These changes supersede the old fixed dependencies, four-arm
+matrix, no-cache-regeneration restriction and execute-ten setting below **for
+the new study only**. All other causal, matching, data-split and numerical
+requirements remain. See [the 140k workflow](docs/refinement_utility_teacher140k.md)
+and `configs/inspection/refinement_utility_teacher140k.yaml`.
+
 ## 1. Task and intended outcome
 
 Implement a bounded, reproducible **student-training × routing experiment**. Determine whether current router labels are weak because they measure isolated, immediate refinements in already informative contexts, because the student has not learned to exploit useful allocations, or both.

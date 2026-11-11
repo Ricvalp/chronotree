@@ -14,8 +14,7 @@ from pathlib import Path
 import yaml
 
 from stmem.config import digest, source_revision
-from stmem.inspection.refinement_data import read_json, verify_manifest
-from stmem.inspection.refinement_generated import STUDENTS
+from stmem.inspection.refinement_data import primary_students, read_json, reference_identity, verify_manifest
 from stmem.inspection.refinement_utility import validate_student_endpoint
 from stmem.training.checkpoints import atomic_json, file_sha256
 from stmem.training.runtime import load_checkpoint
@@ -54,7 +53,11 @@ def prepare(manifest_path, output, *, checkpoints, finding=None,
     cfg = yaml.safe_load(Path(configuration).read_text())
     if cfg.get("enabled") is not False or cfg.get("maximum_students") != 2:
         raise ValueError("This conditional preparation must remain disabled and bounded to at most two students")
-    if not 1 <= len(checkpoints) <= 2 or set(checkpoints) - set(STUDENTS):
+    # The parent study owns replanning cadence; the conditional template must
+    # not silently restore the older teacher study's ten-target protocol.
+    cfg["closed_loop"]["executed_targets"] = manifest.get("protocol", {}).get(
+        "execute_targets", cfg["closed_loop"]["executed_targets"])
+    if not 1 <= len(checkpoints) <= 2 or set(checkpoints) - set(primary_students(manifest)):
         raise ValueError("Prepare one or at most two explicitly selected primary student variants")
     pool = validate_training_pool(manifest)
     teacher_hash = manifest["dependencies"]["teacher_sha256"]
@@ -71,9 +74,10 @@ def prepare(manifest_path, output, *, checkpoints, finding=None,
             if state.get("step") != training_identity["endpoint"]:
                 raise ValueError("Primary student selection must use its predeclared primary endpoint")
         else:
-            if state.get("step") != 90000 or file_sha256(path) != manifest["dependencies"]["compact_sha256"]:
+            reference_hash, reference_step = reference_identity(manifest)
+            if state.get("step") != reference_step or file_sha256(path) != reference_hash:
                 raise ValueError("S0 must be the unchanged 90k reference")
-            training_identity = {"initialization": "production_reference", "endpoint": 90000}
+            training_identity = {"initialization": "production_reference", "endpoint": reference_step}
         students[variant] = {"path": str(path), "sha256": file_sha256(path), "step": state["step"],
                              "teacher_sha256": teacher_hash, **training_identity}
     matched = {(row["initialization"], row["endpoint"], row["step"]) for variant, row in students.items()

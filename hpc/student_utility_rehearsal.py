@@ -17,10 +17,25 @@ if str(REPO) not in sys.path:
 from hpc.plan import positive_integer, read_site, save_json, sha256  # noqa: E402
 from hpc.profile_memory import absolute_path, profile_name, walltime  # noqa: E402
 from hpc.train_compact import prepare  # noqa: E402
+from stmem.inspection.refinement_data import reference_name, study_dependencies  # noqa: E402
 from stmem.training.runtime import load_checkpoint  # noqa: E402
-from stmem.training.utility_study import (  # noqa: E402
-    ENCODED_CACHE_ID, HIERARCHY_CACHE_ID, TEACHER_SHA256, read_study_manifest,
-)
+from stmem.training.utility_study import VARIANTS, read_study_manifest  # noqa: E402
+
+
+def validate_parent(panel, parent):
+    dependencies = study_dependencies(panel)
+    if (parent.get("stage") != "compact" or parent.get("provenance", {}).get(
+            "dependencies", {}).get("teacher") != dependencies["teacher_sha256"]):
+        raise ValueError("Rehearsal requires a compact policy using this study's selected teacher")
+    settings = parent["config"]["training"].get("utility_study", {})
+    if reference_name(panel) != "S0":
+        if settings.get("experiment_id") != panel["experiment_id"] or settings.get("variant") not in VARIANTS:
+            raise ValueError("Rehearsal parent must be a trained student from this study; "
+                             "the historical S0 and frozen S_INIT are not eligible")
+        for field in ("teacher_sha256", "teacher_step", "encoded_cache_id", "hierarchy_cache_id"):
+            if settings.get(field) != dependencies[field]:
+                raise ValueError(f"Rehearsal parent differs from the study's {field}")
+    return dependencies
 
 
 def main(argv=None):
@@ -58,8 +73,7 @@ def main(argv=None):
         panel = read_study_manifest(source_manifest)
         source = absolute_path(args.parent, repo)
         parent = load_checkpoint(source)
-        if parent["stage"] != "compact" or parent["provenance"]["dependencies"].get("teacher") != TEACHER_SHA256:
-            raise ValueError("Rehearsal requires a compact policy using the accepted teacher")
+        dependencies = validate_parent(panel, parent)
         evidence = absolute_path(args.evidence, repo)
         if not evidence.read_text().strip():
             raise ValueError("Rehearsal activation requires a nonempty development finding")
@@ -96,8 +110,8 @@ def main(argv=None):
                     "experiment_id": panel["experiment_id"], "followup": arm,
                     "manifest": str(generated / "panel_manifest.json"),
                     "manifest_sha256": sha256(generated / "panel_manifest.json"),
-                    "teacher_sha256": TEACHER_SHA256, "encoded_cache_id": ENCODED_CACHE_ID,
-                    "hierarchy_cache_id": HIERARCHY_CACHE_ID,
+                    **{key: dependencies[key] for key in (
+                        "teacher_sha256", "teacher_step", "encoded_cache_id", "hierarchy_cache_id")},
                     "initialization_checkpoint": str(generated / "parent.pt"),
                     "initialization_sha256": sha256(generated / "parent.pt"),
                     "continuation_updates": 10000, "continuation_lr": 1e-5,
@@ -117,6 +131,9 @@ def main(argv=None):
                 arms.append((child, destination))
             save_json(generated / "matrix.json", {
                 "kind": "conditional_paired_rehearsal", "status": "prepared",
+                "experiment_id": panel["experiment_id"],
+                "teacher_sha256": dependencies["teacher_sha256"],
+                "teacher_step": dependencies["teacher_step"],
                 "parent_sha256": sha256(generated / "parent.pt"), "updates_per_arm": 10000,
                 "activation_evidence_sha256": sha256(generated / "activation_evidence.md"),
                 "plans": [str(destination / "plan.json") for _, destination in arms],

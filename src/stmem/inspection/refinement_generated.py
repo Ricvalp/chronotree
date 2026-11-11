@@ -18,7 +18,8 @@ import numpy as np
 
 from stmem.config import digest, source_revision
 from stmem.inspection.refinement_data import (
-    COMPACT_SHA, TEACHER_SHA, UtilityDataReader, read_json, stable_seed, verify_manifest,
+    UtilityDataReader, primary_students, read_json, reference_identity, stable_seed,
+    teacher_identity, verify_manifest,
 )
 from stmem.inspection.refinement_measurements import draw_seed, generated_state
 from stmem.inspection.refinement_statistics import context_means, tie_set
@@ -262,18 +263,20 @@ def validate_generated_endpoints(identities, *, limited_check):
         raise ValueError("Generated-action comparisons cannot mix observed checkpoint steps")
 
 
-def create_plan(manifest_path, output, *, students=STUDENTS, checkpoints=None, max_cases=16,
+def create_plan(manifest_path, output, *, students=None, checkpoints=None, max_cases=16,
                 measurement_mode="main", limited_check=False, diagnostic_state_id=None):
     from stmem.inspection.refinement_utility import load_rows, read_panel
     manifest = verify_manifest(manifest_path)
     root = Path(manifest_path).parent
-    students = tuple(sorted(set(students)))
-    if not students or set(students) - set(STUDENTS):
-        raise ValueError("Specify known distinct study students")
-    if (set(students) != set(STUDENTS) or measurement_mode != "main") and not limited_check:
+    primary = primary_students(manifest)
+    students = tuple(sorted(set(primary if students is None else students)))
+    if not students or set(students) - set(primary):
+        raise ValueError("Specify this manifest's primary students; preflight/historical references are excluded")
+    if (set(students) != set(primary) or measurement_mode != "main") and not limited_check:
         raise ValueError("A partial-student/smoke probe needs explicit --limited-check")
     checkpoints = dict(checkpoints or {})
-    checkpoints.setdefault("S0", manifest["dependencies"]["compact"])
+    if "S0" in primary:
+        checkpoints.setdefault("S0", manifest["dependencies"]["compact"])
     selected_state = (None if diagnostic_state_id is None else diagnostic_state(
         manifest, diagnostic_state_id, limited_check=limited_check, max_cases=max_cases))
     selected_states = manifest["states"] if selected_state is None else [selected_state]
@@ -283,7 +286,7 @@ def create_plan(manifest_path, output, *, students=STUDENTS, checkpoints=None, m
             raise ValueError(f"Missing immutable --checkpoints {student}=PATH")
         checkpoint = Path(checkpoints[student]).resolve()
         checkpoint_hash = file_sha256(checkpoint)
-        if student == "S0" and checkpoint_hash != COMPACT_SHA:
+        if student == "S0" and checkpoint_hash != reference_identity(manifest)[0]:
             raise ValueError("S0 must remain the exact production 90k compact checkpoint")
         folder, identity = _measurement_folder(root, student, measurement_mode, checkpoint_hash,
                                                 manifest["experiment_id"], selected_states,
@@ -323,7 +326,7 @@ def create_plan(manifest_path, output, *, students=STUDENTS, checkpoints=None, m
                   "students": identities, "measurement_inputs": inputs,
                   "measurement_mode": measurement_mode, "limited_check": limited_check,
                   "precision": manifest["protocol"]["precision"], "integration_steps": 8,
-                  "execute_targets": 10, "native_commands_per_target": 2,
+                  "execute_targets": manifest["protocol"].get("execute_targets", 10), "native_commands_per_target": 2,
                   "generated_draws": 2, **selection,
                   "model_example_bound": len(selection["cases"]) * len(students) * 5 * 2 * 8,
                   "simulation_status": "not_run",
@@ -344,6 +347,8 @@ def verify_plan(path, *, verify_source=True):
     manifest = verify_manifest(plan["manifest"], verify_source=verify_source)
     if manifest["experiment_id"] != plan["experiment_id"]:
         raise ValueError("Parent experiment changed")
+    if not plan["students"] or set(plan["students"]) - set(primary_students(manifest)):
+        raise ValueError("Generated-action plan contains a preflight or historical non-primary student")
     if verify_source and plan["source"]["source_sha256"] != source_revision()["source_sha256"]:
         raise ValueError("Generated-case implementation changed")
     for dependency in plan["measurement_inputs"]:
@@ -395,8 +400,9 @@ def generate(plan_path, *, student=None, device="cuda:0", batch_size=16, max_hou
     if max_hours <= 0 or batch_size < 1:
         raise ValueError("Positive generation time and batch bounds required")
     dep = manifest["dependencies"]
+    teacher_hash, _ = teacher_identity(manifest)
     teacher, tstate = load_frozen_policy(dep["teacher"], device)
-    if file_sha256(dep["teacher"]) != TEACHER_SHA:
+    if file_sha256(dep["teacher"]) != teacher_hash:
         raise ValueError("Accepted teacher changed")
     data = TrainingData(manifest["configuration"])
     reader = UtilityDataReader(data, manifest["configuration"], dep["encoded"], dep["hierarchy"])
@@ -429,8 +435,9 @@ def generate(plan_path, *, student=None, device="cuda:0", batch_size=16, max_hou
                     item, contexts = reader.prepare(case["state"], specs)
                     load_seconds = time.monotonic() - begin
                     result = generated_state(teacher, policy, item, contexts, case["generation_seeds"],
-                                              teacher_hash=TEACHER_SHA, student_hash=identity["sha256"],
+                                              teacher_hash=teacher_hash, student_hash=identity["sha256"],
                                               task=case["state"]["task"], precision=plan["precision"],
+                                              prefix_targets=plan["execute_targets"],
                                               compact_batch_size=batch_size)
                     result["timings"]["cache_context_assembly_seconds"] = load_seconds
                     result["current_visual_anchors"] = item["current"].metadata[
@@ -477,7 +484,8 @@ def report(plan_path):
             row.update(reader=case["reader"], background=case["background"], final_budget=case["final_budget"])
             rows.append(row)
     output.mkdir(parents=True, exist_ok=True)
-    payload = {"rows": rows, "missing": missing, "selection": plan["selection_audit"], "scope": plan["scope"]}
+    payload = {"rows": rows, "missing": missing, "selection": plan["selection_audit"], "scope": plan["scope"],
+               "execute_targets": plan["execute_targets"], "native_commands_per_target": plan["native_commands_per_target"]}
     atomic_json(payload, output / "summary.json")
     encoded = json.dumps(payload, allow_nan=False).replace("<", "\\u003c")
     page = _HTML.replace("__PLOTLY__", get_plotlyjs().replace("</script", "<\\/script")).replace("__DATA__", encoded)
@@ -510,12 +518,12 @@ _HTML = """<!doctype html><meta charset="utf-8"><title>Generated utility diagnos
 data.rows.forEach((r,i)=>{let o=document.createElement('option');o.value=i;o.textContent=`${r.student} · ${r.state.task} ${r.state.episode_id} t=${r.state.decision_index} · ${r.reader} B${r.final_budget}`;c.appendChild(o)});
 const colors={base:'#7e8894',immediate_completed:'#3266bd',packet_completed:'#c04b3a',dispersed:'#a48226',teacher_full:'#16836b'};
 function trace(points,name,color,mode='lines+markers',dash='solid'){return {type:'scatter3d',mode,x:points.map(p=>p[0]),y:points.map(p=>p[1]),z:points.map(p=>p[2]),name,line:{color,width:4,dash},marker:{color,size:3}}}
-function render(){if(!data.rows.length){document.getElementById('status').textContent='No completed generation cases.';return;}const r=data.rows[Number(c.value)],draw=Number(d.value),traces=[];
+function render(){if(!data.rows.length){document.getElementById('status').textContent='No completed generation cases.';return;}const r=data.rows[Number(c.value)],draw=Number(d.value),traces=[],executed=data.execute_targets;
 traces.push(trace(r.current_visual_anchors,'Current visual-token anchors','#abb1b7','markers'));
 if(r.current_tcp)traces.push(trace([r.current_tcp],'Observed TCP','#111827','markers'));
-for(const [name,paths] of Object.entries(r.paths)){const p=paths[draw];traces.push(trace(p.slice(0,10),name+' · first ten targets',colors[name]));if(p.length>10)traces.push(trace(p.slice(9),name+' · discarded tail',colors[name],'lines+markers','dash'));}
+for(const [name,paths] of Object.entries(r.paths)){const p=paths[draw];traces.push(trace(p.slice(0,executed),name+` · first ${executed} targets`,colors[name]));if(p.length>executed)traces.push(trace(p.slice(executed-1),name+' · discarded tail',colors[name],'lines+markers','dash'));}
 Plotly.react('plot',traces,{margin:{l:0,r:0,t:10,b:0},scene:{aspectmode:'data',xaxis:{title:'World x (m)'},yaxis:{title:'World y (m)'},zaxis:{title:'World z (m)'}},legend:{orientation:'h'},uirevision:r.state.state_id},{responsive:true,displaylogo:false});
-document.getElementById('status').textContent=`Scope: ${data.scope}; original episode partition: ${r.state.partition}. Shared background ${r.background} tokens; completed alternatives ${r.final_budget} tokens; ten targets = one second at nominal 10 Hz. Anchors are not the full point cloud. ${data.missing.length} matrix cells remain unrun.`;
+document.getElementById('status').textContent=`Scope: ${data.scope}; original episode partition: ${r.state.partition}. Shared background ${r.background} tokens; completed alternatives ${r.final_budget} tokens; ${executed} targets = ${(executed/10).toFixed(1)} seconds at nominal 10 Hz. Anchors are not the full point cloud. ${data.missing.length} matrix cells remain unrun.`;
 document.getElementById('metrics').textContent=JSON.stringify({selection_reasons:r.selection_reasons,metrics:r.metrics,comparisons:r.comparisons,note:r.note},null,2)}c.onchange=d.onchange=render;render();</script>"""
 
 
@@ -524,7 +532,8 @@ def main(argv=None):
     parser.add_argument("--mode", choices=("plan", "generate", "report"), required=True)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--plan", type=Path, required=True)
-    parser.add_argument("--students", nargs="+", choices=STUDENTS, default=list(STUDENTS))
+    parser.add_argument("--students", nargs="+", choices=STUDENTS,
+                        help="Defaults to the manifest's declared primary arms")
     parser.add_argument("--checkpoints", nargs="*", default=[], metavar="STUDENT=PATH")
     parser.add_argument("--student", choices=STUDENTS)
     parser.add_argument("--measurement-mode", choices=("main", "smoke"), default="main")

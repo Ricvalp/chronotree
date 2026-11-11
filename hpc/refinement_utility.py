@@ -20,8 +20,10 @@ from hpc.plan import read_site, save_json, sha256, source_hash  # noqa: E402
 from hpc.profile_memory import absolute_path, profile_name, walltime  # noqa: E402
 from hpc.train_compact import inspect_cache, inspect_hierarchy  # noqa: E402
 from stmem.config import digest  # noqa: E402
+from stmem.data.hierarchy_cache import default_hierarchy_root  # noqa: E402
 from stmem.inspection.refinement_data import (  # noqa: E402
-    COMPACT_SHA, ENCODED_ID, HIERARCHY_ID, TEACHER_SHA, verify_manifest,
+    COMPACT_SHA, ENCODED_ID, HIERARCHY_ID, TEACHER_SHA, TEACHER_REFERENCE,
+    primary_students, reference_name, validate_protocol_teacher, verify_manifest,
 )
 
 
@@ -35,9 +37,11 @@ def main(argv=None):
     parser.add_argument("--name", type=profile_name, default="router_utility_v1")
     parser.add_argument("--stage", choices=("prepare", "audit", "smoke", "measure", "extension", "report"), default="prepare")
     parser.add_argument("--student-study-name", type=profile_name, default="utility_students_v1")
-    parser.add_argument("--student", choices=("S0", "S_STD", "S_STAGE", "S_PACKET"), default="S0")
+    parser.add_argument("--student", choices=("S0", "S_INIT", "S_STD", "S_STAGE", "S_PACKET"))
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--compact", type=Path)
+    parser.add_argument("--teacher-reference", action="store_true",
+                        help="New adopted-teacher study: S_INIT smoke, three fresh primary students; no old S0")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--protocol", type=Path, default=REPO / "configs/inspection/refinement_utility_pilot.yaml")
     parser.add_argument("--partition", default="gpuq")
@@ -48,6 +52,10 @@ def main(argv=None):
     parser.add_argument("--extension-base", type=Path)
     parser.add_argument("--additional-draws", type=int)
     args = parser.parse_args(argv)
+    if args.teacher_reference and args.stage != "prepare":
+        parser.error("--teacher-reference is recorded by --stage prepare; later stages read the manifest")
+    if args.teacher_reference and args.compact is not None:
+        parser.error("--teacher-reference uses the adopted teacher itself; do not supply --compact")
     if not 1 <= args.shards <= 16:
         parser.error("Use 1..16 bounded independent shards")
     if args.stage == "extension":
@@ -70,34 +78,46 @@ def main(argv=None):
         count = args.shards if args.stage in ("measure", "extension") else 1
         commands, inputs = [], {}
         if args.stage == "prepare":
-            cfg, cache_plan, leaf = inspect_cache(repo / "hpc/generated" / args.cache_name / "plan.json")
-            encoded = Path(cache_plan["cache_path"]) if "cache_path" in cache_plan else Path(cfg["paths"]["cache_root"]) / ENCODED_ID
-            hierarchy = encoded / "hierarchy" / HIERARCHY_ID
+            cache_plan_path = repo / "hpc/generated" / args.cache_name / "plan.json"
+            cfg, cache_plan, leaf = inspect_cache(cache_plan_path)
+            encoded = Path(cfg["paths"]["cache_root"]) / digest(leaf["identity"])[:24]
+            hierarchy = default_hierarchy_root(encoded, leaf) if args.teacher_reference else encoded / "hierarchy" / HIERARCHY_ID
             parents = inspect_hierarchy(encoded, hierarchy)
-            if (cache_plan["checkpoint_sha256"] != TEACHER_SHA or digest(leaf["identity"])[:24] != ENCODED_ID
+            if not args.teacher_reference and (cache_plan["checkpoint_sha256"] != TEACHER_SHA or digest(leaf["identity"])[:24] != ENCODED_ID
                     or digest(parents["identity"])[:24] != HIERARCHY_ID):
                 raise ValueError("Accepted immutable cache dependencies differ")
-            compact = absolute_path(args.compact or repo / "hpc/generated/memory_fv_seed0_routers/frozen/compact.pt", repo)
-            if sha256(compact) != COMPACT_SHA:
+            compact = (Path(cache_plan["checkpoint"]) if args.teacher_reference else absolute_path(
+                args.compact or repo / "hpc/generated/memory_fv_seed0_routers/frozen/compact.pt", repo))
+            if not args.teacher_reference and sha256(compact) != COMPACT_SHA:
                 raise ValueError("S0 must be the exact preserved production router-study compact checkpoint")
             config = generated / "data.yaml"
             if config.exists() and yaml.safe_load(config.read_text()) != cfg:
                 raise ValueError("Study data configuration changed")
             config.write_text(yaml.safe_dump(cfg, sort_keys=False))
             protocol_source = absolute_path(args.protocol, repo)
+            if args.teacher_reference:
+                validate_protocol_teacher(yaml.safe_load(protocol_source.read_text()), {
+                    "teacher_sha256": cache_plan["checkpoint_sha256"],
+                    "teacher_step": cache_plan["checkpoint_step"], "reference": TEACHER_REFERENCE})
             protocol = generated / "protocol.yaml"
             if protocol.exists() and protocol.read_bytes() != protocol_source.read_bytes():
                 raise ValueError("Pinned utility protocol changed; use a new study name")
             if not protocol.exists():
                 protocol.write_bytes(protocol_source.read_bytes())
-            inputs = {str(protocol): sha256(protocol), str(config): sha256(config), str(compact): COMPACT_SHA,
-                      str(cache_plan["checkpoint"]): TEACHER_SHA}
+            inputs = {str(protocol): sha256(protocol), str(config): sha256(config), str(compact): sha256(compact),
+                      str(cache_plan["checkpoint"]): cache_plan["checkpoint_sha256"]}
             commands = [base + ["--mode", "manifest", "--config", str(protocol), "--data-config", str(config),
                                "--teacher", cache_plan["checkpoint"], "--compact", str(compact),
                                "--encoded", str(encoded), "--hierarchy", str(hierarchy)],
                         base + ["--mode", "contexts"]]
+            if args.teacher_reference:
+                commands[0] += ["--teacher-reference", "--cache-plan", str(cache_plan_path)]
+                inputs[str(cache_plan_path)] = sha256(cache_plan_path)
+                inputs[str(cache_plan["selection"])] = cache_plan["selection_sha256"]
+            args.student = args.student or ("S_INIT" if args.teacher_reference else "S0")
         elif args.stage == "audit":
             manifest = verify_manifest(manifest_path)
+            args.student = args.student or reference_name(manifest)
             config = repo / "hpc/generated" / f"{args.student_study_name}_s_std" / "compact.yaml"
             if not config.is_file():
                 raise ValueError("Render hpc/student_utility.py --dry-run before the sampler audit")
@@ -106,12 +126,19 @@ def main(argv=None):
                          "--count", "4096", "--output", str(output / "sampler_audit")]]
         elif args.stage == "report":
             manifest = verify_manifest(manifest_path, verify_source=False)
+            args.student = args.student or reference_name(manifest)
             commands = [base + ["--mode", "report"]]
         else:
             manifest = verify_manifest(manifest_path)
+            args.student = args.student or reference_name(manifest)
+            if args.student == "S_INIT" and (reference_name(manifest) != "S_INIT"
+                                             or args.stage != "smoke" or args.panel_partition != "train"):
+                parser.error("S_INIT is only a training-partition smoke diagnostic for its new teacher study")
+            if args.student not in (*primary_students(manifest), reference_name(manifest)):
+                parser.error("Student is not part of this study; old S0 must remain in its original study")
             inputs[str(manifest_path)] = sha256(manifest_path)
             checkpoint = absolute_path(args.checkpoint or manifest["dependencies"]["compact"], repo)
-            if args.student != "S0" and args.checkpoint is None:
+            if args.student != reference_name(manifest) and args.checkpoint is None:
                 parser.error("A new student measurement requires its fixed endpoint --checkpoint")
             inputs[str(checkpoint)] = sha256(checkpoint)
             mode = {"smoke": "smoke", "measure": "main", "extension": "extension"}[args.stage]
@@ -145,7 +172,9 @@ def main(argv=None):
                 "student": args.student, "shards": count, "gpus_per_shard": 1, "cpus_per_shard": 8,
                 "mem": "64G", "walltime": args.walltime, "partition": args.partition,
                 "script": str(script), "logs": str(logs), "estimated_gpu_hours": "unknown until smoke",
-                "dependency_graph": {"prepare": [], "S0": ["prepare", "smoke"],
+                "dependency_graph": {"prepare": [],
+                    ("S_INIT" if (args.teacher_reference if args.stage == "prepare"
+                                  else reference_name(manifest) == "S_INIT") else "S0"): ["prepare", "smoke"],
                     "S_STD": ["prepare", "sampler_audit", f"training_{student_steps}"],
                     "S_STAGE": ["prepare", "sampler_audit", f"training_{student_steps}"],
                     "S_PACKET": ["prepare", "sampler_audit", f"training_{student_steps}"],

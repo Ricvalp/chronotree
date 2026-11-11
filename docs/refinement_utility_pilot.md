@@ -1,5 +1,11 @@
 # Student training × refinement utility study
 
+**Current launch instructions:** the user selected the 140k teacher on
+11 November. Use [the separate 140k workflow](refinement_utility_teacher140k.md).
+The original 104k teacher/S0 study and its measured checks below are retained as
+historical evidence; their checkpoint/cache identities must not be substituted
+into the new study.
+
 This implements the required first batch in
 [`chronotree_router_utility_addendum.md`](../chronotree_router_utility_addendum.md).
 The production 90k compact policy is S0. Three new, matched students start from

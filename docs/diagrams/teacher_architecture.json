@@ -193,8 +193,8 @@
     "hpc/cache_hierarchy.py": "5d687e928add05cc205a05c34b3863d4a8db62294ce5bdc2d9e94a4dcc08a16f",
     "hpc/evaluate.py": "51a5f8d632ca33d1c248a213341d231d9bc507098b0e1c5f02b70eb9d4e40193",
     "hpc/router_architectures.py": "1fa0a96691100267bd5e0680be0ab31f62a4ded7220e4cc46093e83523d2bc7d",
-    "hpc/student_utility.py": "57e1821c99eedf058ac3cd9d7970863fc52e17e4b106f64a1a61352041cf2fb4",
-    "hpc/train_compact.py": "dbad4e3627d1c971d4ef89590bbbb021393e95cb1bcac0aab2ec346e46434516",
+    "hpc/student_utility.py": "477a1418c444ab6ffbbd74f55a5970bc0ede426cf4c830815c28980810f34386",
+    "hpc/train_compact.py": "2990e2fe5a74b4b69633334ae901b549bf83700e67b5d28199a7d0bac8152f48",
     "src/stmem/config.py": "374800f914082c848157fbf7eccbc6ed6bef0f1e2527107ffd7fd6dd0affe9ba",
     "src/stmem/data/cache.py": "468f2da90e06af986c6f0a978ee34531e98110d783365f33179538aea3e4a0b6",
     "src/stmem/data/cache_source.py": "233aa6f33aed0a0be1b8906d8f2e51d07dbad4cbfa628b3b5d009844264e344c",
@@ -239,7 +239,7 @@
     "src/stmem/training/packed_context.py": "fd856454ad31a2af25a49235a230dd453e05cbf18c3a0f00a53a7487f81f5561",
     "src/stmem/training/router_inputs.py": "9a78a109750da97fa94d300f8207bacdd376f33dd28c89d5d33c580b1774bd1d",
     "src/stmem/training/routers.py": "99c6a0e72b3024740c633975045713daf9ff171999f58bf49281ee90a3c597ac",
-    "src/stmem/training/utility_study.py": "8a6c2f57f0a3b55d5e7feff764cbfbb18c89cf33970e6b630ed2817c548c8d4f",
+    "src/stmem/training/utility_study.py": "1d964d1e514df2d3e86c79362c185287cc9e575aaf222dde264a84661766dc57",
     "src/stmem/vision/frozen.py": "50875723488e2038e38393765d526cf47b81017ea2dfcad89dc116939462c5c5",
     "src/stmem/visualization/diagnostics.py": "d9d03b3bddd65a25d17e14f8f8fa06f3c18fefbbe644f5590d8d4dac25428eaa"
   },
@@ -262,7 +262,7 @@
     "opt_in": true,
     "primary_endpoint": 100000,
     "recovery_checkpoint_every": 1000,
-    "reference": "immutable 90k compact checkpoint",
+    "reference": "legacy: immutable 90k compact; 140k study: S_INIT smoke only, old S0 separate",
     "teacher_context_unchanged": true,
     "template": "half of TREE/FLAT examples; full causal coarse-to-budget routes",
     "trainable": [

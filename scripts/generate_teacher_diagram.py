@@ -269,7 +269,7 @@ def snapshot():
             },
             "student_utility_study": {
                 "launcher": "hpc/student_utility.py", "opt_in": True,
-                "reference": "immutable 90k compact checkpoint",
+                "reference": "legacy: immutable 90k compact; 140k study: S_INIT smoke only, old S0 separate",
                 "variants": ["S_STD", "S_STAGE", "S_PACKET"],
                 "initialization": "same accepted teacher; fresh optimizer",
                 "updates_per_variant": 100000, "primary_endpoint": 100000,

@@ -1,0 +1,32 @@
+# New study authorized 11 November 2026. Old S0 remains a historical reference
+# in its original study and must never consume this teacher's learned encodings.
+schema_version: 1
+accepted_teacher:
+  step: 140000
+  sha256: d17dee6cfe70caae8ff8d1013b0fe50aee01d1cd816feda4a25f0f4d388c0d34
+seed: 20261110
+episodes_per_partition: 4
+budgets: [64, 128]
+packet_cost: 8
+max_candidates: 8
+audit_candidates: 4
+discovery_draws: 4
+confirmation_draws: 4
+additional_draw_cap: 16
+precision: fp32
+gain_epsilon: 0.000001
+relative_thresholds: [0.005, 0.01, 0.05]
+max_generated_cases: 16
+generated_seeds: 2
+integration_steps: 8
+# Match the accepted 25/64 FULL validation rollout (8 targets held twice).
+execute_targets: 8
+primary_loss: expert_full
+tie_policy: uniform_average_over_discovery_near_ties
+bootstrap_unit: episode_stratified_by_task
+primary_endpoints: [S_STD, S_STAGE, S_PACKET]
+student_training:
+  steps: 100000
+  checkpoint_every: 1000
+  snapshot_every: 5000
+confirmation_partition: validation

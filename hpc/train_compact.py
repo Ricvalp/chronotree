@@ -68,6 +68,8 @@ def inspect_cache(cache_plan_path):
     selection = read_json(plan["selection"])
     if selection.get("sha256") != plan["checkpoint_sha256"]:
         raise ValueError("Teacher selection does not match the cached checkpoint")
+    if selection.get("step") != plan.get("checkpoint_step"):
+        raise ValueError("Teacher selection step does not match the cache plan")
     complete_path = run_dir(cfg, "cache") / "complete.json"
     if complete_path != Path(plan["completion_record"]):
         raise ValueError("Cache completion record path differs from the configuration")
@@ -162,6 +164,22 @@ def compact_config(cfg, args):
     return result
 
 
+def validate_study_inputs(study, panel, *, teacher_sha256, teacher_step,
+                          encoded_cache_id, hierarchy_cache_id):
+    """Bind optimization settings to the sealed panel and the actual cache."""
+    from stmem.inspection.refinement_data import study_dependencies
+
+    pins = study_dependencies(panel)
+    actual = {"teacher_sha256": teacher_sha256, "teacher_step": teacher_step,
+              "encoded_cache_id": encoded_cache_id, "hierarchy_cache_id": hierarchy_cache_id}
+    for key, value in actual.items():
+        # Legacy settings did not duplicate the teacher step; the sealed
+        # manifest still fixes it. New study settings include it explicitly.
+        configured = study.get(key, pins[key] if key == "teacher_step" else None)
+        if configured != pins[key] or value != pins[key]:
+            raise ValueError(f"Student study {key} differs from its manifest or actual cache")
+
+
 def ready_plan(plan_path):
     """Run inside the allocation before torchrun, without loading a GPU model."""
     plan = read_json(plan_path)
@@ -178,7 +196,13 @@ def ready_plan(plan_path):
         from stmem.training.utility_study import read_study_manifest
 
         study = requested["training"]["utility_study"]
-        read_study_manifest(study["manifest"], study["manifest_sha256"])
+        panel = read_study_manifest(study["manifest"], study["manifest_sha256"])
+        validate_study_inputs(
+            study, panel, teacher_sha256=cache_plan["checkpoint_sha256"],
+            teacher_step=cache_plan["checkpoint_step"],
+            encoded_cache_id=digest(manifest["identity"])[:24],
+            hierarchy_cache_id=Path(plan["hierarchy_cache_root"]).name,
+        )
         if study.get("initialization_checkpoint"):
             require_hash(study["initialization_checkpoint"], study["initialization_sha256"],
                          "Study initialization checkpoint")
@@ -290,10 +314,11 @@ def prepare(args, site, repo, cache_plan_path, generated):
 
         study = cfg["training"]["utility_study"]
         panel = read_study_manifest(study["manifest"], study["manifest_sha256"])
-        if (cache_plan["checkpoint_sha256"] != study["teacher_sha256"]
-                or cache_root.name != study["encoded_cache_id"]
-                or Path(args.hierarchy_root).name != study["hierarchy_cache_id"]):
-            raise ValueError("Student study requires the accepted teacher and recorded frozen caches")
+        validate_study_inputs(
+            study, panel, teacher_sha256=cache_plan["checkpoint_sha256"],
+            teacher_step=initial["step"], encoded_cache_id=cache_root.name,
+            hierarchy_cache_id=Path(args.hierarchy_root).name,
+        )
         if set(cfg["data"]["tasks"]) != {row["task"] for row in panel["episode_partitions"]}:
             raise ValueError("Student study panel must partition every configured training task")
     if initial["stage"] != "teacher":

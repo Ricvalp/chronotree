@@ -18,8 +18,8 @@ if str(REPO) not in sys.path:
 from hpc.plan import nonnegative_integer, positive_integer, read_site, save_json, sha256  # noqa: E402
 from hpc.profile_memory import absolute_path, profile_name, walltime  # noqa: E402
 from hpc.train_compact import prepare  # noqa: E402
+from stmem.inspection.refinement_data import primary_students, reference_name, study_dependencies  # noqa: E402
 from stmem.training.utility_study import (  # noqa: E402
-    COMPACT_SHA256, ENCODED_CACHE_ID, HIERARCHY_CACHE_ID, TEACHER_SHA256,
     VARIANTS, primary_schedule, read_study_manifest,
 )
 
@@ -43,12 +43,15 @@ def manifest_schedule(manifest, args):
 
 
 def make_settings(manifest, manifest_path, variant, args, initialization=None):
+    dependencies = study_dependencies(manifest)
+    validate_initialization(manifest, initialization is not None)
     schedule = manifest_schedule(manifest, args) if initialization is None else {}
     return {
         "schema_version": 1, "variant": variant, "experiment_id": manifest["experiment_id"],
         "manifest": str(manifest_path), "manifest_sha256": sha256(manifest_path),
-        "teacher_sha256": TEACHER_SHA256, "encoded_cache_id": ENCODED_CACHE_ID,
-        "hierarchy_cache_id": HIERARCHY_CACHE_ID, "family_proportions": [0.45, 0.45, 0.05, 0.05],
+        **{key: dependencies[key] for key in (
+            "teacher_sha256", "teacher_step", "encoded_cache_id", "hierarchy_cache_id")},
+        "family_proportions": [0.45, 0.45, 0.05, 0.05],
         "router_template_fraction": 0.5, "target_budgets": {"128": 0.75, "64": 0.25},
         "completed_prefix_fraction": 0.5, "packet_cost": 8,
         "action_noise_stream": "per_global_position_sha256_flow_v1",
@@ -56,13 +59,28 @@ def make_settings(manifest, manifest_path, variant, args, initialization=None):
         "checkpoint_rule": f"fixed_{schedule['primary_updates']}_endpoint" if initialization is None else "fixed_continuation_endpoint",
         **schedule,
         "optimizer_initialization": "fresh", "initialization_checkpoint": initialization,
-        "initialization_sha256": COMPACT_SHA256 if initialization else TEACHER_SHA256,
+        "initialization_sha256": dependencies["compact_sha256"] if initialization else dependencies["teacher_sha256"],
         "continuation_updates": args.continuation_updates if initialization else None,
         "continuation_lr": args.continuation_lr if initialization else None,
         "initialization": "S0_weights" if initialization else "accepted_teacher_weights",
-        "parent_step": 90000 if initialization else 104110,
+        "parent_step": dependencies["compact_step"] if initialization else dependencies["teacher_step"],
         "conditional_branches": "not_activated",
     }
+
+
+def validate_initialization(manifest, continuation):
+    if continuation and reference_name(manifest) != "S0":
+        raise ValueError("This study starts fresh students from its selected teacher; "
+                         "S_INIT is a frozen smoke reference, not a continuation checkpoint. "
+                         "The historical S0 belongs to the separate legacy study.")
+
+
+def reference_record(manifest):
+    dependencies = study_dependencies(manifest)
+    reference = dict(manifest.get("reference", dependencies.get("reference", {"name": "S0"})))
+    reference.update(variant=reference["name"], sha256=dependencies["compact_sha256"],
+                     checkpoint_step=dependencies["compact_step"], updates=0)
+    return reference
 
 
 def main(argv=None):
@@ -120,6 +138,8 @@ def main(argv=None):
         repo = absolute_path(site.get("STMEM_REPO_ROOT", REPO), REPO)
         manifest_path = absolute_path(args.manifest, repo)
         manifest = read_study_manifest(manifest_path)
+        dependencies = study_dependencies(manifest)
+        validate_initialization(manifest, args.initialization == "continuation")
         schedule = manifest_schedule(manifest, args) if args.initialization == "teacher" else None
         updates = schedule["primary_updates"] if schedule else args.continuation_updates
         generated = repo / "hpc/generated" / args.name
@@ -135,18 +155,23 @@ def main(argv=None):
             initialization = None
             if args.initial_checkpoint:
                 source = absolute_path(args.initial_checkpoint, repo)
-                if sha256(source) != COMPACT_SHA256:
+                if sha256(source) != dependencies["compact_sha256"]:
                     raise ValueError("Continuation initialization must be the exact immutable 90k S0")
                 target = generated / "initialization.pt"
                 if not target.exists():
                     shutil.copyfile(source, target)
-                if sha256(target) != COMPACT_SHA256:
+                if sha256(target) != dependencies["compact_sha256"]:
                     raise ValueError("Pinned continuation initialization changed")
                 initialization = str(target)
             matrix = {"schema_version": 1, "kind": "matched_student_utility_study",
                       "experiment_id": manifest["experiment_id"], "manifest_sha256": sha256(pinned),
                       "initialization": args.initialization, "students": {},
-                      "reference": {"variant": "S0", "sha256": COMPACT_SHA256, "updates": 0},
+                      "reference": reference_record(manifest),
+                      "teacher": {"sha256": dependencies["teacher_sha256"],
+                                  "step": dependencies["teacher_step"]},
+                      "encoded_cache_id": dependencies["encoded_cache_id"],
+                      "hierarchy_cache_id": dependencies["hierarchy_cache_id"],
+                      "primary_endpoints": list(primary_students(manifest)),
                       "conditional_branches": "configured, not activated", "job_count": len(args.variants),
                       "total_updates": len(args.variants) * updates,
                       "total_example_exposures": len(args.variants) * updates * 128,

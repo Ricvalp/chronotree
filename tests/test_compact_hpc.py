@@ -154,6 +154,33 @@ def test_rendered_script_has_valid_shell_and_idempotent_config(launcher):
     assert Path(plan["config"]).stat().st_mtime_ns == mtime
 
 
+def test_cache_rejects_selection_step_mismatch(launcher):
+    plan = json.loads(launcher.cache_plan.read_text())
+    plan["checkpoint_step"] = 140000
+    write_json(launcher.cache_plan, plan)
+    with pytest.raises(ValueError, match="selection step"):
+        launcher.module.inspect_cache(launcher.cache_plan)
+
+
+@pytest.mark.parametrize("field", ["teacher_sha256", "teacher_step", "encoded_cache_id", "hierarchy_cache_id"])
+@pytest.mark.parametrize("changed", ["settings", "actual"])
+def test_study_launch_binds_manifest_settings_and_actual_inputs(launcher, monkeypatch, field, changed):
+    from stmem.inspection import refinement_data
+
+    pins = {"teacher_sha256": "a" * 64, "teacher_step": 140000,
+            "encoded_cache_id": "b" * 24, "hierarchy_cache_id": "c" * 24}
+    # The separate manifest tests establish its seal/provenance. Exercise the
+    # final launch boundary here: individually valid settings/caches must still
+    # refer to the same teacher and cache as that manifest.
+    monkeypatch.setattr(refinement_data, "study_dependencies", lambda _panel: dict(pins))
+    settings, actual = dict(pins), dict(pins)
+    launcher.module.validate_study_inputs(settings, {}, **actual)
+    target = settings if changed == "settings" else actual
+    target[field] = 104110 if field == "teacher_step" else "d" * len(pins[field])
+    with pytest.raises(ValueError, match=field):
+        launcher.module.validate_study_inputs(settings, {}, **actual)
+
+
 @pytest.mark.parametrize("target", ["teacher", "selection", "manifest", "completion", "shard", "receipt", "cache_config"])
 def test_bad_cache_inputs_fail_before_submission(launcher, monkeypatch, target):
     if target == "shard":

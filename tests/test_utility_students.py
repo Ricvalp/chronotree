@@ -47,6 +47,27 @@ def sealed(manifest):
     return {**result, "experiment_id": digest(result)}
 
 
+def rebased_manifest():
+    """Synthetic cache IDs; the new accepted teacher's declared checkpoint identity."""
+    teacher_sha = "d17dee6cfe70caae8ff8d1013b0fe50aee01d1cd816feda4a25f0f4d388c0d34"
+    dependencies = {
+        "teacher_sha256": teacher_sha, "teacher_step": 140000,
+        "compact_sha256": teacher_sha, "compact_step": 140000,
+        "encoded_cache_id": "a" * 24, "hierarchy_cache_id": "b" * 24,
+        "accepted_cache_plan": "/synthetic/adopted/plan.json", "accepted_cache_plan_sha256": "c" * 64,
+        "teacher_selection": "/synthetic/adopted/selection.json", "teacher_selection_sha256": "d" * 64,
+    }
+    return sealed({
+        **dependencies, "dependencies": dependencies,
+        "reference": {"name": "S_INIT", "kind": "frozen_teacher_compact_smoke", "compact_updates": 0},
+        "primary_endpoints": ["S_STD", "S_STAGE", "S_PACKET"],
+        "protocol": {
+            "accepted_teacher": {"step": 140000, "sha256": teacher_sha},
+            "student_training": {"steps": 100000, "checkpoint_every": 1000, "snapshot_every": 5000},
+        },
+    })
+
+
 def test_new_training_boundary_preserves_original_partitions_and_cache_identity(indexed, tmp_path):  # noqa: F811
     cfg, data, _, _, root = indexed
     original_identity, original_refs = data.identity, list(data.refs)
@@ -251,7 +272,10 @@ def test_compact_study_config_preserves_model_and_declares_fixed_endpoint():
     from hpc.student_utility import make_settings
 
     args.continuation_updates, args.continuation_lr = 10000, 1e-5
-    manifest = {"experiment_id": "test", "protocol": {"student_training": {
+    manifest = {"experiment_id": "test", "teacher_sha256": TEACHER_SHA256,
+                "compact_sha256": COMPACT_SHA256, "encoded_cache_id": ENCODED_CACHE_ID,
+                "hierarchy_cache_id": HIERARCHY_CACHE_ID,
+                "protocol": {"student_training": {
         "steps": 100000, "checkpoint_every": 1000, "snapshot_every": 5000}}}
     for variant in ("S_STD", "S_STAGE", "S_PACKET"):
         args.utility_study = make_settings(manifest, path, variant, args)
@@ -296,14 +320,19 @@ def test_student_schedule_preserves_sealed_protocol_and_always_retains_endpoint(
                 primary_schedule(**values)
 
 
-def test_student_launcher_renders_three_matched_100k_jobs_without_submission(tmp_path, monkeypatch):
+@pytest.mark.parametrize("rebased", [False, True])
+def test_student_launcher_renders_three_matched_100k_jobs_without_submission(tmp_path, monkeypatch, rebased):
     from pathlib import Path
     from hpc import student_utility, train_compact
     from stmem.config import load_config
 
     cfg = load_config("configs/teacher_fv_no_prop_10hz.yaml")
     protocol = load_config("configs/inspection/refinement_utility_pilot.yaml")
-    manifest = {"experiment_id": "synthetic-launcher-only", "protocol": protocol}
+    manifest = rebased_manifest() if rebased else {
+        "experiment_id": "synthetic-launcher-only", "protocol": protocol,
+        "teacher_sha256": TEACHER_SHA256, "compact_sha256": COMPACT_SHA256,
+        "encoded_cache_id": ENCODED_CACHE_ID, "hierarchy_cache_id": HIERARCHY_CACHE_ID,
+    }
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(manifest))
     monkeypatch.setattr(student_utility, "read_site", lambda _: {"STMEM_REPO_ROOT": str(tmp_path)})
@@ -314,16 +343,73 @@ def test_student_launcher_renders_three_matched_100k_jobs_without_submission(tmp
         assert not args.submit
         assert site["WANDB_PROJECT"] == "chronotree-routers"
         assert args.gpus == 2 and args.cpus == 64 and args.mem == "128G"
+        assert cache_plan == tmp_path / "hpc/generated/synthetic_selected_cache/plan.json"
         args.hierarchy_root = "/immutable/hierarchy"
         rendered[args.utility_study["variant"]] = train_compact.compact_config(cfg, args)
 
     monkeypatch.setattr(student_utility, "prepare", prepare)
-    student_utility.main(["--manifest", str(manifest_path), "--name", "synthetic", "--dry-run"])
+    student_utility.main(["--manifest", str(manifest_path), "--cache-name", "synthetic_selected_cache",
+                          "--name", "synthetic", "--dry-run"])
     matrix = json.loads((tmp_path / "hpc/generated/synthetic/matrix.json").read_text())
     assert matrix["total_updates"] == 300000 and matrix["total_example_exposures"] == 38400000
     assert set(rendered) == {"S_STD", "S_STAGE", "S_PACKET"}
+    expected_teacher = manifest["teacher_sha256"]
+    expected_step = 140000 if rebased else 104110
+    assert matrix["teacher"] == {"sha256": expected_teacher, "step": expected_step}
+    assert matrix["reference"]["variant"] == ("S_INIT" if rebased else "S0")
+    if rebased:
+        assert matrix["reference"]["compact_updates"] == 0
+        assert matrix["primary_endpoints"] == ["S_STD", "S_STAGE", "S_PACKET"]
     for variant, config in rendered.items():
         assert config["training"]["steps"] == config["training"]["schedule_steps"] == 100000
         assert config["training"]["checkpoint_steps"] == list(range(5000, 100001, 5000))
         assert config["training"]["utility_study"]["development_steps"][-1] == 95000
+        settings = config["training"]["utility_study"]
+        assert settings["teacher_sha256"] == settings["initialization_sha256"] == expected_teacher
+        assert settings["teacher_step"] == settings["parent_step"] == expected_step
+        assert settings["encoded_cache_id"] == manifest["encoded_cache_id"]
+        assert settings["hierarchy_cache_id"] == manifest["hierarchy_cache_id"]
+        assert settings["initialization_checkpoint"] is None
+        assert settings["optimizer_initialization"] == "fresh"
         assert Path(matrix["students"][variant]["primary_checkpoint"]).name == "step_00100000.pt"
+
+
+def test_rebased_students_reject_historical_compact_continuation_before_pinning(tmp_path, monkeypatch):
+    from hpc import student_utility
+
+    manifest = rebased_manifest()
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    args = SimpleNamespace(continuation_updates=10000, continuation_lr=1e-5)
+    with pytest.raises(ValueError, match="historical S0"):
+        student_utility.make_settings(manifest, path, "S_STD", args, initialization="old-S0.pt")
+    monkeypatch.setattr(student_utility, "read_site", lambda _: {"STMEM_REPO_ROOT": str(tmp_path)})
+    monkeypatch.setattr(student_utility, "read_study_manifest", lambda _: manifest)
+    monkeypatch.setattr(student_utility, "prepare", lambda *args: pytest.fail("Must not prepare a continuation"))
+    with pytest.raises(SystemExit):
+        student_utility.main(["--manifest", str(path), "--name", "forbidden",
+                              "--initialization", "continuation", "--initial-checkpoint", "old-S0.pt"])
+    assert not (tmp_path / "hpc/generated/forbidden").exists()
+
+
+def test_rehearsal_parent_uses_same_rebased_teacher_caches_and_experiment():
+    from hpc.student_utility_rehearsal import validate_parent
+
+    panel = rebased_manifest()
+    dependencies = panel["dependencies"]
+    settings = {**dependencies, "experiment_id": panel["experiment_id"], "variant": "S_PACKET"}
+    parent = {"stage": "compact", "provenance": {"dependencies": {"teacher": panel["teacher_sha256"]}},
+              "config": {"training": {"utility_study": settings}}}
+    assert validate_parent(panel, parent)["teacher_step"] == 140000
+    for field, wrong in (("experiment_id", "another-study"), ("variant", "S_INIT"),
+                         ("teacher_step", 104110), ("teacher_sha256", TEACHER_SHA256),
+                         ("encoded_cache_id", ENCODED_CACHE_ID), ("hierarchy_cache_id", HIERARCHY_CACHE_ID)):
+        different = deepcopy(parent)
+        different["config"]["training"]["utility_study"][field] = wrong
+        with pytest.raises(ValueError, match="Rehearsal parent"):
+            validate_parent(panel, different)
+    for stage, teacher in (("teacher", panel["teacher_sha256"]), ("compact", TEACHER_SHA256)):
+        different = deepcopy(parent)
+        different.update(stage=stage, provenance={"dependencies": {"teacher": teacher}})
+        with pytest.raises(ValueError, match="selected teacher"):
+            validate_parent(panel, different)

@@ -73,10 +73,14 @@ def read_study_manifest(path, expected_hash=None):
     if manifest.get("experiment_id") != digest({key: value for key, value in manifest.items()
                                                 if key != "experiment_id"}):
         raise ValueError("Student study manifest seal is missing or invalid")
-    for field, value in (("teacher_sha256", TEACHER_SHA256), ("compact_sha256", COMPACT_SHA256),
-                         ("encoded_cache_id", ENCODED_CACHE_ID), ("hierarchy_cache_id", HIERARCHY_CACHE_ID)):
-        if manifest.get(field) != value:
-            raise ValueError(f"Student study requires the recorded {field}")
+    from stmem.inspection.refinement_data import reference_name, study_dependencies, validate_protocol_teacher
+
+    if any(field not in manifest for field in
+           ("teacher_sha256", "compact_sha256", "encoded_cache_id", "hierarchy_cache_id")):
+        raise ValueError("Student study manifest is missing immutable dependency identities")
+    dependencies = study_dependencies(manifest)
+    if reference_name(manifest) == "S_INIT":
+        validate_protocol_teacher(manifest["protocol"], dependencies)
     pool = episode_keys(manifest["training_pool"], "training")
     diagnostic = episode_keys(manifest["diagnostic_episodes"], "diagnostic")
     reserved = episode_keys(manifest["reserved_validation_episodes"], "reserved-validation")

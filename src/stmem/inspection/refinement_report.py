@@ -8,6 +8,7 @@ import time
 
 import numpy as np
 
+from stmem.inspection.refinement_data import primary_students, reference_name
 from stmem.inspection.refinement_statistics import context_means, episode_bootstrap
 from stmem.training.checkpoints import atomic_json, file_sha256
 
@@ -29,12 +30,13 @@ def assess_hypotheses(manifest, results, output):
     exclusions = [row for row in manifest["states"] if not row.get("cache_eligible", True)]
     accounted_exclusions = all(row.get("cache_ineligible_reason") for row in exclusions)
     training_ids = {(row.get("initialization"), row.get("declared_endpoint"), row.get("step"))
-                    for row in results["inventory"] if row["student"] != "S0" and row.get("primary_endpoint")}
+                    for row in results["inventory"] if row["student"] in primary_students(manifest)
+                    and row["student"] != reference_name(manifest) and row.get("primary_endpoint")}
     matched_training = len(training_ids) == 1 and all(value is not None for value in next(iter(training_ids), ()))
     complete = all(any(row["student"] == student and row.get("primary_endpoint") and row["mode"] == "main"
                        for row in results["inventory"]) and expected <= {
                            row["state"]["state_id"] for row in results["analyses"] if row["state"]["student"] == student}
-                   for student in ("S0", "S_STD", "S_STAGE", "S_PACKET")) and bool(expected) and accounted_exclusions and matched_training
+                   for student in primary_students(manifest)) and bool(expected) and accounted_exclusions and matched_training
     hypotheses = {f"H{i}": {"status": "inconclusive", "reason":
                    "Completed frozen panel; this hypothesis needs additional qualified evidence" if complete else
                    "Primary matched endpoint panel incomplete; current results are diagnostic or partial"}
@@ -85,7 +87,7 @@ def student_training_artifacts(analyses):
     records = {}
     for analysis in analyses:
         student = analysis["state"]["student"]
-        if student == "S0" or student in records:
+        if student in ("S0", "S_INIT") or student in records:
             continue
         identity = analysis.get("identity", {})
         path = Path(identity.get("checkpoint_path", "__not_available__"))
@@ -130,9 +132,10 @@ def runtime_projection(manifest, analyses, planned):
     Components scale by their actual work unit. The range captures observed
     smoke heterogeneity, not a confidence interval or an HPC speed guarantee.
     """
+    students = primary_students(manifest)
     result = {"status": "not_estimated", "planned": planned,
               "reason": "Requires the declared 8–16-state multi-task real-data smoke",
-              "scope": "four frozen students; shared teacher references; excludes optimization"}
+              "scope": f"{len(students)} primary frozen students; shared teacher references; excludes optimization"}
     smoke = {row["state"]["state_id"]: row for row in analyses
              if row.get("identity", {}).get("mode") == "smoke"
              and not row["identity"].get("limited_check", False)}
@@ -158,8 +161,11 @@ def runtime_projection(manifest, analyses, planned):
         result["reason"] = "Smoke lacks fresh teacher/compact timings; reused references cannot predict their original cost"
         return result
     state_count = len(planned.get("context_counts", {}))
-    work = {"cache_assembly_seconds_per_state": state_count * 4,
-            "compact_seconds_per_example": planned["compact_model_examples_four_students"],
+    compact_examples = planned.get("compact_model_examples_primary_students")
+    if compact_examples is None:
+        compact_examples = planned["compact_model_examples_four_students"]
+    work = {"cache_assembly_seconds_per_state": state_count * len(students),
+            "compact_seconds_per_example": compact_examples,
             "teacher_seconds_per_example": planned["teacher_model_examples_shared"]}
     components = {key: (np.quantile(value, [0, .5, 1]) * work[key]).tolist() for key, value in samples.items()}
     result.update(status="smoke_cost_scenarios", reason=None, states=len(rows),
@@ -181,7 +187,8 @@ def write_report(manifest, results, output):
     output = Path(output)
     plots = output / "plots"
     plots.mkdir(parents=True, exist_ok=True)
-    analyses = results["analyses"]
+    all_analyses = results["analyses"]
+    analyses = [row for row in all_analyses if row["state"]["student"] in primary_students(manifest)]
     gains = [r for a in analyses for r in a["gains"]]
     selections = [r for a in analyses for r in a["selection"]]
     pairs = [r for a in analyses for r in a["backgrounds"]]
@@ -244,6 +251,8 @@ def write_report(manifest, results, output):
              "These are frozen expert-FM utility measurements, not benchmark success. Diagnostic loss-selected packets are not deployed routers.", "",
              "## Required student matrix", "", "| Student | Measurement stage | Measured states | Status |", "|---|---|---:|---|"]
     lines.extend(f"| {r['student']} | {r['mode']} | {r['measured_states']} | {r['status']} |" for r in results["inventory"])
+    if reference_name(manifest) == "S_INIT":
+        lines += ["", "The primary matrix contains S_STD, S_STAGE and S_PACKET. S_INIT is the adopted teacher evaluated with compact contexts before any compact updates: its fitting-partition smoke checks numerical correctness and runtime only. It is excluded from primary plots, confirmation and router selection. Old S0 belongs to the earlier teacher study and is not part of this matrix."]
     if results.get("confirmation_extensions"):
         lines += ["", "Independent confirmation extensions are separate raw evidence. They do not enter primary plots, selections or intervals, and original discovery choices remain fixed.", "",
                   "| Student | Step | Partition | Draws | States | Status | Directory |", "|---|---:|---|---:|---:|---|---|"]
@@ -251,6 +260,8 @@ def write_report(manifest, results, output):
             lines.append(f"| {row['student']} | {row['step']} | {row['partition']} | {row['draws']} | "
                          f"{row['measured_states']} | {row['status']} | `{row['directory']}` |")
     training_steps = manifest.get("protocol", {}).get("student_training", {}).get("steps", 30000)
+    prefix = int(manifest.get("protocol", {}).get("execute_targets", 10))
+    prefix_title = "First-ten-target" if prefix == 10 else f"First-{prefix}-target"
     lines += ["", f"This study declares {training_steps:,} updates for each teacher-initialized student. Earlier numbered snapshots are development-only on the fitting partition; final confirmation uses each checkpoint's recorded primary endpoint. Existing studies without the extended schedule retain their original 30k endpoint. An explicitly configured S0 continuation uses its separately declared common endpoint. Initializations and training durations are never pooled in matched contrasts. S0 has a different prior training history.", "",
               "## Absolute loss and selection improvement", "",
               "Intervals resample episodes within tasks after averaging repeated draws/states. They do not measure training-seed robustness.", "",
@@ -263,7 +274,7 @@ def write_report(manifest, results, output):
     for name, row in sorted(results["population"]["selection"].items()):
         lines.append(f"| {name} | {_format(row['packet_vs_immediate'])} | {_format(row['packet_vs_uniform'])} | {_format(row['packet_vs_dispersed'])} |")
     lines += ["", "Positive improvements mean lower confirmation loss at exactly the same final token count. Ties receive uniform average credit; all-negative pools remain included.", "",
-              "## First-ten-target secondary control", "",
+              f"## {prefix_title} secondary control", "",
               "These losses use the same H16-discovery-selected tie sets. Prefix loss never reselects candidates.", "",
               "| Group | Background | Immediate-selected | Packet-selected | Teacher-selected | Random | UNIFORM | Dispersed | Packet vs immediate |",
               "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
@@ -309,7 +320,7 @@ def write_report(manifest, results, output):
         lines.append(f"| {name} | {_format(row)} |")
     lines += ["", "## Gain strata", "",
               "One-way strata avoid an unsupported full cross-product. Every row retains its number of eligible operations, states and episode-clustered interval. A1 packets and A2 unrestricted moves remain separate.", "",
-              "| Student / partition / reader / family / kind / stratum | Operations | States | Expert gain | First-ten gain | Relative gain | Paired draw SD |",
+              f"| Student / partition / reader / family / kind / stratum | Operations | States | Expert gain | First-{prefix} gain | Relative gain | Paired draw SD |",
               "|---|---:|---:|---:|---:|---:|---:|"]
     for name, row in sorted(results["population"].get("gain_strata", {}).items()):
         lines.append(f"| {name} | {row['candidate_measurements']} | {row['states']} | " +
@@ -354,7 +365,7 @@ def write_report(manifest, results, output):
     lines += ["", "## Eligibility and boundaries", "",
               f"Preselected states: {len(manifest['states'])}; task counts and exclusions are retained in `manifest.json`.", "",
               "Every selected diagnostic episode and the complete router-validation partition are excluded from new student/router fitting. Development and final partitions are reported separately. Existing teacher/S0 exposure is not claimed unseen.", "",
-              "The terminal/unavailable-input convention is unchanged. Full-H16 expert loss selects candidates; first-ten loss is secondary. Structural gripper masks are recorded independently of terminal padding.", ""]
+              f"The terminal/unavailable-input convention is unchanged. Full-H16 expert loss selects candidates; first-{prefix} loss is secondary. Structural gripper masks are recorded independently of terminal padding.", ""]
     eligibility_path = output / "contexts_complete.json"
     if eligibility_path.exists():
         context_plan = read_json(eligibility_path)
@@ -381,8 +392,8 @@ def write_report(manifest, results, output):
     lines += ["", "## Compute", "",
               "| Student | States | Compact examples | Measurement wall seconds | Cache/assembly seconds | Compact adaptation seconds | Compact forward seconds | Teacher forward seconds | Peak GPU GiB |",
               "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
-    for student in ("S0", "S_STD", "S_STAGE", "S_PACKET"):
-        chosen = [a for a in analyses if a["state"]["student"] == student]
+    for student in dict.fromkeys((*primary_students(manifest), reference_name(manifest))):
+        chosen = [a for a in all_analyses if a["state"]["student"] == student]
         timings = [a["timings"] for a in chosen]
         seconds = sum(t["wall_seconds"] for t in timings)
         examples = sum(t["compact_model_examples"] for t in timings)
@@ -409,7 +420,7 @@ def write_report(manifest, results, output):
     atomic_json(projection, output / "runtime_projection.json")
     if projection["status"] == "smoke_cost_scenarios":
         hours = [value / 3600 for value in projection["total_serial_seconds_min_median_max"]]
-        lines += ["", f"Frozen four-student panel cost scenarios from the declared smoke: "
+        lines += ["", f"Frozen {len(primary_students(manifest))}-student panel cost scenarios from the declared smoke: "
                   f"**{hours[0]:.2f} / {hours[1]:.2f} / {hours[2]:.2f} serial hours** "
                   "using observed minimum/median/maximum unit costs.", "", projection["note"]]
     else:

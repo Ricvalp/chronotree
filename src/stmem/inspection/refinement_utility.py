@@ -20,13 +20,13 @@ import yaml
 
 from stmem.config import digest, load_config
 from stmem.inspection.refinement_data import (
-    COMPACT_SHA, TEACHER_SHA, UtilityDataReader, build_manifest, read_json,
-    stable_seed, verify_dependencies, verify_manifest,
+    UtilityDataReader, build_manifest, primary_students, read_json, reference_identity,
+    reference_name, stable_seed, teacher_identity, verify_dependencies, verify_manifest,
 )
 from stmem.inspection.refinement_statistics import analyze_panel, population_summary
 from stmem.training.checkpoints import atomic_json, file_sha256
 from stmem.training.data import TrainingData
-from stmem.training.runtime import load_policy
+from stmem.training.runtime import load_policy, validate_policy_config
 
 
 @contextmanager
@@ -105,18 +105,22 @@ def build_contexts(manifest_path):
     student_steps = protocol.get("student_training", {}).get("steps", 30000)
     if not isinstance(student_steps, int) or isinstance(student_steps, bool) or student_steps < 1:
         raise ValueError("Student training steps must be a positive declared integer")
+    students = primary_students(manifest)
     result = {"experiment_id": manifest["experiment_id"], "status": "complete",
               "context_counts": counts, "eligibility": eligibility,
+              "primary_students": list(students), "primary_student_count": len(students),
               "compact_model_examples_per_student": sum(counts.values()) * draws,
-              "compact_model_examples_four_students": 4 * sum(counts.values()) * draws,
+              "compact_model_examples_primary_students": len(students) * sum(counts.values()) * draws,
               "teacher_model_examples_shared": sum(bool(count) for count in counts.values()) * draws,
               "primary_training_updates": 3 * student_steps,
               "primary_training_example_exposures": 3 * student_steps * 128,
               "prefixes_2_4": "Included for all eligible states in the exact context counts above",
               "capability": "Included in exact context counts; teacher FULL reused",
               "numerical_control_extra": "At most 2 states/student, 4 contexts, serial+packed+FP32; counted in smoke receipt",
-              "generated_extra_bound": protocol["max_generated_cases"] * 2 * 8 * 6 * 4,
+              "generated_extra_bound": protocol["max_generated_cases"] * 2 * 8 * 6 * len(students),
               "walltime_estimate": "Unmeasured until real-data smoke; context count is not a GPU launch count"}
+    if len(students) == 4:
+        result["compact_model_examples_four_students"] = result["compact_model_examples_primary_students"]
     atomic_json(result, root / "contexts_complete.json")
     return result
 
@@ -181,17 +185,30 @@ def choose_smoke(states, maximum):
 
 def validate_student_endpoint(manifest, manifest_path, student_name, state, partition):
     """Do not relabel a different sampler, panel, or initialization as an arm."""
+    teacher_hash, teacher_step = teacher_identity(manifest)
+    reference_hash, reference_step = reference_identity(manifest)
+    if student_name == "S_INIT":
+        if reference_name(manifest) != "S_INIT" or partition != "train":
+            raise ValueError("S_INIT is only the declared fitting-partition preflight diagnostic")
+        if state.get("stage") != "teacher" or state.get("step") != teacher_step:
+            raise ValueError("S_INIT must use the exact adopted teacher, with zero compact updates")
+        return {"initialization": "frozen_teacher_compact_smoke", "endpoint": teacher_step,
+                "initialization_sha256": teacher_hash, "compact_updates": 0, "preflight_only": True}
+    if student_name not in primary_students(manifest):
+        raise ValueError("Requested student is outside this study's primary arms")
     if student_name == "S0":
-        return {"initialization": "production_reference", "endpoint": 90000}
+        if state.get("step") != reference_step:
+            raise ValueError("S0 must remain the unchanged production reference checkpoint")
+        return {"initialization": "production_reference", "endpoint": reference_step}
     study = state["config"].get("training", {}).get("utility_study", {})
     expected = {"variant": student_name, "experiment_id": manifest["experiment_id"],
-                "manifest_sha256": file_sha256(manifest_path), "teacher_sha256": TEACHER_SHA,
+                "manifest_sha256": file_sha256(manifest_path), "teacher_sha256": teacher_hash,
                 "encoded_cache_id": manifest["encoded_cache_id"],
                 "hierarchy_cache_id": manifest["hierarchy_cache_id"]}
     for key, value in expected.items():
         if study.get(key) != value:
             raise ValueError(f"Student {key} does not match the fixed study arm")
-    if state.get("provenance", {}).get("dependencies", {}).get("teacher") != TEACHER_SHA:
+    if state.get("provenance", {}).get("dependencies", {}).get("teacher") != teacher_hash:
         raise ValueError("Student has a different accepted-teacher dependency")
     initialization = study.get("initialization")
     if initialization == "accepted_teacher_weights":
@@ -213,7 +230,7 @@ def validate_student_endpoint(manifest, manifest_path, student_name, state, part
             training = state["config"]["training"]
             if training.get("steps") != endpoint or training.get("schedule_steps") != endpoint:
                 raise ValueError("Student optimizer and cosine schedule must use the declared primary endpoint")
-        if study.get("initialization_sha256") != TEACHER_SHA or study.get("optimizer_initialization") != "fresh":
+        if study.get("initialization_sha256") != teacher_hash or study.get("optimizer_initialization") != "fresh":
             raise ValueError("Primary students require matched fresh teacher initialization")
         if state["step"] not in (*development, endpoint):
             raise ValueError("Primary students require a predeclared development or primary checkpoint")
@@ -221,13 +238,43 @@ def validate_student_endpoint(manifest, manifest_path, student_name, state, part
             raise ValueError("Earlier checkpoints are development-only; final confirmation uses the declared primary endpoint")
     elif initialization == "S0_weights":
         endpoint = int(study.get("continuation_updates") or 0)
-        if endpoint < 1 or state["step"] != endpoint or study.get("initialization_sha256") != COMPACT_SHA:
+        if (reference_name(manifest) != "S0" or endpoint < 1 or state["step"] != endpoint
+                or study.get("initialization_sha256") != reference_hash):
             raise ValueError("Continuation must use its predeclared common S0 endpoint")
     else:
         raise ValueError("Unknown student initialization; do not mix unmatched arms")
     return {"initialization": initialization, "endpoint": endpoint,
             "initialization_sha256": study["initialization_sha256"],
             "training_manifest_sha256": study["manifest_sha256"]}
+
+
+def validate_measurement_models(manifest, student_name, teacher, teacher_state, student, student_state,
+                                *, checkpoint_hash, mode, partition):
+    """Permit an exact teacher-on-compact-context smoke without relabeling it S0.
+
+    Production compact checkpoints retain the existing strict stage/frozen-tensor
+    checks. S_INIT is a separate zero-update diagnostic, never a primary arm.
+    """
+    from stmem.training.label_experiment import validate_models
+
+    if student_name != "S_INIT":
+        validate_models(manifest["configuration"], teacher, teacher_state, student, student_state)
+        return
+    teacher_hash, teacher_step = teacher_identity(manifest)
+    if (reference_name(manifest) != "S_INIT" or mode != "smoke" or partition != "train"
+            or checkpoint_hash != teacher_hash):
+        raise ValueError("S_INIT requires the exact adopted teacher and smoke/train only")
+    for state in (teacher_state, student_state):
+        if state.get("stage") != "teacher" or state.get("step") != teacher_step:
+            raise ValueError("S_INIT must be the unchanged adopted teacher with zero compact updates")
+        validate_policy_config(state["config"], manifest["configuration"])
+    cfg = manifest["configuration"]
+    if cfg["model"].get("decoder", "flow") != "flow" or cfg["model"].get("history_mode", "full") != "full":
+        raise ValueError("S_INIT requires the adopted full-history flow teacher")
+    teacher_weights, student_weights = teacher.state_dict(), student.state_dict()
+    if teacher_weights.keys() != student_weights.keys() or any(
+            not torch.equal(value.cpu(), student_weights[key].cpu()) for key, value in teacher_weights.items()):
+        raise ValueError("S_INIT teacher and compact-context probe must have identical model tensors")
 
 
 def combine_reference_timings(compact_timings, reference_timings):
@@ -316,27 +363,31 @@ def measure(args):
     from stmem.inspection.refinement_measurements import (
         action_mask_summary, evaluate_state, numerical_controls,
     )
-    from stmem.training.label_experiment import validate_models
-
     manifest = verify_manifest(args.manifest)
     root = args.manifest.parent
     complete = read_json(root / "contexts_complete.json")
     if complete["experiment_id"] != manifest["experiment_id"]:
         raise ValueError("Contexts were not fixed for this experiment")
     dep, protocol = manifest["dependencies"], manifest["protocol"]
+    teacher_hash, _ = teacher_identity(manifest)
+    reference_hash, _ = reference_identity(manifest)
+    args.student = args.student or reference_name(manifest)
+    if args.student == "S_INIT" and (args.mode != "smoke" or args.partition != "train"):
+        raise ValueError("S_INIT is a smoke/train-only preflight, not a primary measurement")
     checkpoint = args.checkpoint or Path(dep["compact"])
     checkpoint_hash = file_sha256(checkpoint)
-    if args.student == "S0" and checkpoint_hash != COMPACT_SHA:
-        raise ValueError("S0 must be the unchanged production 90k checkpoint")
+    if args.student == reference_name(manifest) and checkpoint_hash != reference_hash:
+        raise ValueError("Reference must be the unchanged manifest-pinned checkpoint")
+    if file_sha256(dep["teacher"]) != teacher_hash:
+        raise ValueError("Accepted teacher changed")
     teacher, tstate = load_policy(dep["teacher"], args.device)
     student, sstate = load_policy(checkpoint, args.device)
     endpoint = validate_student_endpoint(manifest, args.manifest, args.student, sstate, args.partition)
-    validate_models(manifest["configuration"], teacher, tstate, student, sstate)
+    validate_measurement_models(manifest, args.student, teacher, tstate, student, sstate,
+                                checkpoint_hash=checkpoint_hash, mode=args.mode, partition=args.partition)
     for model in (teacher, student):
         model.freeze_encoders()
         model.eval().requires_grad_(False)
-    if file_sha256(dep["teacher"]) != TEACHER_SHA:
-        raise ValueError("Accepted teacher changed")
     extension = None
     if args.mode == "extension":
         extension = confirmation_extension(
@@ -398,7 +449,7 @@ def measure(args):
                 item, contexts = reader.prepare(state, panel["contexts"])
                 preparation_seconds = time.monotonic() - begin
                 draws = measurement_draws(protocol, state, extension)
-                reference_identity = {key: dep[key] for key in (
+                reference_inputs = {key: dep[key] for key in (
                     "encoded_manifest_sha256", "hierarchy_manifest_sha256")}
                 if contexts:
                     reference_root = root / "teacher_references"
@@ -411,17 +462,19 @@ def measure(args):
                                      if reference_path.exists() else None)
                         if reference is None:
                             reference_result = evaluate_state(
-                                teacher, student, item, {}, draws, teacher_hash=TEACHER_SHA,
+                                teacher, student, item, {}, draws, teacher_hash=teacher_hash,
                                 student_hash=checkpoint_hash, precision=protocol["precision"],
-                                reference_identity=reference_identity, reference_only=True)
+                                prefix_targets=protocol.get("execute_targets", 10),
+                                reference_identity=reference_inputs, reference_only=True)
                             reference, reference_timings = reference_result["teacher_reference"], reference_result["timings"]
                             temporary = reference_path.with_suffix(".partial.pt")
                             torch.save(reference, temporary)
                             os.replace(temporary, reference_path)
-                    result = evaluate_state(teacher, student, item, contexts, draws, teacher_hash=TEACHER_SHA,
+                    result = evaluate_state(teacher, student, item, contexts, draws, teacher_hash=teacher_hash,
                                             student_hash=checkpoint_hash, precision=protocol["precision"],
+                                            prefix_targets=protocol.get("execute_targets", 10),
                                             compact_batch_size=args.batch_size, reference=reference,
-                                            reference_identity=reference_identity)
+                                            reference_identity=reference_inputs)
                     result["timings"] = combine_reference_timings(result["timings"], reference_timings)
                 else:
                     result = {"rows": [], "timings": empty_measurement_timings(),
@@ -429,7 +482,8 @@ def measure(args):
                 controls = None
                 if contexts and args.mode == "smoke" and len(done) < 2:
                     controls = numerical_controls(teacher, student, item, dict(list(contexts.items())[:4]), draws[:1],
-                                                  teacher_hash=TEACHER_SHA, student_hash=checkpoint_hash,
+                                                  teacher_hash=teacher_hash, student_hash=checkpoint_hash,
+                                                  prefix_targets=protocol.get("execute_targets", 10),
                                                   precision=protocol["precision"])
                 result["timings"]["cache_context_assembly_seconds"] = preparation_seconds
                 metadata = {"identity": identity, "state": state, "panel_sha256": panel["panel_sha256"],
@@ -466,7 +520,9 @@ def report(manifest_path):
     expected_states = {s["state_id"] for s in manifest["states"] if s.get("cache_eligible", True)}
     exclusions = [{"state_id": s["state_id"], "reason": s.get("cache_ineligible_reason")}
                   for s in manifest["states"] if s.get("cache_eligible") is False]
-    for student in ("S0", "S_STD", "S_STAGE", "S_PACKET"):
+    primary = primary_students(manifest)
+    reported = tuple(dict.fromkeys((*primary, reference_name(manifest))))
+    for student in reported:
         student_root = root / "measurements" / student
         all_paths = sorted(path for mode in ("main", "smoke")
                            for path in student_root.glob(f"step_*/{mode}/*/*.npz"))
@@ -481,8 +537,12 @@ def report(manifest_path):
                 raise ValueError("Report measurement path/study/student identity differs")
             endpoint, initialization = identity.get("endpoint"), identity.get("initialization")
             if (not isinstance(endpoint, int) or isinstance(endpoint, bool) or endpoint < 1
-                    or initialization not in ("production_reference", "accepted_teacher_weights", "S0_weights")):
+                    or initialization not in ("production_reference", "accepted_teacher_weights", "S0_weights",
+                                               "frozen_teacher_compact_smoke")):
                 raise ValueError("Report requires a recorded initialization and declared endpoint")
+            if student == "S_INIT" and (identity.get("mode") != "smoke" or not identity.get("preflight_only")
+                                         or identity.get("partition") != "train"):
+                raise ValueError("S_INIT rows must remain a fitting-only smoke diagnostic")
             declarations.add((initialization, identity.get("initialization_sha256"), endpoint,
                               identity.get("training_manifest_sha256")))
         if len(declarations) > 1:
@@ -500,7 +560,8 @@ def report(manifest_path):
         paths = [path for path in paths if int(path.parents[2].name.removeprefix("step_")) == chosen_step]
         inventory.append({"student": student, "mode": mode, "measured_states": 0,
                           "step": chosen_step, "initialization": initialization, "declared_endpoint": primary_step,
-                          "primary_endpoint": chosen_step is not None and chosen_step == primary_step,
+                          "primary_endpoint": student in primary and chosen_step is not None and chosen_step == primary_step,
+                          "preflight_only": student not in primary,
                           "uncommitted_rows": uncommitted,
                           "expected_states": len(expected_states), "excluded_states": exclusions,
                           "status": ("no_eligible_states" if not expected_states else
@@ -526,7 +587,7 @@ def report(manifest_path):
             result.update(state=state, identity=identity, timings=metadata["timings"], capability=panel["capability"],
                           raw_rows=rows, numerical_controls=metadata["numerical_controls"], mask=metadata["mask"])
             analyses.append(result)
-        if (mode == "main" and chosen_step == primary_step and expected_states and
+        if (student in primary and mode == "main" and chosen_step == primary_step and expected_states and
                 expected_states <= seen and all(entry["reason"] for entry in exclusions)):
             inventory[-1]["status"] = "complete"
     extensions = []
@@ -551,7 +612,8 @@ def report(manifest_path):
                            "status": "raw_only", "note": extension["analysis_policy"]})
     result = {"experiment_id": manifest["experiment_id"], "kind": manifest["kind"],
               "inventory": inventory,
-              "population": population_summary(analyses, epsilon=manifest["protocol"]["gain_epsilon"],
+              "population": population_summary([a for a in analyses if a["state"]["student"] in primary],
+                                               epsilon=manifest["protocol"]["gain_epsilon"],
                                                relative_thresholds=manifest["protocol"].get(
                                                    "relative_thresholds", (.005, .01, .05))),
               "analyses": analyses, "confirmation_extensions": extensions}
@@ -571,7 +633,10 @@ def main(argv=None):
     parser.add_argument("--encoded", type=Path)
     parser.add_argument("--hierarchy", type=Path)
     parser.add_argument("--diagnostic-assets", action="store_true")
-    parser.add_argument("--student", choices=("S0", "S_STD", "S_STAGE", "S_PACKET"), default="S0")
+    parser.add_argument("--teacher-reference", action="store_true",
+                        help="Use the adopted teacher as a zero-update compact-context smoke, keeping old S0 separate")
+    parser.add_argument("--cache-plan", type=Path, help="Verified adopted teacher cache plan for --teacher-reference")
+    parser.add_argument("--student", choices=("S0", "S_INIT", "S_STD", "S_STAGE", "S_PACKET"))
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--partition", choices=("train", "validation", "both"), default="train")
     parser.add_argument("--device", default="cuda:0")
@@ -604,7 +669,8 @@ def main(argv=None):
             parser.error("Manifest construction needs --data-config --teacher --compact --encoded --hierarchy")
         cfg, protocol = load_config(args.data_config), yaml.safe_load(args.config.read_text())
         deps = verify_dependencies(cfg, args.teacher, args.compact, args.encoded, args.hierarchy,
-                                   diagnostic_assets=args.diagnostic_assets)
+                                   diagnostic_assets=args.diagnostic_assets,
+                                   teacher_reference=args.teacher_reference, cache_plan=args.cache_plan)
         result = build_manifest(cfg, protocol, deps, args.manifest)
         result = {"manifest": str(args.manifest), "experiment_id": result["experiment_id"],
                   "states": len(result["states"]), "training_pool_counts": result["training_pool_counts"]}
