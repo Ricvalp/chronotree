@@ -70,8 +70,11 @@ def test_cached_context_workers_with_two_ddp_ranks(tmp_path, cached_pipeline, in
         assert all(row["hierarchy_read_bytes_rank"] > 0 and row["hierarchy_read_seconds_rank"] > 0 for row in rows)
 
 
-@pytest.mark.parametrize("indexed", [False, True], ids=["legacy", "indexed"])
-def test_cached_worker_stop_resume_matches_uninterrupted(tmp_path, cached_pipeline, indexed):
+@pytest.mark.parametrize("indexed,world", [(False, 1), (True, 1), (True, 2)],
+                         ids=["legacy", "indexed", "indexed_ddp"])
+def test_cached_worker_stop_resume_matches_uninterrupted(tmp_path, cached_pipeline, indexed, world):
+    if world > 1 and not torch.distributed.is_available():
+        pytest.skip("DDP unavailable")
     cfg, _ = cached_pipeline
     if indexed:
         cfg = _indexed(cfg)
@@ -79,19 +82,25 @@ def test_cached_worker_stop_resume_matches_uninterrupted(tmp_path, cached_pipeli
     resumed = _student(cfg, tmp_path / "resumed")
     full_path = _write_config(tmp_path / "full.yaml", full)
     resumed_path = _write_config(tmp_path / "resumed.yaml", resumed)
-    result = _run(full_path)
+    result = _run(full_path, world=world)
     assert result.returncode == 0, result.stderr
     stop = tmp_path / "stop"
     stop.touch()
-    result = _run(resumed_path, "--stop-file", stop)
-    assert result.returncode == 75, result.stderr
+    result = _run(resumed_path, "--stop-file", stop, world=world)
+    assert result.returncode == 75 if world == 1 else (
+        result.returncode != 0 and "exitcode: 75" in result.stderr), result.stderr
     checkpoint = tmp_path / "resumed/seed0/compact/last.pt"
     partial = torch.load(checkpoint, weights_only=False, map_location="cpu")
     assert partial["step"] == 1
     stop.unlink()
-    result = _run(resumed_path, "--resume", checkpoint, "--stop-file", stop)
+    # A runtime-only deeper queue must keep the old configuration/provenance,
+    # per-position noise and exact optimizer updates across a checkpoint.
+    result = _run(resumed_path, "--resume", checkpoint, "--stop-file", stop, "--prefetch-factor", "2", world=world)
     assert result.returncode == 0, result.stderr
     actual = torch.load(checkpoint, weights_only=False, map_location="cpu")
     expected = torch.load(tmp_path / "full/seed0/compact/last.pt", weights_only=False, map_location="cpu")
+    assert actual["config"] == partial["config"] == resumed
+    assert actual["loader"] == {"workers": 2, "prefetch_factor": 2, "prefetch_capacity_rank": 4}
+    assert actual["tracking"] == partial["tracking"]  # tracking is disabled in this subprocess fixture
     for key in ("model", "optimizer", "scheduler", "scaler", "rng_by_rank", "sampler", "provenance"):
         _assert_identical(actual[key], expected[key])

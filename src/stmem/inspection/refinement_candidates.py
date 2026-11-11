@@ -651,9 +651,14 @@ class IndexedArchive:
                 "coverage_hash": self.coverage, "flat_ordering": self.balancing}
 
 
-def training_routes(index, roots, leaves, reader, target_budget, seed, packet_size=8):
+def training_routes(index, roots, leaves, reader, target_budget, seed, packet_size=8, *, archive=None):
     """Common topology-only feasibility for paired local/packet student exposure."""
-    archive = IndexedArchive(index, roots, leaves)
+    if archive is None:
+        archive = IndexedArchive(index, roots, leaves)
+    elif archive.index is not index or tuple(archive.roots) != tuple(map(int, roots)) or not np.array_equal(
+        archive.leaves, np.asarray(leaves, dtype=np.int64),
+    ):
+        raise ValueError("Reused training archive belongs to a different causal decision")
     initial = archive.coarse(reader)["token_count"]
     target = min(int(target_budget), len(archive.leaves))
     result = {"initial_count": initial, "target_count": target, "saturated": target < target_budget,

@@ -171,8 +171,13 @@ residuals without constructing trees; CURRENT skips historical feature payloads.
 Context sampling and budgets remain variable with the original RNG sequence.
 Only contiguous selected context
 tensors, masks and metadata cross the worker boundary; recursive tree objects and
-raw point-cloud histories do not. Sixteen workers per GPU and a bounded prefetch
-queue let that work overlap GPU updates.
+raw point-cloud histories do not. Sixteen workers per GPU and runtime prefetch
+factor two allow up to 32 queued or preparing microbatches per GPU, returned in
+the original order. This runtime override leaves saved training configuration
+and checkpoint provenance unchanged. A bounded episode-metadata cache avoids
+repeated reads; each decision reuses its FLAT selection. Geometry is loaded
+before any route requiring spatial balancing. Causal roots, partial prefixes,
+residual reduction order and context sampling stay identical.
 
 The GPU trains the same shared metadata adapter, clock and flow decoder, with
 the original masked context assembly and mass bias. Visual and text encoders

@@ -31,6 +31,8 @@ SCALAR_FIELDS = (
     "count", "time_min", "time_max", "depth", "scale", "completed", "disconnected", "time_anchor", "occupancy",
 )
 STRING_FIELDS = ("node_id", "source", "modality")
+DEFAULT_MAXIMUM_INDICES = 32
+DEFAULT_MAXIMUM_INDEX_BYTES = 256 * 1024 * 1024
 
 
 def _strings(value):
@@ -239,7 +241,8 @@ def flat_residual_columns(columns, selected, group_codes, group_names):
 class PackedContextReader:
     """Read indexed contexts with bounded per-worker topology caching."""
 
-    def __init__(self, cfg, cache_root, hierarchy_root, *, maximum_indices=4, maximum_index_bytes=128 * 1024 * 1024):
+    def __init__(self, cfg, cache_root, hierarchy_root, *, maximum_indices=DEFAULT_MAXIMUM_INDICES,
+                 maximum_index_bytes=DEFAULT_MAXIMUM_INDEX_BYTES):
         self.cfg = cfg
         self.cache_root, self.hierarchy_root = Path(cache_root), Path(hierarchy_root)
         self.width = cfg["model"]["width"]
@@ -274,19 +277,27 @@ class PackedContextReader:
         self.read_bytes += _bytes(array)
         return array
 
-    def _index(self, group):
+    def _index(self, group, *, geometry=None):
+        # Keep the inspection/audit API's complete study index. Training opts
+        # into lazy geometry explicitly, then adds it before template routing.
+        if geometry is None:
+            geometry = bool(self.cfg["training"].get("utility_study"))
         key = group.file.filename, group.name
         found = self.indices.pop(key, None)
         if found is not None:
             self.hits += 1
-            self.indices[key] = found
-            return found[0]
-        self.misses += 1
-        nodes = group["nodes"]
-        fields = ["node_id", "children", "count", "source", "modality"]
-        if self.cfg["training"].get("utility_study"):
-            fields.extend(["anchor", "time_anchor", "depth"])
-        values = {key: self._read(nodes[key]) for key in fields}
+            values, size = found
+            self.index_bytes -= size
+        else:
+            self.misses += 1
+            nodes = group["nodes"]
+            values = {field: self._read(nodes[field])
+                      for field in ("node_id", "children", "count", "source", "modality")}
+        if geometry:
+            nodes = group["nodes"]
+            for field in ("anchor", "time_anchor", "depth"):
+                if field not in values:
+                    values[field] = self._read(nodes[field])
         size = sum(_resident_bytes(value) for value in values.values())
         if self.maximum_indices and size <= self.maximum_index_bytes:
             self.indices[key] = values, size
@@ -295,6 +306,20 @@ class PackedContextReader:
                 _, (_, removed) = self.indices.popitem(last=False)
                 self.index_bytes -= removed
         return values
+
+    def _ensure_geometry(self, group, index):
+        """Populate a decision's index even when its size exceeds the LRU cap."""
+        if all(field in index for field in ("anchor", "time_anchor", "depth")):
+            return
+        key = group.file.filename, group.name
+        retained = self.indices.get(key)
+        if retained is not None and retained[0] is index:
+            self._index(group, geometry=True)
+        else:
+            nodes = group["nodes"]
+            for field in ("anchor", "time_anchor", "depth"):
+                if field not in index:
+                    index[field] = self._read(nodes[field])
 
     def _columns(self, group, rows=None, *, include_max=False, index=None):
         if int(group.attrs.get("length", -1)) == 0:
@@ -357,20 +382,22 @@ class PackedContextReader:
         leaves = selected_nodes = None
         study_metadata = None
         if study:
-            from stmem.inspection.refinement_candidates import IndexedArchive
             from stmem.training.utility_study import study_context
 
-            index = self._index(hierarchy) if method != "CURRENT" else {}
+            index = self._index(hierarchy, geometry=False) if method != "CURRENT" else {}
             leaves = self._active_leaves(hierarchy, entry) if method != "CURRENT" else np.empty(0, dtype=np.int64)
             if method != "CURRENT" and len(leaves) != leaf_count:
                 raise ValueError("Study archive differs from the causal prefix leaf count")
             started = time.perf_counter()
-            context, study_metadata = study_context(index, roots, leaves, self.cfg, position)
+            runtime = {}
+            context, study_metadata = study_context(
+                index, roots, leaves, self.cfg, position, runtime=runtime,
+                ensure_geometry=lambda: self._ensure_geometry(hierarchy, index),
+            )
             selected_nodes = np.asarray(context["rows"], dtype=np.int64)
             selection_seconds += time.perf_counter() - started
             if context["reader"] == "FLAT":
-                archive = IndexedArchive(index, roots, leaves)
-                chosen, group_codes, group_names = archive.flat_arrays(context)
+                chosen, group_codes, group_names = runtime["flat_arrays"]
                 all_leaves = self._columns(hierarchy["nodes"], leaves, include_max=debug, index=index)
                 started = time.perf_counter()
                 selected = flat_residual_columns(all_leaves, chosen, group_codes, group_names)

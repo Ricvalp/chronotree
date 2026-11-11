@@ -4,6 +4,7 @@ from copy import deepcopy
 import json
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
@@ -186,6 +187,102 @@ def test_standard_context_matches_legacy_and_stage_packet_exposures_match(indexe
         legacy.close()
         for reader in readers.values():
             reader.close()
+
+
+@pytest.mark.parametrize("variant", ["S_STD", "S_STAGE", "S_PACKET"])
+@pytest.mark.parametrize("family", ["flat", "tree", "uniform", "current"])
+def test_lazy_study_selection_preserves_full_index_context_and_audit_metadata(variant, family):
+    """Synthetic geometry is deliberately large enough for unsaturated routes."""
+    from test_refinement_candidates import forest
+    from stmem.config import load_config
+    from stmem.inspection.refinement_candidates import IndexedArchive
+    from stmem.training.utility_study import study_context
+
+    complete, roots, leaves = forest((96, 128), geometry=True)
+    # Payload order is meaningful for residual FP32 reductions and can differ
+    # from the hierarchy DFS order. Hydration must retain that exact order.
+    leaves = np.asarray(leaves[::-1], dtype=np.int64)
+    cfg = study_cfg(load_config("configs/debug/compact.yaml"), "synthetic-hierarchy", variant)
+    cfg["model"]["budgets"] = [64, 128]
+    cfg["training"]["context_mix"] = {family: 1.0}
+    templates = False
+    for position in range(12):
+        expected, expected_metadata = study_context(complete, roots, leaves, cfg, position)
+        lazy = {key: value for key, value in complete.items() if key not in ("anchor", "time_anchor")}
+        geometry_calls = []
+
+        def geometry():
+            geometry_calls.append(True)
+            lazy.update(anchor=complete["anchor"], time_anchor=complete["time_anchor"])
+
+        runtime = {}
+        actual, actual_metadata = study_context(
+            lazy, roots, leaves, cfg, position, runtime=runtime, ensure_geometry=geometry,
+        )
+        assert actual == expected
+        assert actual_metadata == expected_metadata
+        templates |= actual_metadata["template"]
+        if actual["reader"] == "FLAT":
+            arrays = IndexedArchive(complete, roots, leaves).flat_arrays(expected)
+            for left, right in zip(runtime["flat_arrays"][:2], arrays[:2]):
+                np.testing.assert_array_equal(left, right)
+            assert runtime["flat_arrays"][2] == arrays[2]
+        else:
+            assert not runtime
+        if variant == "S_STD" or family in ("uniform", "current"):
+            assert not geometry_calls
+    if variant != "S_STD" and family in ("tree", "flat"):
+        assert templates
+
+
+@pytest.mark.parametrize("variant", ["S_STD", "S_STAGE", "S_PACKET"])
+def test_prepared_flat_context_constructs_causal_archive_only_once(indexed, monkeypatch, variant):  # noqa: F811
+    from stmem.inspection.refinement_candidates import IndexedArchive
+
+    cfg, data, _, cache, root = indexed
+    cfg = study_cfg(cfg, root, variant)
+    cfg["training"]["context_mix"] = {"flat": 1.0}
+    light = LightweightDecisions(data)
+    reader = PackedContextReader(cfg, cache.root, root)
+    original = IndexedArchive.__init__
+    constructions = []
+
+    def init(self, *args, **kwargs):
+        constructions.append(True)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(IndexedArchive, "__init__", init)
+    try:
+        for position in range(12):
+            before = len(constructions)
+            reader.prepare(light.decision(position), position)
+            assert len(constructions) - before == 1
+    finally:
+        reader.close()
+        light.close()
+
+
+@pytest.mark.parametrize("family", ["tree", "flat", "uniform", "current"])
+def test_standard_study_does_not_read_full_episode_geometry(indexed, monkeypatch, family):  # noqa: F811
+    cfg, data, _, cache, root = indexed
+    cfg = study_cfg(cfg, root)
+    cfg["training"]["context_mix"] = {family: 1.0}
+    reader = PackedContextReader(cfg, cache.root, root)
+    light = LightweightDecisions(data)
+    original = reader._read
+
+    def read(dataset, rows=None):
+        if "/nodes/" in dataset.name and dataset.name.rsplit("/", 1)[1] in ("anchor", "time_anchor", "depth"):
+            assert rows is not None
+        return original(dataset, rows)
+
+    monkeypatch.setattr(reader, "_read", read)
+    try:
+        for position in range(12):
+            reader.prepare(light.decision(position), position)
+    finally:
+        reader.close()
+        light.close()
 
 
 def test_student_cached_context_gradients_reach_only_decoder_adapter_clock(indexed):  # noqa: F811

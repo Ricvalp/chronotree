@@ -1856,3 +1856,62 @@ bytes and W&B identity are preserved. A read-only dry-run using the actual synce
 `runs/inspection/teacher_resume72h_20261110/`. Hardware doctor passes on the RTX
 5000 Ada; diagram regeneration changes only the training source fingerprint.
 No real-data training or Slurm job was submitted.
+
+## Input-preserving compact loader optimization — 2026-11-11
+
+The three 140k-teacher utility students retain their original training data,
+samplers, action/noise schedules, optimizer state and 100k endpoints. Live
+S_STD/S_STAGE telemetry showed sampled mean step times of about 1.76/1.93 seconds,
+with maximum-rank input waits about 1.72/1.88 seconds. Worker read/selection
+times overlap across processes and must not be added to per-step walltime.
+
+Each decision now reuses its validated FLAT archive/selection arrays when
+hydrating tensors. Reuse checks index identity, causal roots and canonical leaf
+order; no episode-wide decision view is reused across prefixes. Immutable
+episode index caching increases from four entries / 128 MiB to 32 entries /
+256 MiB per worker. Sixteen workers on each of two ranks therefore have at most
+8 GiB of retained index arrays/strings collectively; this is not a bound on
+total worker RAM or HDF5 internal caches. Geometry loads only when needed and
+is present before any spatially balanced template route. Lazy/eager reads must
+produce identical selected tokens, singleton handling and residual reductions.
+
+Compact launchers default to runtime `--prefetch-factor 2`, permitting 32 queued
+or preparing microbatches per rank with 16 workers. Results remain ordered and
+future prefetched examples remain disposable at a checkpoint boundary. The
+override is recorded separately from the unchanged saved configuration. W&B's
+historical config may still show `training.prefetch_factor: 1`; the resolved
+summary `training/loader_prefetch_factor` is 2 and actual rank capacity is 32.
+Explicit `--resume --upgrade-loader` authorizes this reviewed source transition,
+while proving configuration, dependencies and GPU world size are unchanged.
+It does not enable a constant-LR tail or reset the optimizer. All selected job
+receipts are checked inactive before a submitted replacement group is rendered.
+
+Independent pristine-HEAD comparisons pass on 360 contexts: 80 synthetic and
+40 real VideoUnmask decisions for each student. Each comparison covers 8,973,382
+tensor elements, all selected record fields and ordering, targets/masks, clocks,
+state, FM noise/time and audit metadata. Both warm-index and disabled-index-cache
+conditions are bit-exact. The real diagnostic uses an existing 104110-teacher
+cache, not the remote full 140k cache, and performs no training.
+
+For 40 real decisions with index reuse disabled (filesystem caches not flushed),
+S_STD preparation took 1.272 -> 1.008 s, S_STAGE 1.599 -> 1.437 s and S_PACKET
+1.603 -> 1.465 s. Logical reads fell about 14% for S_STD and 8% for the other
+arms. Warm one-episode gains were smaller. These bounded timings do not estimate
+HPC throughput, exercise 1600-episode cache reuse, or measure the queue-depth
+benefit. Reports and a repeatable diagnostic are under
+`runs/cache_checks/loader_upgrade_20261111/` (ignored generated artifacts).
+
+Focused CPU checks passed for context selection, cached input assembly,
+hierarchy invariants, launch preflight and runtime-option validation. Six
+integration checks include queue-depth 1 -> 2 checkpoint resumes on two CPU
+DDP ranks: model, optimizer, scheduler, scaler, RNG, sampler and provenance
+match uninterrupted training. A fake-W&B resume check preserves the run ID.
+Ruff, documented Bash syntax and architecture snapshot/XML checks passed.
+The regenerated HTML was opened in Chromium and the compact-worker section
+visually checked; the screenshot is `compact_pipeline.png` in the report folder.
+
+The protected encoder-cache source fingerprint is unchanged, so neither leaf
+cache construction nor hierarchy preprocessing must be repeated. The teacher
+diagram records the runtime queue and index bounds separately from model
+architecture. The RTX 5000 Ada doctor passed FP32/BF16/FP16 computation. No HPC
+job was stopped or submitted during implementation.

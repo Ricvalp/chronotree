@@ -323,6 +323,71 @@ def test_allocation_guard_rejects_source_change(launcher):
         launcher.module.ready_plan(Path(plan["script"]).with_name("plan.json"))
 
 
+def test_explicit_loader_upgrade_preserves_config_checkpoint_and_schedule(launcher):
+    first = launcher.invoke("--prefetch-factor", "1")
+    checkpoint = save_resume_fixture(launcher, first, step=5000)
+    original_checkpoint = checkpoint.read_bytes()
+    original_config = Path(first["config"]).read_bytes()
+    (launcher.repo / "src/fixture.py").write_text("# Reviewed synthetic loader-only source change.\n")
+    with pytest.raises(SystemExit):
+        launcher.invoke("--resume")
+    second = launcher.invoke("--resume", "--upgrade-loader", "--prefetch-factor", "2")
+    assert Path(second["config"]).read_bytes() == original_config
+    assert checkpoint.read_bytes() == original_checkpoint
+    assert second["start_step"] == 5000 and second["remaining_updates"] == 25000
+    assert second["continue_to_step"] is None and second["continuation"] is None
+    assert second["config_sha256"] == first["config_sha256"]
+    assert second["runtime_loader"] == {"workers": 16, "prefetch_factor": 2, "prefetch_capacity_rank": 32}
+    assert "--prefetch-factor 2" in Path(second["script"]).read_text()
+    upgrade = second["loader_upgrade"]
+    assert upgrade["from_signature"] == first["signature"]
+    assert upgrade["to_signature"] == second["signature"]
+    assert upgrade["checkpoint_sha256"] == launcher.module.sha256(checkpoint)
+    assert upgrade["optimizer_step"] == 5000
+    launcher.module.ready_plan(second["startup_plan"])
+    # Rendering then submitting uses the same audit record without requiring an
+    # artificial LR continuation or rewriting any checkpoint.
+    third = launcher.invoke("--resume", "--upgrade-loader", "--prefetch-factor", "2")
+    assert third["loader_upgrade"] == upgrade
+    assert third["signature"] == second["signature"]
+    launcher.module.ready_plan(third["startup_plan"])
+
+
+@pytest.mark.parametrize("override", [("--microbatch", "64"), ("--workers", "8"),
+                                     ("--gpus", "4"), ("--effective-batch", "256")])
+def test_loader_upgrade_never_allows_scientific_or_nonallowlisted_config_changes(launcher, override):
+    plan = launcher.invoke()
+    save_resume_fixture(launcher, plan)
+    (launcher.repo / "src/fixture.py").write_text("# Reviewed synthetic loader-only source change.\n")
+    with pytest.raises(SystemExit):
+        launcher.invoke("--resume", "--upgrade-loader", *override)
+    assert json.loads(Path(plan["plan_path"]).read_text()) == plan
+
+
+def test_loader_upgrade_is_explicit_resume_only_and_cannot_extend_endpoint(launcher):
+    with pytest.raises(SystemExit):
+        launcher.invoke("--upgrade-loader")
+    with pytest.raises(SystemExit):
+        launcher.invoke("--resume", "--upgrade-loader", "--continue-to-step", "100000")
+
+
+def test_loader_upgrade_guard_rejects_tampered_runtime_and_upgrade_audit(launcher):
+    first = launcher.invoke()
+    save_resume_fixture(launcher, first)
+    (launcher.repo / "src/fixture.py").write_text("# Reviewed synthetic loader-only source change.\n")
+    plan = launcher.invoke("--resume", "--upgrade-loader")
+    path = Path(plan["plan_path"])
+    plan["runtime_loader"]["prefetch_capacity_rank"] += 1
+    write_json(path, plan)
+    with pytest.raises(ValueError, match="runtime loader"):
+        launcher.module.ready_plan(path)
+    plan["runtime_loader"]["prefetch_capacity_rank"] -= 1
+    plan["loader_upgrade"]["from_signature"] = "not the same configuration"
+    write_json(path, plan)
+    with pytest.raises(ValueError, match="Loader upgrade"):
+        launcher.module.ready_plan(path)
+
+
 def test_new_launch_rejects_teacher_contract_drift_even_with_refreshed_config_hash(launcher):
     cache_plan = json.loads(launcher.cache_plan.read_text())
     config_path = Path(cache_plan["config"])

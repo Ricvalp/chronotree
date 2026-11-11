@@ -34,6 +34,7 @@ from hpc.profile_memory import absolute_path, profile_name, walltime  # noqa: E4
 from stmem.config import dependency, digest, run_dir, validate_config  # noqa: E402
 from stmem.data.cache import cache_identity  # noqa: E402
 from stmem.train import continuation_record  # noqa: E402
+from stmem.training.loader import runtime_loader_settings  # noqa: E402
 from stmem.training.runtime import load_checkpoint, validate_policy_config  # noqa: E402
 
 
@@ -192,6 +193,9 @@ def ready_plan(plan_path):
             or cache_plan["checkpoint_sha256"] != plan["checkpoint_sha256"]):
         raise ValueError("Compact job's frozen dependencies changed")
     requested = yaml.safe_load(Path(plan["config"]).read_text())
+    loader = plan.get("runtime_loader")
+    if loader is not None and runtime_loader_settings(requested, loader["prefetch_factor"]) != loader:
+        raise ValueError("Compact runtime loader settings differ from the recorded plan")
     if requested["training"].get("utility_study"):
         from stmem.training.utility_study import read_study_manifest
 
@@ -224,6 +228,21 @@ def ready_plan(plan_path):
             raise ValueError("Compact hierarchy dependency changed")
     elif requested["training"].get("hierarchy_cache_root"):
         raise ValueError("Unrecorded hierarchy dependency in compact configuration")
+    upgrade = plan.get("loader_upgrade")
+    if upgrade is not None:
+        inputs = {"config": requested, "teacher": plan["checkpoint_sha256"],
+                  "cache": plan["cache_manifest_digest"], "gpus": plan["gpus"],
+                  "source": plan["source_sha256"]}
+        if plan.get("hierarchy_manifest_digest"):
+            inputs["hierarchy"] = plan["hierarchy_manifest_digest"]
+        if (upgrade.get("kind") != "runtime_loader_source_upgrade_v1"
+                or not plan.get("resume")
+                or upgrade.get("to_source_sha256") != plan["source_sha256"]
+                or upgrade.get("config_sha256") != plan["config_sha256"]
+                or upgrade.get("to_signature") != plan["signature"]
+                or upgrade.get("to_signature") != digest(inputs)
+                or upgrade.get("from_signature") != digest({**inputs, "source": upgrade.get("from_source_sha256")})):
+            raise ValueError("Loader upgrade changed more than the explicitly recorded runtime source")
     endpoint = plan.get("continue_to_step")
     if endpoint is not None and not plan["resume"]:
         raise ValueError("Compact continuation requires a resume checkpoint")
@@ -285,12 +304,17 @@ def render_script(plan, site, cfg):
         command += ["--resume", plan["resume"]]
     if plan.get("continue_to_step") is not None:
         command += ["--continue-to-step", str(plan["continue_to_step"])]
+    if plan.get("runtime_loader") is not None:
+        command += ["--prefetch-factor", str(plan["runtime_loader"]["prefetch_factor"])]
     lines.append("exec " + shlex.quote(str(Path(code_root) / "hpc/run_job.sh"))
                  + ' "$STMEM_STOP_FILE" ' + shlex.join(command) + ' --stop-file "$STMEM_STOP_FILE"')
     return "\n".join(lines) + "\n"
 
 
 def prepare(args, site, repo, cache_plan_path, generated):
+    upgrade_requested = getattr(args, "upgrade_loader", False)
+    if upgrade_requested and (not args.resume or args.continue_to_step is not None):
+        raise ValueError("--upgrade-loader requires --resume and cannot change the training endpoint")
     code_root = absolute_path(args.code_root, repo) if args.code_root is not None else repo
     if args.code_root is not None:
         for relative in ("src/stmem/train.py", "hpc/train_compact.py", "hpc/run_job.sh"):
@@ -355,12 +379,25 @@ def prepare(args, site, repo, cache_plan_path, generated):
     if hierarchy is not None:
         signature_inputs["hierarchy"] = digest(hierarchy)
     signature = digest(signature_inputs)
+    loader_upgrade = previous.get("loader_upgrade") if previous else None
     if previous and previous["signature"] != signature:
-        # A completed run predates this continuation feature. Permit its code
-        # upgrade explicitly, while proving every scientific input is unchanged.
+        # An explicit continuation or reviewed loader upgrade may adopt newer
+        # runtime code, but all config/dependency/world-size inputs stay exact.
         previous_signature = digest({**signature_inputs, "source": previous["source_sha256"]})
-        if args.continue_to_step is None or previous["signature"] != previous_signature:
+        if (not (args.continue_to_step is not None or upgrade_requested)
+                or previous["signature"] != previous_signature):
             raise ValueError("Compact configuration/dependencies/world size/source changed; this plan is immutable")
+        if upgrade_requested:
+            loader_upgrade = {
+                "kind": "runtime_loader_source_upgrade_v1",
+                "from_signature": previous["signature"], "to_signature": signature,
+                "from_source_sha256": previous["source_sha256"], "to_source_sha256": current_source,
+                "config_sha256": previous["config_sha256"],
+                "previous": previous.get("loader_upgrade"),
+            }
+        else:
+            # A separately authorized endpoint extension is not a loader upgrade.
+            loader_upgrade = None
     ownership = output.parent / ".compact-plan.json"
     owner_signature = previous["signature"] if previous else signature
     if ownership.exists() and read_json(ownership) != {"plan": str(plan_path), "signature": owner_signature}:
@@ -391,6 +428,8 @@ def prepare(args, site, repo, cache_plan_path, generated):
         )
         if not 0 <= start < endpoint:
             raise ValueError("Resume checkpoint has no remaining compact training steps")
+        if loader_upgrade is not None and "checkpoint_sha256" not in loader_upgrade:
+            loader_upgrade.update(checkpoint_sha256=sha256(checkpoint), optimizer_step=start)
     config_path = generated / "compact.yaml"
     payload = yaml.safe_dump(cfg, sort_keys=False)
     if previous:
@@ -428,6 +467,8 @@ def prepare(args, site, repo, cache_plan_path, generated):
         "restart_unstarted": args.restart_unstarted,
         "start_step": start, "remaining_updates": endpoint - start,
         "continue_to_step": args.continue_to_step, "continuation": continuation,
+        "runtime_loader": runtime_loader_settings(cfg, getattr(args, "prefetch_factor", 2)),
+        "loader_upgrade": loader_upgrade,
         "candidate_checkpoints": [str(output / f"step_{step:08d}.pt")
                                   for step in cfg["training"]["checkpoint_steps"]],
         "accepted_evaluation_execution": cache_plan.get("evaluation_execution"),
@@ -482,6 +523,9 @@ def main(argv=None):
                          help="Retry an inactive attempt from step zero only if it has no checkpoints")
     parser.add_argument("--continue-to-step", type=positive_integer,
                         help="With --resume, extend a completed run to this optimizer step at its final LR")
+    parser.add_argument("--upgrade-loader", action="store_true",
+                        help="With --resume, explicitly adopt reviewed loader source changes; require identical "
+                             "configuration, dependencies and world size, preserving the original LR schedule")
     parser.add_argument("--partition", default="gpuq")
     parser.add_argument("--gpus", type=positive_integer, default=2)
     parser.add_argument("--cpus", type=positive_integer, default=64)
@@ -490,9 +534,13 @@ def main(argv=None):
     parser.add_argument("--effective-batch", type=positive_integer, default=128)
     parser.add_argument("--microbatch", type=positive_integer, default=32)
     parser.add_argument("--workers", type=nonnegative_integer, default=16)
+    parser.add_argument("--prefetch-factor", type=positive_integer, default=2,
+                        help="Runtime microbatches queued per worker; does not change checkpoint configuration")
     args = parser.parse_args(argv)
     if args.continue_to_step is not None and not args.resume:
         parser.error("--continue-to-step requires --resume")
+    if args.upgrade_loader and (not args.resume or args.continue_to_step is not None):
+        parser.error("--upgrade-loader requires --resume and cannot change the training endpoint")
     args.name = args.name or args.cache_name + ("_compact" if args.legacy_cache else "_compact_hierarchy")
     if args.name == args.cache_name:
         parser.error("Compact --name must differ from --cache-name")

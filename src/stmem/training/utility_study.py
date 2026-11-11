@@ -197,8 +197,18 @@ def consumed_packet_costs(route, count):
     return costs
 
 
-def study_context(index, roots, leaves, cfg, position):
-    context, metadata = _ordinary_study_context(index, roots, leaves, cfg, position)
+def study_context(index, roots, leaves, cfg, position, *, runtime=None, ensure_geometry=None):
+    """Return the unchanged public context/metadata, optionally reusing hydration work.
+
+    ``runtime`` is a decision-local output, never persisted or sent to the model.
+    Its FLAT arrays use canonical causal leaf order. ``ensure_geometry`` permits
+    the loader to defer episode geometry reads until a route actually needs it.
+    """
+    if runtime is not None:
+        runtime.clear()
+    context, metadata = _ordinary_study_context(
+        index, roots, leaves, cfg, position, runtime=runtime, ensure_geometry=ensure_geometry,
+    )
     settings = study_settings(cfg)
     followup = settings.get("followup")
     if followup not in (None, "rehearsal_control", "rehearsal_full"):
@@ -209,12 +219,14 @@ def study_context(index, roots, leaves, cfg, position):
             from stmem.inspection.refinement_candidates import IndexedArchive
 
             context = IndexedArchive(index, roots, leaves).context("TREE", leaves)
+            if runtime is not None:
+                runtime.clear()
             metadata.update(original_family=metadata["family"], family="FULL", rehearsal=True,
                             actual_count=context["token_count"], budget=context["token_count"])
     return context, metadata
 
 
-def _ordinary_study_context(index, roots, leaves, cfg, position):
+def _ordinary_study_context(index, roots, leaves, cfg, position, *, runtime=None, ensure_geometry=None):
     """Return selected indexed rows and an auditable, gain-blind exposure record."""
     from stmem.inspection.refinement_candidates import IndexedArchive, training_routes
     from stmem.training.packed_context import _flat_selection, _tree_indices
@@ -229,8 +241,14 @@ def _ordinary_study_context(index, roots, leaves, cfg, position):
     metadata = {"variant": settings["variant"], "family": method, "template": False,
                 "requested_target": requested, "fallback_reason": fallback,
                 "position": int(position), "seed": stream_seed(cfg["seed"], position, "route_v1")}
+    archive = None
     if settings["variant"] != "S_STD" and use_template:
-        routes = training_routes(index, roots, leaves, method, requested, metadata["seed"])
+        if ensure_geometry is not None:
+            # Do not let deferred columns select the topology-only FLAT
+            # fallback: paired routes must see exactly the original geometry.
+            ensure_geometry()
+        archive = IndexedArchive(index, roots, leaves)
+        routes = training_routes(index, roots, leaves, method, requested, metadata["seed"], archive=archive)
         metadata.update(initial_count=routes["initial_count"], target_count=routes["target_count"],
                         saturated=routes["saturated"], fallback_reason=routes["reason"])
         if routes["eligible"]:
@@ -245,6 +263,8 @@ def _ordinary_study_context(index, roots, leaves, cfg, position):
                             consumed_packet_costs=consumed_packet_costs(route, count),
                             region_groups=[item["group"] for item in route["packets"]],
                             eligible_pool_sizes=[item["eligible_pool_size"] for item in route["packets"]])
+            if runtime is not None and method == "FLAT":
+                runtime["flat_arrays"] = archive.flat_arrays(selected)
             return selected, metadata
     metadata.update(budget=ordinary_budget, prefix_count=None)
     if method in ("TREE", "UNIFORM"):
@@ -260,9 +280,12 @@ def _ordinary_study_context(index, roots, leaves, cfg, position):
     if method == "CURRENT":
         context["token_count"] = 0
     elif method == "FLAT":
-        archive = IndexedArchive(index, roots, leaves)
+        if archive is None:
+            archive = IndexedArchive(index, roots, leaves)
         selected, codes, groups = archive.flat_arrays(context)
         context["token_count"] = int(selected.sum()) + len(set(codes[~selected]))
+        if runtime is not None:
+            runtime["flat_arrays"] = selected, codes, groups
     else:
         context["token_count"] = len(rows)
     return context, metadata

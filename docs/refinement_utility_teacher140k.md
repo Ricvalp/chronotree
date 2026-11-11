@@ -186,6 +186,67 @@ For an inactive job with a saved `last.pt`, repeat the student command with
 `--resume --variants S_STD` (or the affected variant). Do not add `--resume` for
 already-running or completed arms.
 
+### Resume the existing microbatch-64 students with the faster loader
+
+The `utility_students_teacher140k_m64` study already has three running arms.
+The loader optimization reuses each decision's FLAT selection and caches more
+immutable episode metadata, with geometry loaded when the sampler needs it.
+No data preparation, teacher encoding, hierarchy construction or sampler audit
+needs to be rerun. The exact contexts, reductions, action targets, episode
+exclusions and 100k training schedule are preserved.
+
+The compact launchers now default to runtime `--prefetch-factor 2`. With 16
+workers per GPU this allows 32 queued or preparing microbatches per rank, in
+the same sample order. It does not change `training.prefetch_factor` in the
+saved configuration or reset checkpoint provenance. `--upgrade-loader` is an
+explicit source-version transition on resume; all other configuration,
+teacher/cache dependencies and world-size checks remain enforced.
+The applied value is visible in W&B summary `training/loader_prefetch_factor`
+and `manifest.json` under `loader`; the historical configuration value of one
+is retained deliberately for checkpoint compatibility.
+
+First request a coherent checkpointed stop of the original allocations:
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+scancel --signal=USR1 --batch 73560 73561 73562
+squeue -j 73560,73561,73562
+```
+
+These IDs are the original S_STD, S_STAGE and S_PACKET allocations. If they
+have already been restarted, use their current IDs instead. Wait until all
+three have stopped before pulling the code or resubmitting. The signal asks
+the wrapper to save `last.pt` at an optimizer boundary and exit; it does not
+discard the last part of training. Then, after pushing the changes from the
+workstation:
+
+```bash
+git pull --ff-only
+
+.venv/bin/python hpc/student_utility.py \
+  --site hpc/site_b200_4gpu.env \
+  --cache-name memory_fv140k_seed0 \
+  --manifest runs/router_utility_teacher140k/manifest.json \
+  --name utility_students_teacher140k_m64 \
+  --partition gpuq --gpus 2 --cpus 64 --mem 128G \
+  --microbatch 64 --workers 16 --prefetch-factor 2 \
+  --walltime 48:00:00 \
+  --resume --upgrade-loader --submit
+```
+
+This submits all three arms, each with two **untyped** GPUs on `gpuq` and no
+exclusive-node request. Each resumes its own `last.pt`, optimizer, learning-rate
+schedule and W&B identity in the existing `chronotree-routers` project. It
+continues toward 100k total updates, rather than adding another 100k. Missing
+checkpoints or still-active allocations are errors; the launcher never silently
+reinitializes an arm. For subsequent resumes on the same source, use the same
+command without `--upgrade-loader`.
+
+Compare `train/step_seconds_max_rank`, `train/data_wait_seconds_max_rank`,
+hierarchy read/select timings and index-cache hits after the workers warm up.
+These changes remove repeated work; a local preparation benchmark does not
+predict the shared-filesystem speedup on the HPC.
+
 ### 6. Measure the three frozen 100k endpoints
 
 After their endpoints exist, submit the development measurements:

@@ -55,7 +55,7 @@ def test_completed_compact_tail_preserves_rng_optimizer_and_wandb(
                 patch.setattr(cpu_training.TrainingProgress, "begin_update", begin_update)
                 result = cpu_training.train_policy(
                     config, "compact", resume=checkpoint, continue_to_step=5,
-                    stop_file=stop, attention_every=0,
+                    stop_file=stop, attention_every=0, prefetch_factor=2,
                 )
             assert result == (0 if endpoint == 5 else 75)
             assert (directory / "complete.json").exists() == (endpoint == 5)

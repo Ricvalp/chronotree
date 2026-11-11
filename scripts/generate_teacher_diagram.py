@@ -21,6 +21,7 @@ from stmem.data.pointcloud import POINT_SAMPLING_VERSION, point_sampler_settings
 from stmem.models.policy import MemoryPolicy
 from stmem.models.router import build_router
 from stmem.training.logging_options import resolve_logging
+from stmem.training.packed_context import DEFAULT_MAXIMUM_INDICES, DEFAULT_MAXIMUM_INDEX_BYTES
 from stmem.vision.frozen import _CLIPLayer1, visual_feature_identity
 
 
@@ -254,7 +255,10 @@ def snapshot():
                 "default_gpus": 2,
                 "default_cpu_allocation": 64,
                 "default_workers_per_rank": 16,
-                "default_prefetch_factor": 1,
+                "default_prefetch_factor": 2,
+                "prefetch_control": "runtime --prefetch-factor; saved training configuration unchanged",
+                "maximum_cached_episode_indices_per_worker": DEFAULT_MAXIMUM_INDICES,
+                "maximum_index_bytes_per_worker": DEFAULT_MAXIMUM_INDEX_BYTES,
                 "effective_batch": 128,
                 "microbatch_per_gpu": 32,
                 "history_budgets": [64, 128, 256],
@@ -1679,7 +1683,7 @@ def frozen_vision(file, facts):
         640, 2565, 500, 350,
         "Bounded CPU cache workers",
         [
-            f"{compact['default_workers_per_rank']} workers / GPU; one queued batch / worker.",
+            f"{compact['default_workers_per_rank']} workers / GPU; prefetch factor {compact['default_prefetch_factor']}.",
             "Read lightweight state, clocks and action targets.",
             "TREE / UNIFORM: traverse stored node indices.",
             "FLAT: leaf scan + exact residuals; no tree build.",
@@ -1688,7 +1692,7 @@ def frozen_vision(file, facts):
             "No raw point-cloud histories or recursive IPC.",
         ],
         tone="visual", size=18,
-        tooltip="training/cached_loader.py and training/packed_context.py. Preserve the same global-position RNG, family mixture, budget and causal leaf coverage. Tree readers select IDs before fetching features; flat residuals depend on the actual selected leaves. Relative ages are computed at read time. The opt-in hpc/student_utility.py study adds matched local versus coherent-packet construction trajectories to half of TREE/FLAT examples, with independent FM randomness, exact coverage and excluded diagnostic episodes. Teacher context and frozen encoders do not change.",
+        tooltip="training/cached_loader.py and training/packed_context.py. Preserve the same global-position RNG, family mixture, budget and causal leaf coverage. Runtime prefetch factor 2 permits 32 queued or preparing microbatches per GPU without reordering inputs. Bounded episode metadata caching and reuse of each decision's FLAT selection avoid repeated CPU/I/O work. Geometry is loaded before any route that needs spatial balancing. Tree readers select IDs before fetching features; flat residuals depend on the actual selected leaves. Relative ages are computed at read time. The opt-in hpc/student_utility.py study adds matched local versus coherent-packet construction trajectories to half of TREE/FLAT examples, with independent FM randomness, exact coverage and excluded diagnostic episodes. Teacher context and frozen encoders do not change.",
     )
     compact_gpu = p.card(
         1232, 2565, 520, 350,

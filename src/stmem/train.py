@@ -15,7 +15,7 @@ from stmem.config import load_config, validate_config, run_dir, dependency, dige
 from stmem.models.policy import MemoryPolicy, choose_records
 from stmem.models.action_flow import flow_sample, masked_mse
 from stmem.training.data import TrainingData, rank_positions
-from stmem.training.loader import PolicyBatchLoader
+from stmem.training.loader import PolicyBatchLoader, positive_prefetch_factor, runtime_loader_settings
 from stmem.training.forks import COMMAND_FLAG, load_fork_checkpoint, schedule_steps, validate_teacher_fork
 from stmem.training.continuation import continuation_record as teacher_continuation_record
 from stmem.training.logging_options import (
@@ -120,6 +120,7 @@ def train_policy(
     progress_every_seconds=None,
     attention_every=None,
     checkpoint_every=None,
+    prefetch_factor=None,
     train_until_stopped=False,
     continue_to_step=None,
 ):
@@ -142,6 +143,7 @@ def train_policy(
         raise ValueError("Only teacher checkpoints support matched continuations")
     logging = resolve_logging(cfg, log_every, progress_every_seconds, attention_every)
     checkpointing = resolve_checkpointing(cfg, checkpoint_every)
+    loader_settings = runtime_loader_settings(cfg, prefetch_factor)
     rank = int(os.environ.get("RANK", "0"))
     directory = run_dir(cfg, stage)
     if fork_from:
@@ -166,6 +168,7 @@ def train_policy(
             "fork_sha256": fork_sha256,
             "logging": logging,
             "checkpointing": checkpointing,
+            "loader": loader_settings,
             "train_until_stopped": train_until_stopped,
             "continue_to_step": continue_to_step,
         },
@@ -185,6 +188,7 @@ def train_policy(
                     tracker=tracker,
                     logging=logging,
                     checkpointing=checkpointing,
+                    loader_settings=loader_settings,
                     progress=progress,
                     resources=resources,
                 )
@@ -206,6 +210,7 @@ def _train_policy(
     tracker,
     logging,
     checkpointing,
+    loader_settings,
     progress,
     resources,
 ):
@@ -419,6 +424,7 @@ def _train_policy(
                 "synthetic": data.synthetic,
                 "logging": logging,
                 "checkpointing": checkpointing,
+                "loader": loader_settings,
                 "fork": fork,
                 "continuation": continuation,
                 "feature_io": feature_io_settings,
@@ -490,7 +496,7 @@ def _train_policy(
     startup_progress(
         "loader_starting",
         workers_per_rank=cfg["training"].get("workers", 0),
-        prefetch_factor=cfg["training"].get("prefetch_factor", 1),
+        prefetch_factor=loader_settings["prefetch_factor"],
     )
     loader_started = time.perf_counter()
     loader_class = PolicyBatchLoader
@@ -510,6 +516,7 @@ def _train_policy(
             world=world,
             microbatch=microbatch,
             retain_for_retry=precision == "fp16",
+            prefetch_factor=loader_settings["prefetch_factor"],
             **loader_options,
         )
     )
@@ -565,6 +572,7 @@ def _train_policy(
                 "tracking": dict(tracker.identity),
                 "logging": logging,
                 "checkpointing": checkpointing,
+                "loader": loader_settings,
                 "fork": fork,
                 "continuation": continuation,
             }
@@ -947,6 +955,10 @@ def main():
         "runtime-only override, safe to change on resume; stop and original candidate saves remain enabled",
     )
     parser.add_argument(
+        "--prefetch-factor", type=positive_prefetch_factor,
+        help="Upcoming CPU microbatches per worker; runtime-only override, safe to change on resume",
+    )
+    parser.add_argument(
         "--log-every",
         type=positive_log_every,
         help="Log scalar metrics every N optimizer updates; runtime-only override, safe to change on resume",
@@ -983,6 +995,8 @@ def main():
             parser.error("--attention-every applies to policy training, not router training")
         if args.checkpoint_every is not None:
             parser.error("--checkpoint-every applies to policy training, not router training")
+        if args.prefetch_factor is not None:
+            parser.error("--prefetch-factor applies to policy training, not router training")
         result = train_router(cfg, resume=args.resume, stop_file=args.stop_file, log_every=args.log_every)
     else:
         result = train_policy(
@@ -996,6 +1010,7 @@ def main():
             progress_every_seconds=args.progress_every_seconds,
             attention_every=args.attention_every,
             checkpoint_every=args.checkpoint_every,
+            prefetch_factor=args.prefetch_factor,
             train_until_stopped=args.train_until_stopped,
             continue_to_step=args.continue_to_step,
         )

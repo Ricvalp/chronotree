@@ -5,6 +5,7 @@ from dataclasses import fields
 from types import SimpleNamespace
 
 import h5py
+import numpy as np
 import pytest
 import torch
 
@@ -196,6 +197,32 @@ def test_indexed_topology_lru_eviction_and_handle_shutdown(indexed):
         light.close()
     assert not reader.indices and not reader.index_bytes
     assert not reader.base_files.values and not reader.hierarchy_files.values
+
+
+def test_lazy_geometry_growth_respects_index_byte_limit(indexed):
+    """An index can fit before geometry is loaded but exceed the cap afterwards."""
+    cfg, data, _, cache, root = indexed
+    decision = LightweightDecisions(data)
+    reader = PackedContextReader(cfg, cache.root, root)
+    try:
+        info = decision.decision(0).info
+        group = reader.hierarchy_files.get(root / f"{info.task}.h5")[episode_key(info.task, info.episode_id)]
+        index = reader._index(group, geometry=False)
+        assert "anchor" not in index
+        reader.maximum_index_bytes = reader.index_bytes
+        reader._ensure_geometry(group, index)
+        assert all(field in index for field in ("anchor", "time_anchor", "depth"))
+        assert not reader.indices and reader.index_bytes == 0
+        for field in ("anchor", "time_anchor", "depth"):
+            np.testing.assert_array_equal(index[field], np.asarray(group["nodes"][field]))
+        # This same decision remains usable even though its index is too big
+        # to retain; a second lazy fill must not reread or replace its arrays.
+        reads = reader.read_bytes
+        reader._ensure_geometry(group, index)
+        assert reader.read_bytes == reads
+    finally:
+        reader.close()
+        decision.close()
 
 
 def test_empty_history_keeps_current_tokens_for_every_family(indexed, tmp_path):

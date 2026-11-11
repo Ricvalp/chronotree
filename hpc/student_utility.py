@@ -15,7 +15,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from hpc.plan import nonnegative_integer, positive_integer, read_site, save_json, sha256  # noqa: E402
+from hpc.plan import active_user_job_ids, nonnegative_integer, positive_integer, read_site, save_json, sha256  # noqa: E402
 from hpc.profile_memory import absolute_path, profile_name, walltime  # noqa: E402
 from hpc.train_compact import prepare  # noqa: E402
 from stmem.inspection.refinement_data import primary_students, reference_name, study_dependencies  # noqa: E402
@@ -83,6 +83,20 @@ def reference_record(manifest):
     return reference
 
 
+def require_inactive_students(repo, name, variants):
+    """Check the whole submission group before rendering any replacement plan."""
+    receipts = []
+    for variant in variants:
+        path = repo / "hpc/generated" / (name + "_" + variant.lower()) / "submitted.json"
+        if path.exists():
+            receipts.append((variant, json.loads(path.read_text())["job_id"]))
+    active = active_user_job_ids() if receipts else set()
+    blocked = [(variant, job) for variant, job in receipts if job in active]
+    if blocked:
+        raise ValueError("Student jobs are still active; checkpoint/stop them before resubmitting: "
+                         + ", ".join(f"{variant}={job}" for variant, job in blocked))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group()
@@ -104,6 +118,8 @@ def main(argv=None):
     parser.add_argument("--continuation-updates", type=positive_integer, default=10000)
     parser.add_argument("--continuation-lr", type=float, default=1e-5)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--upgrade-loader", action="store_true",
+                        help="With --resume, adopt reviewed loader source changes without changing training inputs")
     parser.add_argument("--partition", default="gpuq")
     parser.add_argument("--gpus", type=positive_integer, default=2)
     parser.add_argument("--cpus", type=positive_integer, default=64)
@@ -111,7 +127,11 @@ def main(argv=None):
     parser.add_argument("--walltime", type=walltime, default="48:00:00")
     parser.add_argument("--microbatch", type=positive_integer, default=32)
     parser.add_argument("--workers", type=nonnegative_integer, default=16)
+    parser.add_argument("--prefetch-factor", type=positive_integer, default=2,
+                        help="Runtime upcoming microbatches per worker; preserves checkpoint configuration")
     args = parser.parse_args(argv)
+    if args.upgrade_loader and not args.resume:
+        parser.error("--upgrade-loader requires --resume")
     if len(set(args.variants)) != len(args.variants):
         parser.error("Student variants must be distinct")
     if 128 % args.gpus or args.microbatch > 128 // args.gpus:
@@ -146,6 +166,8 @@ def main(argv=None):
         generated.mkdir(parents=True, exist_ok=True)
         with (generated / ".launch.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if args.submit:
+                require_inactive_students(repo, args.name, args.variants)
             pinned = generated / "panel_manifest.json"
             if pinned.exists():
                 if sha256(pinned) != sha256(manifest_path):
@@ -176,6 +198,7 @@ def main(argv=None):
                       "total_updates": len(args.variants) * updates,
                       "total_example_exposures": len(args.variants) * updates * 128,
                       "primary_schedule": schedule,
+                      "runtime_prefetch_factor": args.prefetch_factor,
                       "effective_batch": 128, "gpu_hours": "unknown; measure each sampler on real caches"}
             configurations = []
             for variant in args.variants:

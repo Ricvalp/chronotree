@@ -8,8 +8,10 @@ consume training RNG state when workers start or a checkpoint is resumed.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from itertools import count
+from numbers import Integral
 import os
 import time
 
@@ -18,6 +20,27 @@ from torch.utils.data import DataLoader, Dataset
 
 from stmem.models.batched_policy import PackedPolicyBatch, pack_policy_batch
 from stmem.training.data import rank_positions
+
+
+def positive_prefetch_factor(value):
+    """Parse the runtime queue depth without changing scientific config hashes."""
+    if isinstance(value, bool) or not isinstance(value, (str, Integral)):
+        raise argparse.ArgumentTypeError("prefetch factor must be a positive integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise argparse.ArgumentTypeError("prefetch factor must be a positive integer") from error
+    if result < 1:
+        raise argparse.ArgumentTypeError("prefetch factor must be a positive integer")
+    return result
+
+
+def runtime_loader_settings(cfg, prefetch_factor=None):
+    """Queue sizing does not change deterministic sample positions or order."""
+    factor = positive_prefetch_factor(
+        cfg["training"].get("prefetch_factor", 1) if prefetch_factor is None else prefetch_factor)
+    workers = cfg["training"].get("workers", 0)
+    return {"workers": workers, "prefetch_factor": factor, "prefetch_capacity_rank": workers * factor}
 
 
 @dataclass
@@ -87,13 +110,14 @@ class PolicyBatchLoader:
     bounded prefetch queue and deterministic optimizer-step positions.
     """
 
-    def __init__(self, data, *, start, steps, batch, rank, world, microbatch, retain_for_retry=False):
+    def __init__(self, data, *, start, steps, batch, rank, world, microbatch, retain_for_retry=False,
+                 prefetch_factor=None):
         self.data = data
         self.start, self.steps = start, steps
         self.batch, self.rank, self.world = batch, rank, world
         self.microbatch = microbatch
         self.workers = data.cfg["training"].get("workers", 0)
-        self.prefetch_factor = data.cfg["training"].get("prefetch_factor", 1)
+        self.prefetch_factor = runtime_loader_settings(data.cfg, prefetch_factor)["prefetch_factor"]
         self.retain_for_retry = retain_for_retry
         self._loader = None
         self._iterator = None
