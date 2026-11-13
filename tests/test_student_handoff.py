@@ -109,11 +109,52 @@ def test_generalized_saved_trace_accepts_execute8_and_checks_seed_and_reader(tmp
     data["temporal_sampling"].update(action_stride=2, execute=8)
     data.update(absolute_time_noise=True, method="TREE", budget=128)
     data["decisions"][0].update(flow_seed=handoff.seed_for_primitive_time("PickXtimes", 0, 0))
-    data["decisions"][0]["timing"].update(method="TREE", history_tokens=0, represented_leaf_counts=[])
+    data["decisions"][0]["timing"].update(history_tokens=0, represented_leaf_counts=[],
+                                         active_tokens=0, records_fetched=0, leaves_scored=0, roots=0, splits=0)
     path.write_text(json.dumps(data))
     monkeypatch.setattr("imageio_ffmpeg.count_frames_and_secs", lambda _: (3, 0.15))
     validate_trial(path, source, cfg)
     data["decisions"][0]["flow_seed"] += 1
+    path.write_text(json.dumps(data))
+    with pytest.raises(AssertionError):
+        validate_trial(path, source, cfg)
+
+
+@pytest.mark.parametrize("method", ["TREE", "FLAT"])
+@pytest.mark.parametrize("conditioning_length", [0, 20])
+def test_saved_trace_accepts_actual_compact_timing_without_method(method, conditioning_length, tmp_path, monkeypatch):
+    from test_inspection_handoff import _fixture
+    from stmem.inspection.handoff_helpers import summarize
+    from stmem.inspection.handoff_validation import physical
+
+    torch.set_num_threads(1)
+    cfg = fixture_cfg()
+    cfg["model"]["execute"] = 8
+    episode = synthetic_episode(length=3, conditioning_length=conditioning_length, points=32)
+    policy = MemoryPolicy(cfg).eval()
+    online = TrainingSceneCompactPolicy(policy, cfg, method, 128, selection_family=method.lower())
+    online.reset(ResetResult(episode.conditioning, episode.execution[0], episode.goal), 2701)
+    actions, timing = online.decide()  # Production timing has no method field.
+    assert "method" not in timing
+    path = tmp_path / "result.json"
+    data, source, _ = _fixture(path)
+    data.update(method=method, selection_family=method.lower(), budget=128, absolute_time_noise=True)
+    data["temporal_sampling"].update(action_stride=2, observation_stride=2, execute=8)
+    factor = cfg["model"]["visual_tokens"] // cfg["model"]["block_size"] + 1
+    data["leaves_per_history_frame"] = factor
+    data["conditioning_frames"] = timing["archive_fine_leaves"] // factor
+    data["handoff"]["history_leaf_counts"]["conditioning"] = timing["archive_fine_leaves"]
+    data["decisions"][0].update(chunk_raw=actions.tolist(), timing=timing,
+                                flow_seed=handoff.seed_for_primitive_time("PickXtimes", 0, 0))
+    for row in data["timeline"]:
+        row.update(command=physical(actions[0]).tolist(), policy_observation_ingested=row["step"] % 2 == 0,
+                   policy_current_source_index=(row["step"] // 2) * 2,
+                   policy_execution_observations=row["step"] // 2 + 1)
+    data["summary"] = summarize(data)
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr("imageio_ffmpeg.count_frames_and_secs", lambda _: (3, .15))
+    validate_trial(path, source, cfg)
+    timing["method"] = "FLAT" if method == "TREE" else "TREE"
     path.write_text(json.dumps(data))
     with pytest.raises(AssertionError):
         validate_trial(path, source, cfg)

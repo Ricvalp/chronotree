@@ -1,5 +1,32 @@
 # Implementation and verification status
 
+## Compact handoff validator repair — 13 November 2026
+
+The first real three-student inspection completed all 24 offline state cells,
+three reset viewers and six button rollouts. It then stopped while validating
+the first policy handoff: TREE/FLAT production timing records do not include
+`method`, although the diagnostic records it at trial level. The saved
+VideoUnmask S_PACKET rollout had completed successfully; this was an inspection
+validator exception, not a failed simulation or training error.
+
+The validator now accepts the production timing schema and checks reader-specific
+counters, exact token/count agreement, positive represented masses and total
+causal leaf coverage. It still rejects a conflicting method if one is present.
+The saved student trace (104 policy commands, 171 video frames) and expert
+control (161 commands, 228 frames) pass the repaired validator without editing
+either result or rerunning either scene. The ordinary suite source lock remains
+strict; the recovery launcher permits only this explicitly verified validator
+change, with a separate receipt and unchanged original plan, raw results and
+seeds.
+
+Verification: 56 focused CPU tests passed, including production TREE/FLAT
+timing with empty and nonempty history, forged-reader rejection, source/plan/
+runtime tampering and result reuse. Ruff, whitespace and architecture checks
+passed; the actual device doctor passed FP32/BF16/FP16. Recovery was launched
+locally at 11:11 CET on 13 November: it reused the saved first policy handoff
+and is running the 35 remaining simulations. This is a progress record, not a
+claim that the suite has completed. No HPC job was submitted.
+
 ## Reusable local compact-student diagnostics — 12 November 2026
 
 `scripts/inspect_students.py` audits the transferred S_STD/S_STAGE/S_PACKET

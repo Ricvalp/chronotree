@@ -123,6 +123,34 @@ checksums are verified first.
 
 ## What is measured
 
+### Recover the 13 November handoff validation failure
+
+The original TREE/FLAT handoff validator incorrectly required a `method` field
+inside production timing records. The reader is recorded at trial level; the
+production selectors provide numeric routing statistics. The repaired validator
+checks those statistics and retains causal coverage and held-command checks.
+It does not alter policy inference or the recorded outcomes.
+
+For an existing inspection pinned to that original implementation, use the
+dedicated recovery entrypoint rather than normal `--resume`:
+
+```bash
+uv run python scripts/recover_student_handoffs.py \
+  --output runs/inspection/eval_students_20261113T094753Z_student_inspection \
+  --max-hours 1 --detach
+```
+
+This proves that reversing only the reviewed validator change recovers the
+original diagnostic source hash, rechecks the original plan/checkpoints/assets/
+runtime, and records `handoff_validator_repair.json`. The original plan and raw
+results stay unchanged. Completed handoffs are validated and reused; only
+pending handoff simulations run. Any other code change or unfinished non-handoff
+stage is rejected. Repeat this recovery command after an interruption; use
+`--dry-run` for read-only preflight. New inspections use the repaired validator
+normally and do not need this entrypoint.
+
+### Local measurement protocol
+
 The default local state panel contains up to eight complete-H16 decisions from
 the existing **VideoUnmask episodes 0 and 1**, sampled across source-time
 quantiles before reading any policy losses. Both episodes remain represented.

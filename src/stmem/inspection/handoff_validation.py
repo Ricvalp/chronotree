@@ -137,9 +137,28 @@ def validate_trial(path, source, cfg, *, manifest_digest=None):
             assert np.array_equal(np.asarray(row["command"], np.float32), physical(chunk[offset]))
             assert decision["timing"]["decision_index"] == decision_step // replan
             if data.get("method") in ("TREE", "FLAT"):
-                assert decision["timing"]["method"] == data["method"]
-                assert decision["timing"]["history_tokens"] <= data["budget"]
-                assert sum(decision["timing"]["represented_leaf_counts"]) == decision["timing"]["archive_fine_leaves"]
+                timing = decision["timing"]
+                # Production compact selectors report numeric reader stats,
+                # while method/selection_family are recorded at trial level.
+                if "method" in timing:
+                    assert timing["method"] == data["method"]
+                if "selection_family" in data:
+                    assert data["selection_family"] == data["method"].lower()
+                counts = timing["represented_leaf_counts"]
+                tokens, leaves = timing["history_tokens"], timing["archive_fine_leaves"]
+                assert tokens == len(counts) == timing["active_tokens"] == timing["records_fetched"]
+                assert tokens == min(data["budget"], leaves)
+                assert all(type(count) is int and count > 0 for count in counts)
+                assert sum(counts) == leaves
+                if data["method"] == "TREE":
+                    assert timing["leaves_scored"] == 0
+                    assert timing["roots"] + timing["splits"] == tokens
+                else:
+                    assert timing["nodes_scored"] == 0
+                    assert timing["selected_leaves"] == sum(count == 1 for count in counts)
+                    assert timing["residuals"] == sum(count > 1 for count in counts)
+                    assert timing["selected_leaves"] + timing["residuals"] == tokens
+                    assert timing["leaves_scored"] == (leaves if leaves > data["budget"] else 0)
             if data.get("absolute_time_noise", False):
                 from stmem.inspection.handoff import seed_for_primitive_time
                 # CPU and CUDA generators have distinct state formats; saved
