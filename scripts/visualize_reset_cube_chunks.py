@@ -25,6 +25,7 @@ from stmem.data.center_sampling import center_counts, center_sampler_settings
 from stmem.data.pointcloud import point_sampler_settings
 from stmem.evaluation.robomme_adapter import RoboMMEAdapter, numpy_value, physical_action
 from stmem.evaluation.runner import OnlinePolicy, episode_timeout
+from stmem.evaluation.execution import evaluation_execution_config
 from stmem.training.checkpoints import file_sha256
 from stmem.training.runtime import environment_manifest, load_policy
 from stmem.visualization.kinematics import panda_observation_errors, panda_tcp_pose
@@ -114,6 +115,31 @@ def observation_signature(frame):
     }
 
 
+def online_policy_for_reset(policy, state, args):
+    """Build an explicit reader without mutating saved training configuration.
+
+    CURRENT agrees with other readers only for this asserted empty-history
+    PickXtimes reset. This is a grounding probe, not a historical-routing test.
+    An execution override controls the displayed prefix; no target is executed.
+    """
+    cfg = deepcopy(state["config"])
+    if args.visual_checkpoint:
+        cfg["model"].setdefault("visual_features", {})["checkpoint"] = str(args.visual_checkpoint.resolve())
+    cfg, execution_override = evaluation_execution_config(
+        state["config"], cfg, execute_actions=getattr(args, "execute_actions", None), split=args.split,
+    )
+    method = getattr(args, "method", "FULL")
+    if method not in ("FULL", "CURRENT", "TREE", "FLAT", "UNIFORM"):
+        raise ValueError("Unknown reset diagnostic reader")
+    cfg["stage"] = state["stage"]
+    cfg["evaluation"]["split"] = args.split
+    online = OnlinePolicy(
+        policy, cfg, method, cfg["model"]["budget"],
+        selection_family=method.lower() if method in ("TREE", "FLAT") else None,
+    )
+    return online, cfg, execution_override
+
+
 def frame_capture(adapter, reset, name, label, shift, directory):
     frame = reset.current
     base = adapter.env.unwrapped
@@ -194,11 +220,7 @@ def generate(args):
             raise ValueError(f"Duplicate model ID: {identifier}")
         path = Path(raw_path).resolve()
         policy, state = load_policy(path, args.device)
-        cfg = state["config"]
-        if args.visual_checkpoint:
-            cfg["model"].setdefault("visual_features", {})["checkpoint"] = str(args.visual_checkpoint.resolve())
-        online = OnlinePolicy(policy, cfg, "FULL", cfg["model"]["budget"])
-        assert policy.config == cfg
+        online, cfg, execution_override = online_policy_for_reset(policy, state, args)
         if reference_cfg is None:
             reference_cfg = deepcopy(cfg)
         else:
@@ -212,6 +234,8 @@ def generate(args):
                        "checkpoint_sha256": file_sha256(path),
                        "condition_on_previous_joint_commands": cfg["model"].get(
                            "condition_on_previous_joint_commands", True),
+                       "checkpoint_stage": state["stage"],
+                       "reader": online.method, "execution_override": execution_override,
                        "precision": online.precision})
         models[-1].update(
             proprioception_mode=cfg["model"].get("proprioception_mode", "all"),
@@ -227,7 +251,10 @@ def generate(args):
     payload = {
         "schema_version": 1, "kind": "initial_cube_relocation_diagnostic_not_benchmark_score",
         "task": TASK, "split": args.split, "episode_idx": args.episode, "decision_step": 0,
+        "method": getattr(args, "method", "FULL"),
         "horizon": cfg["model"]["horizon"], "execute_steps": cfg["model"]["execute"],
+        "action_stride": cfg["model"].get("action_stride", 1),
+        "observation_stride": cfg["data"].get("observation_stride", 1),
         "flow_steps": cfg["model"]["flow_steps"], "noise_seeds": args.seeds,
         "precision": {"encoder": "fp32", "context_decoder": models[0]["precision"]},
         "models": models, "scenes": [], "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -236,6 +263,7 @@ def generate(args):
         "notes": [
             "First policy decision after official reset (which includes its automatic initialization step).",
             "PickXtimes has no conditioning video; execution history is empty and previous commands unavailable.",
+            "Reader choice at this empty-history reset does not test historical selection or router utility.",
             "Only cube translation changes. Both camera RGB-D images and production point sampling are regenerated.",
             "Cube poses label diagnostics and place the cube; no privileged object state enters the policy.",
             "Each noise seed starts at its first draw for every scene and checkpoint. No predicted action is executed.",
@@ -356,6 +384,10 @@ def main():
     parser.add_argument("--checkpoint", action="append", help="Repeat: model_id=/path/to/checkpoint.pt")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--method", choices=("FULL", "CURRENT", "TREE", "FLAT", "UNIFORM"), default="FULL",
+                        help="Explicit reader; every reset probe asserts an empty historical archive")
+    parser.add_argument("--execute-actions", type=int,
+                        help="Validation-only displayed prefix length; no prediction is executed")
     parser.add_argument("--visual-checkpoint", type=Path, help="Local CLIP RN50 path when inspecting checkpoints copied from another machine")
     parser.add_argument("--split", choices=("train", "val"), default="val")
     parser.add_argument("--episode", type=int, default=0)

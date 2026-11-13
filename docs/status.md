@@ -1,5 +1,34 @@
 # Implementation and verification status
 
+## Reusable local compact-student diagnostics — 12 November 2026
+
+`scripts/inspect_students.py` audits the transferred S_STD/S_STAGE/S_PACKET
+bundle and measures expert-FM refinement utility with their actual compact
+TREE/FLAT contexts. It encodes the identical frozen evidence once locally;
+teacher-agreement measurements require the exact parent teacher and remain
+explicitly absent without it. Eight discovery and eight independent
+confirmation draws, signed gains, ties, capability controls, history erasures,
+generated-action HTML viewers and reset cube-position viewers are available.
+Optional button rollouts and expert-prefix handoffs preserve actual observations
+and save videos. Sealed, bounded execution can resume without repeating
+published outcomes. See the [workflow](student_inspection_workflow.md).
+
+This is a two-episode exploratory screen, not the sealed HPC utility study or a
+benchmark success estimate. Different student update counts remain explicit.
+The scripts do not train routers, change the primary 100k endpoints, or select
+new benchmark seeds. The incoming student files were still incomplete during
+implementation; no results for those students are claimed here.
+
+Verification: **154 focused CPU tests passed**, as did Ruff and the architecture
+snapshot/XML check. The actual RTX 5000 Ada doctor passed FP32/BF16/FP16.
+Bounded real-data smoke checks used the existing old 90k student: expert-FM
+measurement with/without its matching teacher, TREE/FLAT generated actions,
+resume reuse, a pending causal block, one reset view, and a one-command
+expert-prefix simulator trace. Generated evidence is ignored under
+`runs/inspection/student_workflow_*_20261112*`,
+`student_reset_smoke_20261112/` and `student_handoff_smoke_20261112/`.
+No long evaluation, training, data download or Slurm submission was launched.
+
 ## Empty-history sampler audit repair — 11 November 2026
 
 HPC audit job 72962 failed before producing `sampler_audit/summary.json`.

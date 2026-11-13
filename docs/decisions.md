@@ -1915,3 +1915,56 @@ cache construction nor hierarchy preprocessing must be repeated. The teacher
 diagram records the runtime queue and index bounds separately from model
 architecture. The RTX 5000 Ada doctor passed FP32/BF16/FP16 computation. No HPC
 job was stopped or submitted during implementation.
+
+## Compact-student inspection and label-usefulness screen — 2026-11-12
+
+The user is transferring the latest three utility students and requested a
+reusable local workflow focused on meaningful router supervision. Use a new
+`scripts/inspect_students.py` coordinator, rather than sending compact weights
+through the teacher-only FULL inspection. Audit transfer hashes, tensor
+integrity, stage, optimizer/sample boundaries and canonical S_STD/S_STAGE/
+S_PACKET labels. Sharing freshly encoded evidence requires equal frozen
+encoder/text/normalizer tensors and the same teacher dependency. An optional
+teacher must be that exact dependency; the locally available older teacher
+cannot stand in for the accepted 140k parent of the new students.
+
+Primary local labels are raw masked expert-FM gains. Preserve the existing
+gain-blind TREE/FLAT candidate constructors, exact leaf coverage, residuals,
+causal pending blocks and fixed token costs. Use eight discovery and eight
+confirmation noise/time draws, shared across readers/candidates/students.
+Discovery selects; confirmation measures. Preserve signed gains, ties,
+reversals, within-state noise variation and numerical floors. Summaries average
+within states and episodes; two local episodes supply no population confidence
+interval. Capability inputs and history erasures are separate controls, with
+their out-of-distribution and coverage changes explicitly identified.
+
+Generated-action witnesses use fresh shared Gaussian seeds and eight integration
+steps. Common early/late cases are selected before losses; within-state best/
+worst/random alternatives use discovery measurements only. Self-contained HTML
+shows actual current points, historical support metadata, expert/generated TCP
+paths and executed-prefix versus tail differences. Forward kinematics does not
+establish contact or success. Default utility and reset-viewer stages are
+bounded; optional button and expert-prefix stages use actual compact readers,
+save videos and keep simulator/infrastructure errors distinct from outcomes.
+Training-scene compact selection is confined to an explicit inspection-only
+factory; production validation guards and legacy FULL defaults are unchanged.
+
+Checkpoint, source, assets, protocol and completed artifacts are sealed for
+resumption. Interrupted unpublished simulator attempts are preserved separately;
+published failures/errors are not silently rerun. A time bound stops child
+process groups and leaves completed evidence available for partial reporting.
+The workflow is exploratory and does not replace the full held-out HPC utility
+study, train a router, alter student endpoints or claim recipe superiority
+from unequal update counts.
+
+Verification: 154 focused CPU checks pass, including existing refinement,
+handoff and inspection regressions. Ruff and architecture snapshot/XML checks
+pass. Bounded GPU checks with the old 90k compact weights exercised utility
+with and without the exact old teacher, both generated-action readers, and
+resumption with unchanged saved arrays/measurements. A separate real state
+contained 33 conditioning frames and 49 execution-history frames (one pending
+execution-block frame). Maximum observed serial/batched loss discrepancy was
+1.01e-7; unchanged-context predictions were identical. A real reset viewer and
+one-command compact handoff also passed. These are implementation diagnostics,
+not findings about the incoming checkpoints. Device doctor passed FP32/BF16/
+FP16; no new long evaluation, training, download or HPC submission occurred.

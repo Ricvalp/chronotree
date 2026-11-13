@@ -24,7 +24,7 @@ from stmem.data.pointcloud import point_sampler_settings, proprioception
 from stmem.evaluation.robomme_adapter import RoboMMEAdapter, numpy_value, OBSERVATION_FIELDS
 from stmem.evaluation.runner import OnlinePolicy, episode_timeout
 from stmem.models.metadata_adapter import metadata
-from stmem.models.policy import Evidence
+from stmem.models.policy import Evidence, choose_records
 from stmem.training.checkpoints import atomic_json, file_sha256
 from stmem.training.runtime import load_policy, validate_policy_config
 from stmem.vision.frozen import FrozenCLIPFeatures, resolve_visual_features
@@ -74,7 +74,8 @@ def runner_sha256():
     return digest({p.name: file_sha256(p) for p in (Path(__file__), Path(base.__file__))})
 
 
-def valid_result(existing, identity, *, task, episode, prefix, control, cap):
+def valid_result(existing, identity, *, task, episode, prefix, control, cap,
+                 method="FULL", budget=None, absolute_time_noise=False):
     expected = (task, episode, prefix, control, cap)
     recorded = tuple(
         existing[key]
@@ -84,6 +85,10 @@ def valid_result(existing, identity, *, task, episode, prefix, control, cap):
         raise ValueError(
             "Handoff output belongs to a different manifest/protocol; use another output directory"
         )
+    if (existing.get("method", "FULL") != method
+            or (budget is not None and existing.get("budget") != budget)
+            or existing.get("absolute_time_noise", False) != absolute_time_noise):
+        raise ValueError("Handoff reader or noise protocol changed")
     if existing["checkpoint_identity"] != identity or existing["runner_sha256"] != runner_sha256():
         raise ValueError("Handoff checkpoint/runner changed; use another output directory")
     return existing["status"] not in ("diagnostic_error", "expert_record_exhausted_without_terminal")
@@ -116,11 +121,16 @@ def transport_parity(online, implementations):
         device=policy.device,
         generator=torch.Generator(device=policy.device).manual_seed(NOISE_SEED),
     )
+    # Select once using a copied RNG state; parity must test the same compact
+    # records that the immediately following real decision will receive.
+    selection_rng = deepcopy(online.selection_rng)
+    selected = choose_records(evidence, online.method, online.budget,
+                              scorer=online.scorer, rng=selection_rng)
     rows = []
     for forward in implementations:
         policy.adapter.forward = forward
-        with torch.autocast("cuda", dtype=online.autocast_dtype, enabled=online.precision != "fp32"):
-            context, bias = policy.context(evidence, archive.leaves)
+        with torch.autocast(policy.device.type, dtype=online.autocast_dtype, enabled=online.precision != "fp32"):
+            context, bias = policy.context(evidence, selected.records)
             prediction = policy.decoder.integrate(
                 context, bias, steps=online.cfg["model"]["flow_steps"], noise=noise
             )
@@ -130,10 +140,23 @@ def transport_parity(online, implementations):
     return {
         "source_index": memory.current.source_index,
         "history_leaves": len(archive.leaves),
+        "method": online.method, "budget": online.budget,
+        "selected_records": len(selected.records),
         "context_bit_identical": True,
         "bias_bit_identical": True,
         "actions_bit_identical": True,
     }
+
+
+def seed_for_primitive_time(task, episode, step, bank="flow"):
+    """Shared model/reader-independent seeds for potentially shifted replan grids."""
+    value = ["student_handoff_absolute_time_v1", NOISE_SEED, task, int(episode), int(step), bank]
+    return int(hashlib.sha256(json.dumps(value).encode()).hexdigest()[:16], 16) & ((1 << 63) - 1)
+
+
+def seed_online_for_step(online, task, episode, step):
+    online.generator.manual_seed(seed_for_primitive_time(task, episode, step))
+    online.selection_rng.seed(seed_for_primitive_time(task, episode, step, "selection"))
 
 
 def raw_frame(adapter, fallback, step):
@@ -160,8 +183,16 @@ def run(
     variant,
     cap=320,
     control=False,
+    method="FULL",
+    selection_family=None,
+    budget=None,
+    directory=None,
+    absolute_time_noise=False,
+    training_scene_diagnostic=False,
+    online_factory=OnlinePolicy,
+    execution_override=None,
 ):
-    directory = (
+    directory = Path(directory) if directory is not None else (
         ROOT
         / task
         / f"episode_{episode}"
@@ -173,7 +204,8 @@ def run(
     if result_path.exists():
         existing = json.loads(result_path.read_text())
         if valid_result(
-            existing, identity, task=task, episode=episode, prefix=prefix, control=control, cap=cap
+            existing, identity, task=task, episode=episode, prefix=prefix, control=control, cap=cap,
+            method=method, budget=budget, absolute_time_noise=absolute_time_noise
         ):
             from stmem.inspection.handoff_validation import validate_trial
 
@@ -184,7 +216,11 @@ def run(
     astride, ostride = cfg["model"].get("action_stride", 1), cfg["data"].get("observation_stride", 1)
     execute = cfg["model"]["execute"]
     replan = execute * astride
-    assert replan == 4 and prefix % replan == 0
+    if absolute_time_noise:
+        assert replan > 0 and prefix % ostride == 0
+    else:
+        assert replan == 4 and prefix % replan == 0
+    budget = cfg["model"]["budget"] if budget is None else budget
     history = cfg["model"].get("history_mode", "full") != "none"
     result = {
         "kind": "real_simulator_training_scene_expert_prefix_handoff_not_benchmark_score",
@@ -192,6 +228,10 @@ def run(
         "split": "train",
         "episode_idx": episode,
         "variant": variant,
+        "method": method, "selection_family": selection_family, "budget": budget,
+        "absolute_time_noise": absolute_time_noise,
+        "training_scene_diagnostic": training_scene_diagnostic,
+        **({"execution_override": execution_override} if execution_override is not None else {}),
         "checkpoint_step": state["step"],
         "checkpoint_identity": identity,
         "training_lr": cfg["training"]["lr"],
@@ -199,8 +239,10 @@ def run(
         "expert_control": control,
         "cap_total_commands": cap,
         "noise_seed": NOISE_SEED,
-        "noise_protocol": "native-horizon sequential draws, skip prefix/replan draws, matched by absolute primitive time within each model",
-        "cross_model_noise_note": "H16 and H32 consume different-length draws; their sequential noise differs after reset. Same-horizon models share draws.",
+        "noise_protocol": ("independent flow and selection seeds keyed by task/episode/absolute primitive time, paired across students/readers"
+                           if absolute_time_noise else "native-horizon sequential draws, skip prefix/replan draws, matched by absolute primitive time within each model"),
+        "cross_model_noise_note": ("Same-horizon students share Gaussian draws at equal absolute primitive times; shifted replan grids share only common times."
+                                   if absolute_time_noise else "H16 and H32 consume different-length draws; their sequential noise differs after reset. Same-horizon models share draws."),
         "expert_source": source["kind"],
         "expert_source_path": source["path"],
         "expert_source_sha256": source["sha256"],
@@ -273,10 +315,11 @@ def run(
                     errors.append(np.max(np.abs(proprioception(allowed)[:7].numpy() - q[:7])))
                 assert max(errors, default=0.0) < 1e-4
                 result["conditioning_max_joint_difference_rad"] = float(max(errors, default=0.0))
-            online = OnlinePolicy(policy, cfg, "FULL", cfg["model"]["budget"])
+            online = online_factory(policy, cfg, method, budget, selection_family=selection_family)
             online.reset(reset, NOISE_SEED)
-            for _ in range(prefix // replan):
-                torch.randn((cfg["model"]["horizon"], 8), device=policy.device, generator=online.generator)
+            if not absolute_time_noise:
+                for _ in range(prefix // replan):
+                    torch.randn((cfg["model"]["horizon"], 8), device=policy.device, generator=online.generator)
             online.decision_index = prefix // replan
             result.update(
                 reset_joint_max_difference_rad=reset_error,
@@ -306,6 +349,8 @@ def run(
                         break
                     commands = [torch.as_tensor(source["commands"][step_index])]
                 else:
+                    if absolute_time_noise:
+                        seed_online_for_step(online, task, episode, step_index)
                     if step_index == prefix:
                         result["handoff"] = {
                             "step": step_index,
@@ -331,6 +376,9 @@ def run(
                             "chunk_raw": chunk.cpu().numpy(),
                             "timing": timing,
                             "rng_state_before_sha256": rng_hash,
+                            **({"flow_seed": seed_for_primitive_time(task, episode, step_index),
+                                "selection_seed": seed_for_primitive_time(task, episode, step_index, "selection")}
+                               if absolute_time_noise else {}),
                         }
                     )
                     commands = chunk[:execute].repeat_interleave(astride, dim=0)

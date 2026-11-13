@@ -56,7 +56,11 @@ def validate_trial(path, source, cfg, *, manifest_digest=None):
         stride["execute"],
     )
     replan = action_stride * execute
-    assert replan == 4 and stride["action_hold"] == "zero_order_hold"
+    assert stride["action_hold"] == "zero_order_hold"
+    if data.get("absolute_time_noise", False):
+        assert execute == cfg["model"]["execute"] and replan > 0 and prefix % observation_stride == 0
+    else:
+        assert replan == 4
     assert action_stride == cfg["model"].get("action_stride", 1)
     assert observation_stride == cfg["data"].get("observation_stride", 1)
     assert trace and [row["step"] for row in trace] == list(range(1, len(trace) + 1))
@@ -72,7 +76,7 @@ def validate_trial(path, source, cfg, *, manifest_digest=None):
     decisions = {row["step"]: row for row in data["decisions"]}
     assert len(decisions) == len(data["decisions"])
     assert list(decisions) == ([] if control else list(range(prefix, len(trace), replan)))
-    if not control:
+    if not control and decisions:
         handoff = data["handoff"]
         assert handoff["step"] == handoff["current_source_index"] == prefix
         assert handoff["execution_observations"] == prefix // observation_stride + 1
@@ -132,6 +136,15 @@ def validate_trial(path, source, cfg, *, manifest_digest=None):
             assert chunk.shape == (data["checkpoint_identity"]["horizon"], 8) and np.isfinite(chunk).all()
             assert np.array_equal(np.asarray(row["command"], np.float32), physical(chunk[offset]))
             assert decision["timing"]["decision_index"] == decision_step // replan
+            if data.get("method") in ("TREE", "FLAT"):
+                assert decision["timing"]["method"] == data["method"]
+                assert decision["timing"]["history_tokens"] <= data["budget"]
+                assert sum(decision["timing"]["represented_leaf_counts"]) == decision["timing"]["archive_fine_leaves"]
+            if data.get("absolute_time_noise", False):
+                from stmem.inspection.handoff import seed_for_primitive_time
+                # CPU and CUDA generators have distinct state formats; saved
+                # seeds are validated separately by the compact wrapper.
+                assert decision.get("flow_seed") == seed_for_primitive_time(data["task"], data["episode_idx"], decision_step)
             assert decision["timing"]["archive_fine_leaves"] == data["leaves_per_history_frame"] * (
                 data["conditioning_frames"] + decision_step // observation_stride
             )
