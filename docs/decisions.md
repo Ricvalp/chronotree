@@ -1968,3 +1968,33 @@ execution-block frame). Maximum observed serial/batched loss discrepancy was
 one-command compact handoff also passed. These are implementation diagnostics,
 not findings about the incoming checkpoints. Device doctor passed FP32/BF16/
 FP16; no new long evaluation, training, download or HPC submission occurred.
+
+## Frozen utility measurements on B200s — 2026-11-14
+
+Run the first common development comparison at the declared 95k snapshot of
+S_STD, S_STAGE and S_PACKET. S_PACKET stopped near 96k; using all three 95k
+snapshots preserves equal training exposure without redefining the 100k primary
+endpoint or consuming reserved confirmation. The existing panel and all cached
+representations remain unchanged. Capability contexts are already included by
+the measurement worker. Generated-action diagnostics follow the frozen results.
+
+The HPC launcher now accepts typed GPU requests and can reconstruct the study's
+exact committed runtime using `--study-source`. The source archive is isolated
+under ignored generated files, verified against the original manifest's complete
+Python source hash and a sealed file inventory. This is not a source-check
+bypass or a resealed panel: student bindings and original dependencies remain
+intact. A dirty source revision that cannot be reconstructed fails explicitly.
+The current launcher pins its identity separately from the measurement runtime.
+There is no branch/worktree change, encoder edit or dataset regeneration.
+
+Use four independent one-B200 tasks per student on `aiq`, eight CPUs and 64 GB
+per task, with a four-hour bound. Worker limits follow the requested allocation
+with twelve minutes of headroom, and partial rows remain resumable. Queue checks
+for resumption use the current user's complete queue, including active arrays,
+instead of treating purged completed job IDs as scheduler failures.
+
+Verification used CPU-only synthetic provenance/launch fixtures and frozen-study
+regressions: 85 tests passed, Ruff and unchanged architecture checks passed.
+No workstation GPU was used, and no cluster job was submitted. Actual full-panel
+B200 throughput remains unmeasured. Commands, outputs and progress checks are in
+`docs/refinement_utility_b200.md`.

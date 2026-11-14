@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -16,7 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from hpc.plan import read_site, save_json, sha256, source_hash  # noqa: E402
+from hpc.plan import active_user_job_ids, read_site, save_json, sha256, source_hash  # noqa: E402
 from hpc.profile_memory import absolute_path, profile_name, walltime  # noqa: E402
 from hpc.train_compact import inspect_cache, inspect_hierarchy  # noqa: E402
 from stmem.config import digest  # noqa: E402
@@ -25,6 +27,49 @@ from stmem.inspection.refinement_data import (  # noqa: E402
     COMPACT_SHA, ENCODED_ID, HIERARCHY_ID, TEACHER_SHA, TEACHER_REFERENCE,
     primary_students, reference_name, validate_protocol_teacher, verify_manifest,
 )
+
+
+def runtime_manifest(python, code_root, manifest_path, *, verify_source=True):
+    """Validate with the pinned runtime, never reinterpret an older study here."""
+    command = (
+        "import json,sys; from stmem.inspection.refinement_data import verify_manifest; "
+        "print(json.dumps(verify_manifest(sys.argv[1], verify_source=sys.argv[2]=='1')))"
+    )
+    result = subprocess.run(
+        [python, "-c", command, str(manifest_path), "1" if verify_source else "0"],
+        cwd=code_root, env={**os.environ, "PYTHONPATH": str(code_root / "src"), "CUDA_VISIBLE_DEVICES": "",
+                            "GIT_CEILING_DIRECTORIES": str(code_root.parent)},
+        check=True, capture_output=True, text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def validate_runtime_checkpoint(python, code_root, manifest_path, student, checkpoint, partition):
+    """Reject missing/mismatched endpoints on the login CPU before allocating GPUs."""
+    command = (
+        "import sys; from pathlib import Path; "
+        "from stmem.inspection.refinement_data import verify_manifest; "
+        "from stmem.inspection.refinement_utility import validate_student_endpoint; "
+        "from stmem.training.runtime import load_checkpoint; "
+        "p=Path(sys.argv[1]); validate_student_endpoint(verify_manifest(p),p,sys.argv[2],"
+        "load_checkpoint(sys.argv[3]),sys.argv[4])"
+    )
+    subprocess.run(
+        [python, "-c", command, str(manifest_path), student, str(checkpoint), partition],
+        cwd=code_root, env={**os.environ, "PYTHONPATH": str(code_root / "src"), "CUDA_VISIBLE_DEVICES": "",
+                            "GIT_CEILING_DIRECTORIES": str(code_root.parent)},
+        check=True,
+    )
+
+
+def measurement_hours(value):
+    """Leave 12 minutes for startup/shutdown; workers stop between complete states."""
+    days, clock = value.split("-", 1) if "-" in value else ("0", value)
+    hours, minutes, seconds = map(int, clock.split(":"))
+    remaining = 24 * int(days) + hours + minutes / 60 + seconds / 3600 - .2
+    if remaining <= 0:
+        raise ValueError("Utility measurement walltime must exceed 12 minutes")
+    return format(remaining, ".8g")
 
 
 def main(argv=None):
@@ -43,8 +88,14 @@ def main(argv=None):
     parser.add_argument("--teacher-reference", action="store_true",
                         help="New adopted-teacher study: S_INIT smoke, three fresh primary students; no old S0")
     parser.add_argument("--manifest", type=Path)
+    runtime = parser.add_mutually_exclusive_group()
+    runtime.add_argument("--study-source", action="store_true",
+                         help="Restore and verify the manifest's exact committed code in an ignored snapshot")
+    runtime.add_argument("--code-root", type=Path,
+                         help="Existing runtime checkout matching the unchanged study manifest")
     parser.add_argument("--protocol", type=Path, default=REPO / "configs/inspection/refinement_utility_pilot.yaml")
     parser.add_argument("--partition", default="gpuq")
+    parser.add_argument("--gpu-type", default="", help="GPU GRES type, e.g. b200; empty retains gpu:1")
     parser.add_argument("--panel-partition", choices=("train", "validation", "both"), default="train")
     parser.add_argument("--shards", type=int, default=4)
     parser.add_argument("--walltime", type=walltime, default="04:00:00")
@@ -52,6 +103,12 @@ def main(argv=None):
     parser.add_argument("--extension-base", type=Path)
     parser.add_argument("--additional-draws", type=int)
     args = parser.parse_args(argv)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.partition):
+        parser.error("Invalid --partition")
+    if args.gpu_type and not re.fullmatch(r"[A-Za-z0-9_.-]+", args.gpu_type):
+        parser.error("Invalid --gpu-type")
+    if args.stage == "prepare" and (args.study_source or args.code_root):
+        parser.error("Runtime source options reuse an existing study; they cannot prepare a new panel")
     if args.teacher_reference and args.stage != "prepare":
         parser.error("--teacher-reference is recorded by --stage prepare; later stages read the manifest")
     if args.teacher_reference and args.compact is not None:
@@ -68,12 +125,23 @@ def main(argv=None):
     generated = repo / "hpc/generated" / args.name
     output = repo / "runs" / args.name
     manifest_path = absolute_path(args.manifest or output / "manifest.json", repo)
+    code_root = absolute_path(args.code_root, repo) if args.code_root else repo
+    if args.study_source:
+        from hpc.utility_source import create_study_source
+
+        code_root = create_study_source(repo, manifest_path)
+    pinned_runtime = args.study_source or args.code_root is not None
     generated.mkdir(parents=True, exist_ok=True)
     with (generated / ".launcher.lock").open("a+") as launcher_lock:
         fcntl.flock(launcher_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         logs = generated / "logs"
         logs.mkdir(exist_ok=True)
         python = site.get("STMEM_PYTHON") or str(repo / ".venv/bin/python")
+        def read_manifest(*, verify_source=True):
+            if pinned_runtime:
+                return runtime_manifest(python, code_root, manifest_path, verify_source=verify_source)
+            return (verify_manifest(manifest_path) if verify_source
+                    else verify_manifest(manifest_path, verify_source=False))
         base = [python, "-u", "-m", "stmem.inspection.refinement_utility", "--manifest", str(manifest_path)]
         count = args.shards if args.stage in ("measure", "extension") else 1
         commands, inputs = [], {}
@@ -116,7 +184,7 @@ def main(argv=None):
                 inputs[str(cache_plan["selection"])] = cache_plan["selection_sha256"]
             args.student = args.student or ("S_INIT" if args.teacher_reference else "S0")
         elif args.stage == "audit":
-            manifest = verify_manifest(manifest_path)
+            manifest = read_manifest()
             args.student = args.student or reference_name(manifest)
             config = repo / "hpc/generated" / f"{args.student_study_name}_s_std" / "compact.yaml"
             if not config.is_file():
@@ -125,11 +193,11 @@ def main(argv=None):
             commands = [[python, "-u", "-m", "stmem.training.utility_sampler_audit", "--config", str(config),
                          "--count", "4096", "--output", str(output / "sampler_audit")]]
         elif args.stage == "report":
-            manifest = verify_manifest(manifest_path, verify_source=False)
+            manifest = read_manifest(verify_source=False)
             args.student = args.student or reference_name(manifest)
             commands = [base + ["--mode", "report"]]
         else:
-            manifest = verify_manifest(manifest_path)
+            manifest = read_manifest()
             args.student = args.student or reference_name(manifest)
             if args.student == "S_INIT" and (reference_name(manifest) != "S_INIT"
                                              or args.stage != "smoke" or args.panel_partition != "train"):
@@ -140,12 +208,15 @@ def main(argv=None):
             checkpoint = absolute_path(args.checkpoint or manifest["dependencies"]["compact"], repo)
             if args.student != reference_name(manifest) and args.checkpoint is None:
                 parser.error("A new student measurement requires its fixed endpoint --checkpoint")
+            if pinned_runtime:
+                validate_runtime_checkpoint(python, code_root, manifest_path, args.student,
+                                            checkpoint, args.panel_partition)
             inputs[str(checkpoint)] = sha256(checkpoint)
             mode = {"smoke": "smoke", "measure": "main", "extension": "extension"}[args.stage]
             commands = [base + ["--mode", mode,
                                "--student", args.student, "--checkpoint", str(checkpoint),
                                "--partition", args.panel_partition, "--workers", str(count),
-                               "--max-hours", "3.8"]]
+                               "--max-hours", measurement_hours(args.walltime)]]
             if args.stage == "extension":
                 extension_base = absolute_path(args.extension_base, repo)
                 commands[0] += ["--extension-base", str(extension_base),
@@ -167,7 +238,7 @@ def main(argv=None):
         study_protocol = (yaml.safe_load(protocol.read_text()) if args.stage == "prepare"
                           else manifest.get("protocol", {}))
         student_steps = study_protocol.get("student_training", {}).get("steps", 30000)
-        plan = {"commands": commands, "inputs": inputs, "source_sha256": source_hash(repo),
+        plan = {"commands": commands, "inputs": inputs, "source_sha256": source_hash(code_root),
                 "repo": str(repo), "manifest": str(manifest_path), "stage": args.stage,
                 "student": args.student, "shards": count, "gpus_per_shard": 1, "cpus_per_shard": 8,
                 "mem": "64G", "walltime": args.walltime, "partition": args.partition,
@@ -180,12 +251,26 @@ def main(argv=None):
                     "S_PACKET": ["prepare", "sampler_audit", f"training_{student_steps}"],
                     "report": ["all_available_frozen_measurements"],
                     "conditional_router_fit": ["development_findings", "separate_training_pool_labels"]}}
+        if args.gpu_type:
+            plan["gpu_type"] = args.gpu_type
+            plan["gres"] = f"gpu:{args.gpu_type}:1"
+        if pinned_runtime:
+            plan["code_root"] = str(code_root)
+            plan["planner"] = str(Path(__file__).resolve())
+            plan["planner_sha256"] = sha256(Path(__file__))
+            plan["runtime_hpc"] = {str(code_root / relative): sha256(code_root / relative)
+                                   for relative in ("hpc/plan.py", "hpc/profile_memory.py")}
+            receipt = code_root / ".utility-source.json"
+            if receipt.exists():
+                plan["runtime_hpc"][str(receipt)] = sha256(receipt)
+            if args.study_source:
+                plan["source_snapshot_helper_sha256"] = sha256(REPO / "hpc/utility_source.py")
         if plan_path.exists() and json.loads(plan_path.read_text()) != plan:
             raise ValueError("Saved plan identity differs; choose a new name or restore its exact inputs")
         save_json(plan_path, plan)
         lines = ["#!/usr/bin/env bash", f"#SBATCH --job-name=stmem_utility_{suffix}",
                  "#SBATCH --nodes=1", "#SBATCH --ntasks=1", "#SBATCH --cpus-per-task=8", "#SBATCH --mem=64G",
-                 "#SBATCH --gres=gpu:1", f"#SBATCH --partition={shlex.quote(args.partition)}",
+                 f"#SBATCH --gres={plan.get('gres', 'gpu:1')}", f"#SBATCH --partition={shlex.quote(args.partition)}",
                  f"#SBATCH --time={args.walltime}", f"#SBATCH --output={shlex.quote(str(logs / (suffix + '_%A_%a.out')))}",
                  f"#SBATCH --error={shlex.quote(str(logs / (suffix + '_%A_%a.err')))}", "#SBATCH --signal=B:TERM@180"]
         if count > 1:
@@ -193,16 +278,19 @@ def main(argv=None):
         for key in ("ACCOUNT", "QOS", "CONSTRAINT"):
             if site.get("STMEM_" + key):
                 lines.append(f"#SBATCH --{key.lower()}={shlex.quote(site['STMEM_' + key])}")
-        lines += ["set -euo pipefail", f"cd {shlex.quote(str(repo))}",
-                  "export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1",
-                  "export WANDB_PROJECT=chronotree-routers", f"export PYTHONPATH={shlex.quote(str(repo / 'src'))}",
-                  "export STMEM_SITE_FILE=/dev/null",
-                  "unset STMEM_DATA_ROOT STMEM_CACHE_ROOT STMEM_RUN_ROOT RANK LOCAL_RANK WORLD_SIZE"]
+        lines += ["set -euo pipefail", f"cd {shlex.quote(str(code_root))}"]
         if site.get("STMEM_ACTIVATE"):
             lines.append(f"source {shlex.quote(site['STMEM_ACTIVATE'])}")
+        lines += ["export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1",
+                  "export WANDB_PROJECT=chronotree-routers", f"export PYTHONPATH={shlex.quote(str(code_root / 'src'))}",
+                  "export STMEM_SITE_FILE=/dev/null",
+                  "unset STMEM_DATA_ROOT STMEM_CACHE_ROOT STMEM_RUN_ROOT RANK LOCAL_RANK WORLD_SIZE"]
+        if pinned_runtime:
+            lines.append("export GIT_CEILING_DIRECTORIES=" + shlex.quote(str(code_root.parent)))
         guard = ("import json; from pathlib import Path; from hpc.plan import source_hash,sha256; "
                  f"p=json.load(open({str(plan_path)!r})); "
-                 "assert source_hash(Path(p['repo']))==p['source_sha256'],'Source changed'; "
+                 "assert source_hash(Path(p.get('code_root',p['repo'])))==p['source_sha256'],'Source changed'; "
+                 "assert all(sha256(Path(k))==v for k,v in p.get('runtime_hpc',{}).items()),'Runtime launcher changed'; "
                  "assert all(sha256(Path(k))==v for k,v in p['inputs'].items()),'Inputs changed'")
         lines.append(shlex.join([python, "-c", guard]))
         for i, command in enumerate(commands):
@@ -220,9 +308,8 @@ def main(argv=None):
                 raise ValueError("Plan already submitted; --resume is required after its allocations are inactive")
             if receipt.exists():
                 previous = json.loads(receipt.read_text())["job_id"]
-                active = subprocess.run(["squeue", "-h", "-j", previous, "-o", "%A"], capture_output=True, text=True)
-                if active.returncode or active.stdout.strip():
-                    raise ValueError("Cannot establish that the previous array is inactive")
+                if previous in active_user_job_ids():
+                    raise ValueError("Previous utility array is still active")
             submitted = subprocess.run(["sbatch", "--parsable", str(script)], check=True, capture_output=True, text=True)
             save_json(receipt, {"job_id": submitted.stdout.strip().split(";")[0], "plan_sha256": sha256(plan_path)})
         print(json.dumps(plan, indent=2))

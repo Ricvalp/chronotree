@@ -779,3 +779,20 @@ The actual synced teacher's configuration was dry-run with checked shell syntax;
 no training or Slurm submission occurred. Doctor passes FP32/BF16/FP16 on the
 available RTX 5000 Ada. Ruff and diagram snapshot checks pass; regenerated diagram
 layout/content are unchanged, with only the training source hash updated.
+
+## B200 frozen utility launch support — 2026-11-14
+
+Prepared typed B200 launch support and an exact-source archive for the existing
+140k-teacher utility study. The original panel/cache/student identities remain
+sealed; source restoration does not modify the main Git checkout. Instructions
+in [refinement_utility_b200.md](refinement_utility_b200.md) use all three declared
+95k development checkpoints and four independent shards per student. Each shard
+measures utility plus its included capability cases on one B200; reserved
+confirmation and router fitting are not launched by this workflow.
+
+85 focused CPU tests, Ruff and architecture snapshot/XML checks passed. CUDA
+was hidden throughout local verification because the workstation GPU is busy.
+No GPU doctor or GPU computation was run, and no HPC submission was performed.
+The actual HPC snapshots, source reconstruction and full-panel runtime still
+need the user-run dry runs and submitted jobs; the launcher rejects unavailable
+or mismatched source/checkpoints rather than replacing them.
