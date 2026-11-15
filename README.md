@@ -8,6 +8,9 @@ implemented. Bounded active context does **not** imply bounded archive storage.
 The implementation brief is [PROMPT_CHRONOTREE.md](PROMPT_CHRONOTREE.md).
 Measured checks and outstanding experiments are in [docs/status.md](docs/status.md).
 
+To reuse our site-file and Slurm-planner approach in another repository, see the
+[HPC workflow handoff for Codex](docs/hpc_workflow_for_codex.md).
+
 The opt-in [frozen-vision / no-proprioception experiment](docs/frozen_vision_experiment.md)
 includes matched teacher configurations, separate feature preparation, HPC launch
 commands and closed-loop targeting diagnostics. Existing XYZRGB runs keep their

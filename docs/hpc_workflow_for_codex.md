@@ -13,6 +13,11 @@ Examples using `stmem`, `STMEM_`, teacher stages, and our directory names are
 Sections marked “For a new repository” are recommendations, not claims that every
 existing Chronotree launcher already implements them.
 
+For a quick read, start with [site files](#3-site-files), the
+[submission example](#6-the-general-planner-and-the-everyday-submission-workflow),
+[resume](#9-checkpoints-stopping-resuming-and-continuing), and
+[the implementation brief](#18-a-concise-brief-to-give-codex-in-the-other-repository).
+
 ## 1. The basic model
 
 There are four main layers:
@@ -121,6 +126,14 @@ Generated does not mean disposable while a job is queued or running. Jobs can
 read generated configs and plans at startup; receipts are also needed for
 duplicate detection and recovery. Preserve them with the experiment record.
 
+Directly running `sbatch hpc/jobs/teacher.sbatch` submits immediately using that
+template's literal resource defaults unless command-line options override them.
+Its `common.sh` helper loads `hpc/site.env` by default, or the file named by
+`STMEM_SITE_FILE`. That can override settings exported in the submitting shell.
+Direct submission also bypasses the planner's dependency graph and submission
+ledger. Use it deliberately for simple standalone jobs; prefer the Python
+launchers for tracked experiments.
+
 ## 3. Site files
 
 A site file is a small set of **literal assignments**, not an executable setup
@@ -194,6 +207,7 @@ substitutions. Avoid `~` too: the literal parser does not expand it. Quotes and
 comments are accepted. Keep activation commands in `STMEM_ACTIVATE`'s separate
 script. Never store `WANDB_API_KEY` in a site file; authenticate with the account's
 login mechanism or provide credentials through the runtime environment.
+On this project the interactive login command is `.venv/bin/wandb login`.
 
 ### Do I need to source it?
 
@@ -401,6 +415,9 @@ unimplemented `--lr` flags.
 `--only` selects matching job names or stage categories. It does not automatically
 rerun all their ancestors. Required upstream outputs must already exist or be
 provided by the selected dependency chain.
+The general planner builds/renders the larger graph before filtering submission,
+so extra generated files do not mean those jobs were submitted. This is another
+reason not to reuse an active plan directory for a different rendering.
 
 ### Running two experiments simultaneously
 
@@ -545,10 +562,15 @@ Use the same run root, scientific config, generated-plan identity, and compatibl
 data/model dependencies. For the earlier teacher example, after the job stops:
 
 ~~~bash
-test -s "runs/$STMEM_EXPERIMENT/seed0/teacher/last.pt"
-.venv/bin/python hpc/plan.py "${STMEM_LAUNCH_ARGS[@]}" --resume --dry-run
-# Inspect the emitted --resume checkpoint and remaining work before submitting.
-.venv/bin/python hpc/plan.py "${STMEM_LAUNCH_ARGS[@]}" --resume --submit
+test -s "runs/$STMEM_EXPERIMENT/seed0/teacher/last.pt" &&
+  .venv/bin/python hpc/plan.py "${STMEM_LAUNCH_ARGS[@]}" --resume --dry-run
+~~~
+
+After inspecting the emitted checkpoint path and remaining work, submit:
+
+~~~bash
+test -s "runs/$STMEM_EXPERIMENT/seed0/teacher/last.pt" &&
+  .venv/bin/python hpc/plan.py "${STMEM_LAUNCH_ARGS[@]}" --resume --submit
 ~~~
 
 Check the actual saved step rather than infer it from the last W&B chart point:
@@ -828,6 +850,8 @@ name with the actual one:
 
 ~~~bash
 # Run on the laptop.
+(
+set -euo pipefail
 STMEM_EVAL_NAME=teacher_eval_REPLACE_WITH_ACTUAL_TIMESTAMP
 STMEM_LOCAL="$HOME/Desktop/chronotree_local/$STMEM_EVAL_NAME"
 
@@ -850,6 +874,7 @@ rsync -avP "$STMEM_LOCAL/" \
 
 ssh workstation \
   "cd /home/rvalperga/chronotree/runs/inspection/$STMEM_EVAL_NAME && sha256sum -c SHA256SUMS"
+)
 ~~~
 
 Names here are simple launcher-generated identifiers, not arbitrary shell input.
