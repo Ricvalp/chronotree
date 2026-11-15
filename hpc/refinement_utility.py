@@ -98,6 +98,10 @@ def main(argv=None):
     parser.add_argument("--gpu-type", default="", help="GPU GRES type, e.g. b200; empty retains gpu:1")
     parser.add_argument("--panel-partition", choices=("train", "validation", "both"), default="train")
     parser.add_argument("--shards", type=int, default=4)
+    parser.add_argument("--max-concurrent", type=int,
+                        help="Maximum simultaneously running array tasks; does not change shard assignments")
+    parser.add_argument("--exclude", default="",
+                        help="Comma-separated node names to exclude from this allocation")
     parser.add_argument("--walltime", type=walltime, default="04:00:00")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--extension-base", type=Path)
@@ -107,6 +111,8 @@ def main(argv=None):
         parser.error("Invalid --partition")
     if args.gpu_type and not re.fullmatch(r"[A-Za-z0-9_.-]+", args.gpu_type):
         parser.error("Invalid --gpu-type")
+    if args.exclude and not re.fullmatch(r"[A-Za-z0-9_.-]+(?:,[A-Za-z0-9_.-]+)*", args.exclude):
+        parser.error("--exclude requires comma-separated literal node names")
     if args.stage == "prepare" and (args.study_source or args.code_root):
         parser.error("Runtime source options reuse an existing study; they cannot prepare a new panel")
     if args.teacher_reference and args.stage != "prepare":
@@ -115,6 +121,9 @@ def main(argv=None):
         parser.error("--teacher-reference uses the adopted teacher itself; do not supply --compact")
     if not 1 <= args.shards <= 16:
         parser.error("Use 1..16 bounded independent shards")
+    count = args.shards if args.stage in ("measure", "extension") else 1
+    if args.max_concurrent is not None and not 1 <= args.max_concurrent <= count:
+        parser.error("--max-concurrent must be between 1 and the number of array tasks")
     if args.stage == "extension":
         if args.extension_base is None or args.additional_draws is None or not 1 <= args.additional_draws <= 16:
             parser.error("Extension needs --extension-base and --additional-draws in 1..16")
@@ -143,7 +152,6 @@ def main(argv=None):
             return (verify_manifest(manifest_path) if verify_source
                     else verify_manifest(manifest_path, verify_source=False))
         base = [python, "-u", "-m", "stmem.inspection.refinement_utility", "--manifest", str(manifest_path)]
-        count = args.shards if args.stage in ("measure", "extension") else 1
         commands, inputs = [], {}
         if args.stage == "prepare":
             cache_plan_path = repo / "hpc/generated" / args.cache_name / "plan.json"
@@ -254,6 +262,10 @@ def main(argv=None):
         if args.gpu_type:
             plan["gpu_type"] = args.gpu_type
             plan["gres"] = f"gpu:{args.gpu_type}:1"
+        if args.max_concurrent is not None:
+            plan["max_concurrent"] = args.max_concurrent
+        if args.exclude:
+            plan["exclude"] = args.exclude
         if pinned_runtime:
             plan["code_root"] = str(code_root)
             plan["planner"] = str(Path(__file__).resolve())
@@ -274,7 +286,9 @@ def main(argv=None):
                  f"#SBATCH --time={args.walltime}", f"#SBATCH --output={shlex.quote(str(logs / (suffix + '_%A_%a.out')))}",
                  f"#SBATCH --error={shlex.quote(str(logs / (suffix + '_%A_%a.err')))}", "#SBATCH --signal=B:TERM@180"]
         if count > 1:
-            lines.append(f"#SBATCH --array=0-{count-1}%{count}")
+            lines.append(f"#SBATCH --array=0-{count-1}%{args.max_concurrent or count}")
+        if args.exclude:
+            lines.append(f"#SBATCH --exclude={args.exclude}")
         for key in ("ACCOUNT", "QOS", "CONSTRAINT"):
             if site.get("STMEM_" + key):
                 lines.append(f"#SBATCH --{key.lower()}={shlex.quote(site['STMEM_' + key])}")

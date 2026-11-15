@@ -796,3 +796,24 @@ No GPU doctor or GPU computation was run, and no HPC submission was performed.
 The actual HPC snapshots, source reconstruction and full-panel runtime still
 need the user-run dry runs and submitted jobs; the launcher rejects unavailable
 or mismatched source/checkpoints rather than replacing them.
+
+## Shared utility initialization contention — 2026-11-15
+
+The user supplied accounting for arrays 74639/74643/74647: five completed
+workers and seven failures. The S_STD worker-0 traceback confirms nonblocking
+`identity.lock` contention before receipt creation. A separate S_PACKET worker
+on `ainode06` exited with signal 8 and no explanatory traceback; that native
+failure is not explained by the Python lock error.
+
+Current measurements now block only on shared identity initialization. Exact
+identity checks and nonblocking duplicate-worker locks remain intact. The
+existing source-pinned study is recovered without changing its archive: new
+`--max-concurrent 1` limits each four-shard array to one running task, while the
+three student arrays remain independent. `--exclude ainode06` avoids the node
+with the unexplained native failure for this retry. Previously committed rows
+are verified and reused under the unchanged panel, checkpoints and worker count.
+
+94 CPU tests passed, including real multiprocess lock-contention regressions
+and launch-command identity checks; Ruff and architecture checks passed. No
+workstation GPU or HPC allocation was used. The retry commands and original
+result locations are recorded in `docs/refinement_utility_b200.md`.

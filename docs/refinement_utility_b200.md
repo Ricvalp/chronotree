@@ -168,3 +168,65 @@ measurement jobs trains a router or consumes the reserved confirmation panel.
 
 These instructions prepare user-submitted HPC work. No HPC allocation or
 workstation GPU measurement was launched while writing this workflow.
+
+## Recovering the shared initialization lock failure — 15 November
+
+The original runtime acquired its shared `identity.lock` with a nonblocking
+lock. Legitimate array siblings starting together could raise `BlockingIOError:
+[Errno 11] Resource temporarily unavailable` before writing a worker receipt.
+The supplied S_STD worker-0 traceback confirms this implementation defect;
+it does not indicate a GPU-memory problem. Current source now waits for shared
+identity initialization, still checks exact identity equality, and retains
+nonblocking locks for duplicate attempts of the same worker.
+
+The existing panel deliberately runs its original archived source. Do not edit
+that archive or rewrite the manifest to install the fix. Recover this study with
+four unchanged worker assignments but only one concurrent worker per student.
+The three students can still run concurrently, using at most three B200s. This
+avoids the contested startup path while preserving every scientific input and
+reusing already committed measurements. The separate signal-8 failure on
+`ainode06` had no explanatory traceback; the retry excludes that node as a
+precaution, not as a diagnosis of the native failure.
+
+The supplied accounting shows arrays 74639, 74643 and 74647 are inactive. After
+pushing/pulling the launcher changes, use a new **launch name**, with the same
+manifest and checkpoint paths. The new name changes plans/logs, not result
+locations. Do not change `--shards 4` to one: worker count determines the saved
+measurement identity and state assignments.
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+git pull --ff-only
+
+(
+set -euo pipefail
+for action in --dry-run --submit; do
+  for student in S_STD S_STAGE S_PACKET; do
+    suffix=$(printf '%s' "$student" | tr '[:upper:]' '[:lower:]')
+    .venv/bin/python hpc/refinement_utility.py \
+      --site hpc/site_b200_4gpu.env \
+      --name router_utility_teacher140k_b200_dev95k_retry1 \
+      --manifest runs/router_utility_teacher140k/manifest.json \
+      --stage measure --student "$student" \
+      --checkpoint "runs/utility_students_teacher140k_m64_${suffix}/seed0/compact/step_00095000.pt" \
+      --panel-partition train --study-source \
+      --partition aiq --gpu-type b200 \
+      --shards 4 --max-concurrent 1 --exclude ainode06 \
+      --walltime 04:00:00 \
+      "$action"
+  done
+done
+)
+```
+
+No `--resume` is needed for the first submission under this new launch name.
+The measurement workers automatically validate and reuse existing state files
+at the original output paths. Subsequent retries of the same retry launch name
+require `--resume` after its prior array is inactive. Logs now live under
+`hpc/generated/router_utility_teacher140k_b200_dev95k_retry1/logs/`.
+
+Use the progress check above. Once **all twelve receipts** say `complete`, run
+the report command above using the new retry launch name (or the old name with
+`--resume`). This recomputes the report from all completed rows without rerunning
+policy inference. Do not infer that the development report is complete solely
+from Slurm accepting the report job.

@@ -1998,3 +1998,21 @@ regressions: 85 tests passed, Ruff and unchanged architecture checks passed.
 No workstation GPU was used, and no cluster job was submitted. Actual full-panel
 B200 throughput remains unmeasured. Commands, outputs and progress checks are in
 `docs/refinement_utility_b200.md`.
+
+## Utility lock recovery preserves the frozen runtime — 2026-11-15
+
+Fix shared measurement identity initialization to wait for sibling shards,
+without relaxing identity equality or allowing concurrent duplicate workers.
+The observed `BlockingIOError` occurred outside the worker receipt handler;
+missing receipts were therefore possible despite a correctly sealed experiment.
+Actual CPU process-contention tests cover successful serialization, rejection
+of different identities, and retained duplicate-worker rejection.
+
+Keep the existing 140k-teacher panel's archived scientific code unchanged.
+Its retry uses the same four worker assignments with one concurrently running
+task per student, recorded in a fresh generated launch plan. Concurrency and
+node exclusion are allocation controls only: commands, original manifest,
+checkpoints, causal contexts, candidate/noise identities and output paths stay
+the same. Completed state files are reused. This bounded recovery avoids a
+source compatibility exception merely to repair orchestration; future studies
+use the corrected shared-lock implementation directly.

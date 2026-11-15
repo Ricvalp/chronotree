@@ -38,6 +38,22 @@ def lock(path, *, blocking=False):
         yield
 
 
+def publish_measurement_identity(output, identity):
+    """Serialize shared initialization while preserving exact study identity.
+
+    Different shards legitimately publish the same identity concurrently. They
+    must wait for that short critical section; per-worker ownership locks below
+    remain nonblocking so duplicate executions of a shard still fail.
+    """
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    identity_path = output / "identity.json"
+    with lock(output / "identity.lock", blocking=True):
+        if identity_path.exists() and read_json(identity_path) != identity:
+            raise ValueError("Measurement identity changed; use a new named study/student stage")
+        atomic_json(identity, identity_path)
+
+
 def normalized_panel(panel):
     groups = []
     for family in panel["families"]:
@@ -402,12 +418,7 @@ def measure(args):
                 "limited_check": args.limited_check, **endpoint}
     if extension is not None:
         identity["extension"] = extension
-    output.mkdir(parents=True, exist_ok=True)
-    identity_path = output / "identity.json"
-    with lock(output / "identity.lock"):
-        if identity_path.exists() and read_json(identity_path) != identity:
-            raise ValueError("Measurement identity changed; use a new named study/student stage")
-        atomic_json(identity, identity_path)
+    publish_measurement_identity(output, identity)
     states = [s for s in manifest["states"] if s["cache_eligible"] and
               (args.partition == "both" or s["partition"] == args.partition)]
     if extension is not None:

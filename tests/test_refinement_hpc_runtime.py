@@ -76,6 +76,34 @@ def test_resume_accepts_purged_job_but_rejects_active_array(launch_fixture, monk
     assert sum(call[0] == "sbatch" for call in fixture.calls) == 2
 
 
+def test_serial_array_retry_preserves_scientific_command_and_sharding(launch_fixture):
+    fixture = launch_fixture
+    launcher.main([*fixture.args, "--dry-run"])
+    original = plan_of(fixture)
+    retry = [*fixture.args, "--name", "fixture_retry", "--max-concurrent", "1", "--exclude", "ainode06"]
+    launcher.main([*retry, "--dry-run"])
+    path = next((fixture.repo / "hpc/generated/fixture_retry").glob("measure_*.json"))
+    retried = json.loads(path.read_text())
+    assert retried["commands"] == original["commands"]
+    assert retried["inputs"] == original["inputs"]
+    assert retried["manifest"] == original["manifest"]
+    assert retried["source_sha256"] == original["source_sha256"]
+    assert retried["shards"] == original["shards"] == 4
+    command = retried["commands"][0]
+    assert command[command.index("--workers") + 1] == "4"
+    script = Path(retried["script"]).read_text()
+    assert "#SBATCH --array=0-3%1" in script
+    assert "#SBATCH --exclude=ainode06" in script
+    assert retried["max_concurrent"] == 1
+    assert all(call[:2] == ["bash", "-n"] for call in fixture.calls)
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "5"])
+def test_array_limit_cannot_change_worker_partition(limit):
+    with pytest.raises(SystemExit):
+        launcher.main(["--stage", "measure", "--shards", "4", "--max-concurrent", limit])
+
+
 def test_isolated_runtime_retains_original_panel_and_ignores_main_src_edits(launch_fixture, monkeypatch):
     fixture = launch_fixture
     runtime = fixture.repo / "hpc/generated/original_source"
@@ -113,7 +141,9 @@ def test_isolated_runtime_retains_original_panel_and_ignores_main_src_edits(laun
 
 
 @pytest.mark.parametrize("flag,value", [("--gpu-type", "b200\n#SBATCH --exclusive"),
-                                        ("--partition", "aiq;bad")])
+                                        ("--partition", "aiq;bad"),
+                                        ("--exclude", "ainode06\n#SBATCH --exclusive"),
+                                        ("--exclude", "ainode06,,ainode07")])
 def test_resource_arguments_reject_injection(flag, value):
     with pytest.raises(SystemExit):
         launcher.main([flag, value])
