@@ -26,7 +26,7 @@ contains explanatory cards; hiding it leaves the main architecture visible.
 | Encoders | Prepared point sampling and center indices, point and edge MLPs, Gaussian pooling, historical event branches, and the byte-level text Transformer. |
 | Action decoder | Query projections, each residual attention/FFN sublayer, and the distinction between training flow matching and inference Euler integration. |
 | Context & size | The shared metadata adapter, current auxiliary branches, valid versus allocated context lengths, parameter counts, and core batching settings. |
-| Frozen vision | The shared frozen CLIP feature path, source-pixel correspondence/cache, matched FV-Prop versus FV-NoProp state-input paths, teacher descriptor I/O, and later compact-policy cache workers. |
+| Frozen vision | The shared frozen CLIP feature path, source-pixel correspondence/cache, matched FV-Prop versus FV-NoProp state-input paths, teacher descriptor I/O, compact-policy cache workers, and the separate expert-utility router pilot. |
 | Current only | A separately trained current-visual-and-goal policy, with no history, numerical robot state, previous commands or clock inputs. |
 
 Blue blocks represent visual/history processing, teal represents state and
@@ -51,6 +51,17 @@ The parameter table counts the model itself; the memory estimate explicitly
 excludes potentially large history activations, temporary workspaces and CUDA.
 Training settings describe core repository defaults, not a live HPC run or an
 arbitrarily overridden generated job configuration.
+
+The final card on **Frozen vision** describes the separate expert-utility router
+pilot. Its query includes current visual tokens, task text and summaries of the
+currently selected history; its candidate describes a feasible refinement region.
+The same small MLP is fitted to immediate or completed-packet expert-FM gains.
+Both can select whole equal-cost packets in the matched comparison. The router
+refreshes its query after each allocation and records topology scans and payload
+work; it does not inherit the original heap controller's O(B) search claim.
+Expert actions and diffusion noise are supervision only, never router inputs.
+The teacher and compact action head remain frozen. See
+[the launch and interpretation guide](utility_router_pilot.md).
 
 The core teacher runs for 100,000 optimizer updates with effective batch 256.
 Its microbatch setting of 64 is a per-device maximum: four GPUs use 64 decisions

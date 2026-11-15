@@ -696,7 +696,7 @@
     </mxGraphModel>
   </diagram>
   <diagram id="frozen" name="05 · Frozen vision">
-    <mxGraphModel dx="1800" dy="3750" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="3750" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
+    <mxGraphModel dx="1800" dy="4100" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="4100" math="0" shadow="0" background="#FFFFFF" adaptiveColors="none">
       <root>
         <mxCell id="0" />
         <mxCell id="1" value="Architecture" parent="0" />
@@ -738,7 +738,7 @@
           </mxCell>
         </object>
         <mxCell id="frozen-9" value="CHRONOTREE  /  Matched FV-Prop / FV-NoProp experiment     •     Click page tabs or linked blocks · hover for details · all shapes are editable" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=14;fontColor=#64748B;fontStyle=0;spacing=0;" vertex="1" parent="1">
-          <mxGeometry as="geometry" x="48" y="3702" width="1690" height="30" />
+          <mxGeometry as="geometry" x="48" y="4052" width="1690" height="30" />
         </mxCell>
         <mxCell id="frozen-10" value="01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
           <mxGeometry as="geometry" x="48" y="225" width="1704" height="35" />
@@ -898,6 +898,14 @@
         <object id="frozen-46" label="&lt;b&gt;Scope · architecture diagnostics, not a new teacher or action decoder&lt;/b&gt;&lt;br&gt;&lt;br&gt;Unchanged gain targets isolate router architecture. Input sidecars retain causal current tokens and candidate children from the existing encoded cache.&lt;br&gt;Measure held-out label ranking/regret and routing costs; these are not task-success results. Full-history attention is not part of these variants." tooltip="Scope · architecture diagnostics, not a new teacher or action decoder&#10;Unchanged gain targets isolate router architecture. Input sidecars retain causal current tokens and candidate children from the existing encoded cache.&#10;Measure held-out label ranking/regret and routing costs; these are not task-success results. Full-history attention is not part of these variants.">
           <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
             <mxGeometry as="geometry" x="48" y="3590" width="1704" height="105" />
+          </mxCell>
+        </object>
+        <mxCell id="frozen-47" value="08  EXPERT-UTILITY PACKET PILOT · SEPARATE FROM THE FIXED-LABEL ARCHITECTURE SCREEN" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;overflow=hidden;fontFamily=Arial;fontSize=19;fontColor=#475569;fontStyle=1;spacing=0;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="48" y="3740" width="1704" height="35" />
+        </mxCell>
+        <object id="frozen-48" label="&lt;b&gt;Observable context → matched MLP → coherent history refinements&lt;/b&gt;&lt;br&gt;&lt;br&gt;Query: current mean + task + selected-record mean/max + clocks + current/remaining budget + feasible packet cost.&lt;br&gt;Candidate: region mean/max + geometry/time/source metadata + cost. Same inputs and capacity for both credit targets.&lt;br&gt;Supervision: expert FM loss after the first move or a completed packet. Both primary selectors execute the whole packet.&lt;br&gt;Refine up to 8 history records, then re-score; count topology scans, descendant work, feature hydration and transfers.&lt;br&gt;Teacher/student weights stay frozen. No expert/noisy actions enter routing; exact causal coverage and FLAT residuals remain.&lt;br&gt;This is a new development study with fresh labels; it does not modify the teacher forward pass or certify closed-loop success." tooltip="memory/utility_routing.py and evaluation/utility_router.py reuse IndexedArchive packet construction online and in new expert-FM labels. The 4d+6 query and 2d+25 candidate features feed the existing interaction-MLP family. Queries refresh after each allocation, so this controller does not inherit the original heap's O(B) visited-node claim. Expert actions are offline supervision only. Existing teacher-agreement labels and checkpoints remain separate.">
+          <mxCell style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#CBD5E1;strokeWidth=1.5;align=left;verticalAlign=top;spacing=16;fontFamily=Arial;fontSize=18;fontColor=#0F172A;shadow=0;" vertex="1" parent="1">
+            <mxGeometry as="geometry" x="48" y="3800" width="1704" height="240" />
           </mxCell>
         </object>
       </root>

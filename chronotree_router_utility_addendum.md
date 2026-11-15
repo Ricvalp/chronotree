@@ -620,3 +620,54 @@ These sources motivate the measurement design; none establishes that the propose
 - [ ] Conditional rehearsal and one-cycle router-adaptation configurations provided; activation/omission and actual scope stated.
 - [ ] Bounded learned-router stage implemented/prepared with fresh student-specific labels and crossed evaluation when supported.
 - [ ] Findings mapped to H1–H8 and next decisions; deployed-router results separated from offline diagnostic selections.
+
+## 19. 15 November implementation amendment: development router pilot
+
+The completed common 95k development measurements motivate a separate S_STD
+router pilot. This does not change the three students' declared 100k primary
+endpoint or consume the original reserved confirmation episodes. The original
+study manifest and source remain frozen. A child manifest adopts the exact
+student hash after validation under the parent's original source; the new
+runtime has its own source identity.
+
+The runnable sequence is documented in [utility_router_pilot.md](docs/utility_router_pilot.md):
+
+1. Generate action chunks for the existing common discovery-selected case plan
+   across S_STD, S_STAGE and S_PACKET, using the old study runtime. This checks
+   whether FM selection gains survive full integration; it is not simulator
+   success or new final-action router supervision.
+2. Draw 4,096 fresh task/episode/phase-balanced full-horizon states from the
+   permitted training pool, excluding all diagnostic and reserved validation
+   episodes. Use the fixed 128 development states separately. At each state,
+   generate early and late reachable contexts with gain-blind local/packet
+   construction, eight-candidate equal-cost pools where feasible, and independent
+   four-draw discovery and four-draw confirmation banks.
+3. Fit TREE/FLAT × immediate/completed-packet scorers with identical observable
+   features, capacity and 5,000-update schedules. Primary labels are signed expert
+   FM loss reductions; teacher agreement remains a diagnostic. For the credit
+   comparison, both scorers select and execute a **whole equal-cost packet**.
+   Actual packet costs and short final packets remain explicit. All new label
+   schemas are distinct from old teacher-agreement datasets.
+4. Run a matched validation screen against random packet selection and global
+   UNIFORM. Preserve the frozen student's 128-history-token budget, 16 predicted
+   targets at 10 Hz, eight executed targets and eight integration steps. The
+   initial screen uses two episodes per task and does not replace a larger
+   confirmation evaluation.
+
+The scorer observes pooled current visual content, task encoding, selected
+history summaries, clocks and budget state, plus candidate region content and
+metadata. No expert actions, noise, flow time or teacher output enter its inputs.
+The packet query refreshes after each allocation. Topology scans, candidate
+construction, selected-content pooling and transfers are counted; this prototype
+does not inherit the original once-per-node heap's O(B) efficiency claim.
+
+Generated-action jobs and the new label/fit jobs can run independently. The latter
+use source snapshots and resumable state/worker receipts. Neither student
+adaptation nor on-policy label refresh is automatically launched. Cross-student
+transfer and the conditional adaptation branch remain later experiments rather
+than being conflated with this four-fit pilot.
+
+Implementation validation uses explicitly synthetic CPU fixtures, including
+actual cached FM inference through all four fits and offline evaluation. No new
+real-data GPU results or Slurm submissions were produced during implementation;
+throughput and behavioral gains remain HPC measurements.

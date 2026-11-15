@@ -1,8 +1,11 @@
 """Prepare a bounded, disabled later-router blueprint without mislabeling data.
 
 This is executable preparation, not a label-generation or Slurm-submit command.
-The missing schema/controller integrations are explicit machine-readable blockers.
+The remaining crossed-student/adaptation integrations are explicit blockers.
 The primary three-student experiment does not depend on this conditional branch.
+The separate executable single-student pilot is hpc/utility_routers.py; it adopts
+an explicitly declared endpoint/snapshot into a new manifest instead of changing
+the endpoint rules of this historical blueprint.
 """
 from __future__ import annotations
 
@@ -21,12 +24,15 @@ from stmem.training.runtime import load_checkpoint
 
 
 BLOCKERS = (
-    "The existing router loader accepts only velocity/final_action teacher-agreement schema-v2 labels. Implement a distinct expert-FM first-move/completed-packet schema and writer with raw signed losses, route prefixes and student provenance.",
-    "Add observable remaining-budget/feasible-cost feature encoding with matched scorer dimensions for both targets/readers; existing LocalRouter features alone do not include these new scalars.",
-    "Connect trained scorer predictions to the shared exact-coverage IndexedArchive local/packet controller, with all proposal/index/descendant/scoring costs recorded.",
     "Existing closed-loop router validation requires the label-generating compact hash. Add an explicit diagnostic crossed-student protocol validating compatible frozen representations without weakening the production exact-student guard.",
     "One router-conditioned student adaptation cycle needs a frozen-router route provider and new student-specific labels after adaptation. Prepared adaptation configs do not implement that provider.",
 )
+
+IMPLEMENTED_PILOT = {
+    "launcher": "hpc/utility_routers.py", "guide": "docs/utility_router_pilot.md",
+    "label_schema": "expert_fm_packet_labels_v1", "checkpoint_schema": "utility_router_checkpoint_v1",
+    "scope": "Separate frozen single-student study; fresh labels, four matched fits and exact-student closed-loop screening",
+}
 
 
 def validate_training_pool(manifest):
@@ -104,6 +110,7 @@ def prepare(manifest_path, output, *, checkpoints, finding=None,
             "parent_manifest": str(Path(manifest_path).resolve()), "configuration": cfg,
             "students": students, "training_pool": manifest["training_pool"], "pool_audit": pool,
             "development_finding": development_finding, "activation_blockers": list(BLOCKERS),
+            "implemented_single_student_pilot": IMPLEMENTED_PILOT,
             "fitting_plan": {"states_per_student": contexts, "shared_state_manifest_required": True,
                              "readers": cfg["readers"], "credit_targets": cfg["credit_targets"],
                              "fit_jobs": nstudents * nreaders * ntargets,

@@ -16,6 +16,18 @@ def evaluation_execution_config(checkpoint_cfg, cfg, *, execute_actions=None, sp
     No checkpoint/config object supplied by the caller is mutated. The default
     path keeps the strict global policy compatibility check, including execute.
     """
+    utility = cfg.get("evaluation", {}).get("utility_routing")
+    if utility is not None:
+        protocol = utility["protocol"]
+        if split != "val":
+            raise ValueError("Expert-utility routing is validation-only")
+        if any(model["flow_steps"] != protocol["flow_steps"] for model in (cfg["model"], checkpoint_cfg["model"])):
+            raise ValueError("Expert-utility flow integration differs from its frozen protocol")
+        if execute_actions is not None and execute_actions != protocol["execute_targets"]:
+            raise ValueError("Expert-utility executed targets differ from its frozen protocol")
+        # The pilot records the accepted evaluation convention separately from
+        # a policy checkpoint's historical execute-four training default.
+        execute_actions = protocol["execute_targets"]
     if execute_actions is None:
         validate_policy_config(checkpoint_cfg, cfg)
         return deepcopy(cfg), None

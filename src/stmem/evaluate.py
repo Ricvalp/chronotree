@@ -219,17 +219,30 @@ def main():
         else dependency(cfg, "teacher" if args.method == "FULL" else "compact")
     )
     args.execution_override = None
-    if args.execute_actions is not None:
-        checkpoint_cfg = load_checkpoint(checkpoint)["config"]
-        cfg, args.execution_override = evaluation_execution_config(
-            checkpoint_cfg, cfg, execute_actions=args.execute_actions, split=args.split,
-        )
     router_path = args.router_checkpoint
     if args.method in ("TREE", "FLAT") and not router_path and not args.selection_family:
         router_path = str(run_dir({**cfg, "reader": args.method.lower()}, "router") / "last.pt")
     hashes = {str(checkpoint.resolve()): file_sha256(checkpoint)}
     if router_path:
         hashes[str(Path(router_path).resolve())] = file_sha256(router_path)
+        router_header = load_checkpoint(router_path)
+        if router_header.get("schema") == "utility_router_checkpoint_v1":
+            from stmem.evaluation.utility_router import evaluation_settings
+
+            if args.split != "val":
+                raise ValueError("Expert-utility pilot routing is validation-only")
+            saved_settings = cfg["evaluation"].get("utility_routing", {})
+            settings = evaluation_settings(router_header, controller=saved_settings.get("controller"),
+                                           selection=saved_settings.get("selection"),
+                                           budget=args.budget or cfg["model"]["budget"])
+            if saved_settings and saved_settings != settings:
+                raise ValueError("Evaluation utility protocol differs from the frozen router")
+            cfg["evaluation"]["utility_routing"] = settings
+    if args.execute_actions is not None or cfg["evaluation"].get("utility_routing"):
+        checkpoint_cfg = load_checkpoint(checkpoint)["config"]
+        cfg, args.execution_override = evaluation_execution_config(
+            checkpoint_cfg, cfg, execute_actions=args.execute_actions, split=args.split,
+        )
     if args.split == "test":
         frozen = cfg["evaluation"].get("test_frozen_manifest")
         if not frozen:
@@ -346,7 +359,28 @@ def _evaluate(cfg, args, checkpoint, router_path, output, planned, hashes, exist
     )
     router = None
     if router_path:
-        router, router_state = load_router(router_path, device)
+        router_state = load_checkpoint(router_path)
+        if router_state.get("schema") == "utility_router_checkpoint_v1":
+            from stmem.training.utility_routers import load_utility_router
+            from stmem.evaluation.utility_router import evaluation_settings
+
+            if args.split != "val":
+                raise ValueError("Expert-utility pilot checkpoints are validation-only")
+            router, router_state = load_utility_router(
+                router_path, device=device, expected_student_sha256=file_sha256(checkpoint),
+                expected_reader=args.method.lower(),
+            )
+            recorded = cfg["evaluation"].get("utility_routing", {})
+            settings = evaluation_settings(router_state, controller=recorded.get("controller"),
+                                           selection=recorded.get("selection"),
+                                           budget=args.budget or cfg["model"]["budget"])
+            if recorded and recorded != settings:
+                raise ValueError("Evaluation utility protocol differs from the frozen router")
+            cfg["evaluation"]["utility_routing"] = settings
+        else:
+            if cfg["evaluation"].get("utility_routing"):
+                raise ValueError("Legacy router cannot consume expert-utility controller settings")
+            router, router_state = load_router(router_path, device)
         if router_state["provenance"]["compact"] != file_sha256(checkpoint):
             raise ValueError("Router was supervised for a different frozen compact policy")
     online = OnlinePolicy(

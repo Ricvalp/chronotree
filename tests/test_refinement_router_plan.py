@@ -5,7 +5,7 @@ import json
 import pytest
 import yaml
 
-from stmem.inspection.refinement_router_plan import BLOCKERS, validate_training_pool
+from stmem.inspection.refinement_router_plan import BLOCKERS, IMPLEMENTED_PILOT, validate_training_pool
 from stmem.inspection.refinement_data import COMPACT_SHA, ENCODED_ID, HIERARCHY_ID, TEACHER_SHA
 from stmem.training.checkpoints import file_sha256
 
@@ -42,7 +42,10 @@ def test_conditional_spec_is_bounded_disabled_and_separate_from_old_label_object
     assert cfg["fit"]["tracking_project"] == "chronotree-routers"
     assert cfg["closed_loop"]["split"] == "val"
     assert cfg["closed_loop"]["executed_targets"] == 10
-    assert len(BLOCKERS) >= 4
+    assert any("crossed-student" in blocker for blocker in BLOCKERS)
+    assert any("adaptation cycle" in blocker for blocker in BLOCKERS)
+    assert IMPLEMENTED_PILOT["label_schema"] != "router_labels_v2"
+    assert IMPLEMENTED_PILOT["launcher"] == "hpc/utility_routers.py"
 
 
 def test_conditional_plan_uses_declared_100k_endpoints_and_rejects_unmatched_students(tmp_path, monkeypatch):

@@ -91,8 +91,24 @@ class OnlinePolicy:
         )
         if method not in ("FULL", "CURRENT", "PERCEIVER"):
             self.memory.validate_budget(budget)
-        self.scorer = CachedScorer(router, router_hash) if router is not None else None
-        if method in ("TREE", "FLAT") and self.scorer is None and selection_family is None:
+        self.utility_router = None
+        from stmem.memory.utility_routing import FEATURE_SCHEMA
+
+        if router is not None and getattr(router, "feature_schema", None) == FEATURE_SCHEMA:
+            from stmem.evaluation.utility_router import UtilityOnlineRouter
+
+            settings = cfg["evaluation"].get("utility_routing")
+            if settings is None or cfg["evaluation"]["split"] != "val":
+                raise ValueError("Expert-utility routing requires an explicit validation-only pilot protocol")
+            if (cfg["model"]["execute"] != settings["protocol"]["execute_targets"]
+                    or cfg["model"]["flow_steps"] != settings["protocol"]["flow_steps"]):
+                raise ValueError("Online utility routing must preserve its frozen execution and integration settings")
+            self.utility_router = UtilityOnlineRouter(router, reader=method, budget=budget,
+                                                       protocol=settings["protocol"],
+                                                       controller=settings["controller"],
+                                                       selection=settings["selection"])
+        self.scorer = CachedScorer(router, router_hash) if router is not None and self.utility_router is None else None
+        if method in ("TREE", "FLAT") and self.scorer is None and self.utility_router is None and selection_family is None:
             raise ValueError("Learned TREE/FLAT evaluation requires its trained router")
         self.selection_family = selection_family
         self.intervention = intervention
@@ -123,6 +139,8 @@ class OnlinePolicy:
             self.selection_rng = random.Random(seed)
             self.decision_index = 0
             self.update_seconds = 0.0
+            if self.utility_router is not None:
+                self.utility_router.reset()
             if self.scorer:
                 self.scorer.keys.clear()
                 self.scorer.feature_transferred_bytes = self.scorer.key_transferred_bytes = 0
@@ -164,9 +182,12 @@ class OnlinePolicy:
                     self.scorer.prepare(candidates)
                     self.scorer.set_query(**policy.routing_inputs(evidence, self.budget, router=self.scorer.router))
             with timer.component("selection"):
-                selected = choose_records(
-                    evidence, self.method, self.budget, scorer=self.scorer, rng=self.selection_rng
-                )
+                if self.utility_router is not None:
+                    selected = self.utility_router.select(evidence, seed=self.selection_rng.randrange(2**63))
+                else:
+                    selected = choose_records(
+                        evidence, self.method, self.budget, scorer=self.scorer, rng=self.selection_rng
+                    )
             with timer.component("selected_transfer_and_adapter"):
                 with torch.autocast(
                     policy.device.type, dtype=self.autocast_dtype, enabled=self.precision != "fp32"
@@ -198,10 +219,11 @@ class OnlinePolicy:
                 "represented_leaf_counts": [r.count for r in selected.records],
                 "resolution_depths": [r.depth for r in selected.records],
                 "routing_key_bytes": self.scorer.storage_bytes if self.scorer else 0,
-                "routing_transferred_bytes_cumulative": self.scorer.transferred_bytes if self.scorer else 0,
+                "routing_transferred_bytes_cumulative": self.scorer.transferred_bytes if self.scorer else
+                selected.stats.get("utility_routing_transferred_bytes_cumulative", 0),
                 "routing_transferred_bytes": self.scorer.transferred_bytes - previous_transfer
                 if self.scorer
-                else 0,
+                else selected.stats.get("utility_routing_transferred_bytes", 0),
                 "new_keys_encoded": self.scorer.keys_encoded - previous_keys if self.scorer else 0,
                 "decoder_precision": self.precision,
                 "frozen_encoder_precision": "fp32",

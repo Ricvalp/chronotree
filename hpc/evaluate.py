@@ -154,6 +154,10 @@ def main(argv=None):
                         help="Random compact checkpoint selection; must match TREE/FLAT method")
     parser.add_argument("--router-checkpoint", type=Path,
                         help="Learned TREE/FLAT router trained against this exact compact checkpoint")
+    parser.add_argument("--router-controller", choices=("packet", "local"),
+                        help="Expert-utility pilot only: packet commitment or single-move controller")
+    parser.add_argument("--router-selection", choices=("learned", "random", "uniform"),
+                        help="Expert-utility pilot only: learned scores or matched packet-pool controls")
     parser.add_argument("--wandb-project", help="Override the checkpoint and site W&B project")
     parser.add_argument("--budget", type=positive_integer, help="History token budget; default from checkpoint")
     parser.add_argument("--gpus", type=positive_integer, default=4)
@@ -175,6 +179,8 @@ def main(argv=None):
         parser.error("--router-checkpoint and --selection-family are mutually exclusive")
     if args.router_checkpoint is not None and args.method not in ("TREE", "FLAT"):
         parser.error("--router-checkpoint requires --method TREE or FLAT")
+    if args.router_checkpoint is None and (args.router_controller is not None or args.router_selection is not None):
+        parser.error("Router controller/selection needs --router-checkpoint to pin the exact pilot protocol")
     if args.method in ("TREE", "FLAT") and args.selection_family is None and args.router_checkpoint is None:
         parser.error("TREE/FLAT requires --selection-family for random selection or --router-checkpoint")
     if args.wandb_project is not None and not args.wandb_project.strip():
@@ -273,6 +279,14 @@ def _prepare_and_submit(args, site, repo, name, generated):
         path = absolute_path(args.config, repo)
         config_hashes(path)
         cfg = resolved_config(path)
+    if router_snapshot is not None:
+        from stmem.evaluation.utility_router import evaluation_settings
+
+        settings = evaluation_settings(router_state, controller=args.router_controller,
+                                       selection=args.router_selection,
+                                       budget=args.budget or cfg["model"]["budget"])
+        if settings is not None:
+            cfg["evaluation"]["utility_routing"] = settings
     if any(c.get("debug") or c.get("data", {}).get("synthetic") for c in (cfg, state["config"])):
         raise ValueError("HPC evaluation requires real-data checkpoint/configuration")
     for env, key in (("STMEM_DATA_ROOT", "data_root"), ("STMEM_CACHE_ROOT", "cache_root")):

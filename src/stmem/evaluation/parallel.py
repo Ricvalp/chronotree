@@ -358,6 +358,18 @@ def main():
         cfg = load_config(args.config)
         checkpoint_state = load_checkpoint(args.checkpoint)
         checkpoint_cfg = checkpoint_state["config"]
+        if args.router_checkpoint:
+            router_header = load_checkpoint(args.router_checkpoint)
+            if router_header.get("schema") == "utility_router_checkpoint_v1":
+                from stmem.evaluation.utility_router import evaluation_settings
+
+                saved_settings = cfg["evaluation"].get("utility_routing", {})
+                settings = evaluation_settings(router_header, controller=saved_settings.get("controller"),
+                                               selection=saved_settings.get("selection"),
+                                               budget=args.budget or cfg["model"]["budget"])
+                if saved_settings and saved_settings != settings:
+                    raise ValueError("Evaluation utility protocol differs from the frozen router")
+                cfg["evaluation"]["utility_routing"] = settings
         validate_selection_protocol(
             args.method, args.selection_family, args.router_checkpoint,
             checkpoint_stage=checkpoint_state.get("stage"), split=args.split,

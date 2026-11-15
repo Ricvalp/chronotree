@@ -82,6 +82,8 @@ SOURCES = [
     "src/stmem/evaluation/execution.py",
     "src/stmem/evaluation/robomme_adapter.py",
     "src/stmem/evaluation/runner.py",
+    "src/stmem/evaluation/utility_router.py",
+    "src/stmem/memory/utility_routing.py",
     "src/stmem/models/policy.py",
     "src/stmem/models/router.py",
     "src/stmem/training/router_inputs.py",
@@ -304,6 +306,19 @@ def snapshot():
                         "router_architecture": name,
                     }})) for name in ("dot", "mlp", "children", "current_attention", "children_current_attention")
                 },
+            },
+            "expert_utility_router_pilot": {
+                "launcher": "hpc/utility_routers.py", "scope": "separate development experiment",
+                "frozen_policy": "selected compact student; teacher encoders and decoder unchanged",
+                "supervision": ["expert_FM_first_refinement", "expert_FM_completed_packet"],
+                "query_shape": [4 * cfg["model"]["width"] + 6],
+                "candidate_shape": [2 * cfg["model"]["width"] + 25],
+                "query": "current mean, task, selected-record mean/max, clocks, budget and feasible cost",
+                "candidate": "region mean/max, immutable metadata and feasible completion cost",
+                "controller": "equal-cost packets up to eight positive-cost moves; re-score after completion",
+                "accounting": "full topology scans, descendant proposal work, hydration, scoring and transfers measured",
+                "attention_over_all_history": False, "expert_or_noisy_action_router_inputs": False,
+                "parent_primary_endpoint_unchanged": True,
             },
             "variants": {
                 **frozen_variants,
@@ -1395,7 +1410,7 @@ def frozen_vision(file, facts):
         "frozen",
         "Frozen RGB features · matched state-input experiment",
         "FV-Prop and FV-NoProp share visual evidence, initial shared weights, clocks, action cadence and training budget",
-        height=3750,
+        height=4100,
     )
     p.section(48, 225, 1704, "01  SAME FRAME-LOCAL VISUAL PIPELINE IN BOTH ARMS")
     source = p.card(
@@ -1769,6 +1784,20 @@ def frozen_vision(file, facts):
             "Unchanged gain targets isolate router architecture. Input sidecars retain causal current tokens and candidate children from the existing encoded cache.",
             "Measure held-out label ranking/regret and routing costs; these are not task-success results. Full-history attention is not part of these variants.",
         ], tone="note", size=18,
+    )
+    p.section(48, 3740, 1704, "08  EXPERT-UTILITY PACKET PILOT · SEPARATE FROM THE FIXED-LABEL ARCHITECTURE SCREEN")
+    p.card(
+        48, 3800, 1704, 240,
+        "Observable context → matched MLP → coherent history refinements",
+        [
+            "Query: current mean + task + selected-record mean/max + clocks + current/remaining budget + feasible packet cost.",
+            "Candidate: region mean/max + geometry/time/source metadata + cost. Same inputs and capacity for both credit targets.",
+            "Supervision: expert FM loss after the first move or a completed packet. Both primary selectors execute the whole packet.",
+            "Refine up to 8 history records, then re-score; count topology scans, descendant work, feature hydration and transfers.",
+            "Teacher/student weights stay frozen. No expert/noisy actions enter routing; exact causal coverage and FLAT residuals remain.",
+            "This is a new development study with fresh labels; it does not modify the teacher forward pass or certify closed-loop success.",
+        ], tone="note", size=18,
+        tooltip="memory/utility_routing.py and evaluation/utility_router.py reuse IndexedArchive packet construction online and in new expert-FM labels. The 4d+6 query and 2d+25 candidate features feed the existing interaction-MLP family. Queries refresh after each allocation, so this controller does not inherit the original heap's O(B) visited-node claim. Expert actions are offline supervision only. Existing teacher-agreement labels and checkpoints remain separate.",
     )
 
 
