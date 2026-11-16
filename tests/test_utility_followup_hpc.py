@@ -49,7 +49,7 @@ def launch(tmp_path, monkeypatch):
             return shell(command, **kwargs)
         if command[0] == "sbatch":
             return SimpleNamespace(stdout=str(100 + sum(c[0] == "sbatch" for c in calls)) + "\n")
-        if "stmem.inspection.refinement_generated" in command:
+        if "stmem.inspection.refinement_generated" in command or any(str(value).endswith("/planner.py") for value in command):
             mode = command[command.index("--mode") + 1]
             if mode == "plan":
                 path = Path(command[command.index("--plan") + 1])
@@ -138,6 +138,18 @@ def test_generated_jobs_pin_original_source_and_same_case_plan(launch):
         assert "fcntl.LOCK_EX" in command[2]  # Archive's presentation writes cannot race.
         assert job["inputs"][str(launch.checkpoint)] == jobs.sha256(launch.checkpoint)
     assert len([c for c in launch.calls if c[0] == "sbatch"]) == 3
+    adapters = list((launch.repo / "hpc/generated/generated/planning").glob("*/planner.py"))
+    assert len(adapters) == 1
+    receipts = list(adapters[0].parent.glob("*.receipt.json"))
+    assert len(receipts) == 1
+    receipt = jobs.read_json(receipts[0])
+    assert receipt["adapter_sha256"] == jobs.sha256(adapters[0])
+    assert receipt["case_plan_sha256"] == jobs.sha256(Path(plan["case_plan"]))
+    assert receipt["original_code_root"] == str(launch.sources[0])
+    progress = [json.loads(line) for line in
+                (launch.repo / "hpc/generated/generated/preparation_progress.jsonl").read_text().splitlines()]
+    assert progress[0]["phase"] == "validating_source_snapshot"
+    assert sum(row["phase"] == "job_submitted_or_reused" for row in progress) == 3
 
 
 def test_status_does_not_create_output_or_submit(launch, capsys):
@@ -146,6 +158,30 @@ def test_status_does_not_create_output_or_submit(launch, capsys):
     assert "not_prepared" in capsys.readouterr().out
     assert not (launch.repo / "hpc/generated/not_created").exists()
     assert launch.calls == []
+
+
+def test_planning_adapter_cannot_be_modified_after_snapshotting(tmp_path):
+    path, fingerprint = generated.planning_adapter(tmp_path)
+    assert jobs.sha256(path) == fingerprint
+    path.write_text("# altered administrative adapter\n")
+    with pytest.raises(ValueError, match="Frozen planning adapter changed"):
+        generated.planning_adapter(tmp_path)
+
+
+def test_generated_preparation_failure_does_not_submit_jobs(launch, monkeypatch):
+    original_run = subprocess.run
+
+    def fail_planning(command, **kwargs):
+        if any(str(value).endswith("/planner.py") for value in command):
+            raise subprocess.CalledProcessError(1, command)
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_planning)
+    with pytest.raises(subprocess.CalledProcessError):
+        generated.main(["--name", "failed_plan", "--manifest", str(launch.parent),
+                        "--checkpoints", *(f"{name}={launch.checkpoint}" for name in generated.STUDENTS),
+                        "--limited-check", "--submit"])
+    assert not any(command[0] == "sbatch" for command in launch.calls)
 
 
 def test_completion_rejects_changed_student_identity(launch):

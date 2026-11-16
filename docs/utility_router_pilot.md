@@ -48,6 +48,26 @@ study code verifies the parent, measured checkpoint hashes and discovery files.
 as the declared 100k endpoint. All three students must have the same actual step
 and initialization.
 
+The launcher performs this preparation **before** calling `sbatch`. It prints
+source/cache verification, case selection and submission phases, and writes
+`hpc/generated/utility140k_generated95k/preparation_progress.jsonl`. During case
+selection it reports the first result file and then every eight files loaded.
+An older launcher could appear stuck here because its archived NPZ reader
+decompressed a whole column again for each row. The administrative planning
+adapter now memoizes each column for the lifetime of one open file. Original
+checksums, scalar values, candidate rules and the scientific plan remain
+unchanged. Adapter bytes are frozen under `planning/<sha256>/`, with a separate
+receipt binding them to the resulting case plan; the original source export is
+never edited. This adapter runs only in CPU planning, not model inference.
+CPU tests compare complete synthetic three-student case plans byte for byte,
+including their plan IDs. A separate 256-row/four-column synthetic check reduced
+column decodes from 1,024 to four with identical rows; this is not an estimate of
+HPC wall time. Checksum failures and cleanup after exceptions remain tested.
+
+For an existing plan, `--stage generate` skips rebuilding the case-selection
+plan. After an interrupted submission, add `--resume` to reuse active job IDs;
+it does not launch duplicates. Do not delete lock files to interrupt a launcher.
+
 Submit the already prepared jobs:
 
 ```bash

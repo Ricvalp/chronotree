@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -23,6 +25,23 @@ from hpc.utility_source import create_study_source  # noqa: E402
 
 
 STUDENTS = ("S_STD", "S_STAGE", "S_PACKET")
+
+
+def planning_adapter(generated):
+    """Freeze the administrative read optimization outside the original source."""
+    source = Path(__file__).with_name("refinement_generated_planning.py")
+    fingerprint = sha256(source)
+    destination = Path(generated) / "planning" / fingerprint / "planner.py"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.exists():
+        temporary = destination.with_suffix(".partial.py")
+        temporary.write_bytes(source.read_bytes())
+        if sha256(temporary) != fingerprint:
+            raise ValueError("Planning adapter changed while snapshotting it")
+        temporary.replace(destination)
+    if sha256(destination) != fingerprint:
+        raise ValueError("Frozen planning adapter changed")
+    return destination, fingerprint
 
 
 # The archived scientific function writes the aggregate HTML after each worker.
@@ -67,6 +86,7 @@ def complete_student(case_plan, student):
 
 
 def main(argv=None):
+    started = time.perf_counter()
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--dry-run", action="store_true")
@@ -104,6 +124,16 @@ def main(argv=None):
                           "plan": str(case_plan), "results": str(case_plan.parent / "generated_plan_results")}, indent=2))
         return
     generated.mkdir(parents=True, exist_ok=True)
+    progress_path = generated / "preparation_progress.jsonl"
+
+    def progress(phase, **details):
+        row = {"event": "generated_action_preparation", "phase": phase,
+               "pid": os.getpid(), "elapsed_seconds": time.perf_counter() - started, **details}
+        line = json.dumps(row)
+        with progress_path.open("a") as stream:
+            stream.write(line + "\n")
+        print(line, flush=True)
+
     with (generated / ".launcher.lock").open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         previous = read_json(plan_path) if plan_path.is_file() else None
@@ -113,8 +143,10 @@ def main(argv=None):
             parser.error("The first invocation requires --manifest")
         if previous and previous["manifest"] != str(manifest_path):
             raise ValueError("This launch name already belongs to a different parent study")
+        progress("validating_source_snapshot")
         code_root = create_study_source(repo, manifest_path)
         python = site.get("STMEM_PYTHON") or str(repo / ".venv/bin/python")
+        progress("checking_cache_identity")
         runtime_manifest(python, code_root, manifest_path)
         if not case_plan.is_file() or args.stage in ("run", "plan"):
             checkpoints = []
@@ -132,19 +164,33 @@ def main(argv=None):
             names = [entry.split("=", 1)[0] for entry in checkpoints]
             if sorted(names) != sorted(STUDENTS):
                 parser.error("This matched launcher requires exactly S_STD, S_STAGE and S_PACKET")
-            command = [python, "-m", "stmem.inspection.refinement_generated", "--mode", "plan",
+            adapter, adapter_hash = planning_adapter(generated)
+            command = [python, "-u", str(adapter), "--progress-file", str(progress_path), "--mode", "plan",
                        "--manifest", str(manifest_path), "--plan", str(case_plan),
                        "--max-cases", str(args.max_cases), "--checkpoints", *sorted(checkpoints)]
             limited = args.limited_check or (previous or {}).get("limited_check", False)
             if limited:
                 command.append("--limited-check")
+            progress("selecting_common_cases", adapter_sha256=adapter_hash)
             subprocess.run(command, cwd=code_root, env=runtime_environment(code_root, cpu=True), check=True)
+            if sha256(adapter) != adapter_hash:
+                raise ValueError("Planning adapter changed during execution")
+            plan_hash = sha256(case_plan)
+            immutable_json(adapter.parent / f"{plan_hash}.receipt.json", {
+                "schema": "generated_case_planning_io_v1", "adapter": str(adapter),
+                "adapter_sha256": adapter_hash, "original_code_root": str(code_root),
+                "manifest_sha256": sha256(manifest_path), "case_plan": str(case_plan),
+                "case_plan_sha256": plan_hash,
+                "scope": "Memoize NPZ columns per file; original checks and case selection unchanged",
+            })
+            progress("case_plan_ready", plan=str(case_plan))
         cases = read_json(case_plan)
         if not cases["cases"]:
             raise ValueError("No common development cases available; do not submit empty GPU jobs")
         checkpoint_inputs = {value["checkpoint"]: value["sha256"] for value in cases["students"].values()}
         inputs = {str(manifest_path): sha256(manifest_path), str(case_plan): sha256(case_plan), **checkpoint_inputs}
         jobs = {}
+        progress("rendering_jobs", selected_cases=len(cases["cases"]))
         for student in sorted(cases["students"]):
             key = "generated_" + student.lower()
             command = [python, "-c", GENERATE, str(case_plan), student, str(args.batch_size),
@@ -171,9 +217,16 @@ def main(argv=None):
                                env=runtime_environment(code_root, cpu=True), check=True)
         elif args.submit and args.stage in ("run", "generate"):
             active = active_user_job_ids() if args.resume else set()
-            launch["submission"] = {student: ("complete_skipped" if complete_student(case_plan, student) else
-                                              submit_job(job["plan"], resume=args.resume, active=active))
-                                    for student, job in jobs.items()}
+            launch["submission"] = {}
+            for student, job in jobs.items():
+                if complete_student(case_plan, student):
+                    launch["submission"][student] = "complete_skipped"
+                    progress("complete_skipped", student=student)
+                else:
+                    progress("submitting_job", student=student)
+                    job_id = submit_job(job["plan"], resume=args.resume, active=active)
+                    launch["submission"][student] = job_id
+                    progress("job_submitted_or_reused", student=student, job_id=job_id)
         print(json.dumps(launch, indent=2))
         if not args.submit and args.stage in ("run", "generate"):
             print("Dry-run: matched case plan and three independent typed-B200 jobs are ready; add --submit to launch.")
