@@ -466,9 +466,15 @@ def generate(plan_path, *, student=None, device="cuda:0", batch_size=16, max_hou
 
 
 def report(plan_path):
-    from plotly.offline import get_plotlyjs
     plan, _ = verify_plan(plan_path, verify_source=False)
     output = Path(plan_path).parent / (Path(plan_path).stem + "_results")
+    return report_verified(plan, output)
+
+
+def report_verified(plan, output):
+    """Render a verified case plan and checksummed outputs without path rewriting."""
+    from plotly.offline import get_plotlyjs
+    output = Path(output)
     rows, missing = [], []
     for case in plan["cases"]:
         for student in sorted(plan["students"]):

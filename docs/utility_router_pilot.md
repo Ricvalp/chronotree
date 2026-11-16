@@ -260,6 +260,98 @@ links. Timeouts and infrastructure errors remain in the planned denominator.
 This initial 32-episode screen is development evidence, not final confirmation
 or a replacement for the existing 160-episode evaluations.
 
+## 4. Check complete router allocations offline
+
+The fitting job's offline scores evaluate individual candidate decisions on
+fixed routing prefixes. They do not measure the loss after a learned router has
+made **all** decisions needed to fill the history budget. Run this separate
+diagnostic before interpreting candidate ranking as improved policy behavior.
+
+Wait for the remaining closed-loop screening jobs to finish before updating
+their main checkout. Then commit/push the new implementation and pull it on the
+HPC:
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+
+.venv/bin/python hpc/utility_router_routes.py \
+  --site hpc/site_b200_4gpu.env \
+  --pilot-name utility_router_std95k \
+  --name utility_router_std95k_full_routes \
+  --workers 4 --max-concurrent 4 \
+  --partition aiq --gpu-type b200 \
+  --walltime 04:00:00 \
+  --dry-run
+```
+
+This first validates the pilot using its original frozen source, and checks that
+all four fitting jobs and their offline evaluations completed with the expected
+checkpoint hashes. It then writes a **separate** diagnostic manifest and freezes
+the newly committed diagnostic implementation. The pilot's manifest, labels,
+weights and source remain unchanged. The small adoption receipt records which
+original runtime validated the pilot; neither source guard is bypassed.
+
+Submit the prepared array:
+
+```bash
+.venv/bin/python hpc/utility_router_routes.py \
+  --site hpc/site_b200_4gpu.env \
+  --name utility_router_std95k_full_routes \
+  --submit
+```
+
+There are four independent workers, each requesting **one B200, eight CPUs and
+64 GB RAM**, with a four-hour limit. They divide the same 128 fixed development
+states, not the final confirmation episodes. For each state the diagnostic
+constructs complete history allocations using the four learned packet routers,
+TREE/FLAT random packet controls and global UNIFORM. Every method uses the same
+frozen student, budget 128, action convention and observed state. Expert actions
+and noise are used only to measure the resulting policy loss; they are never
+router inputs. Four fresh discovery draws and four fresh confirmation draws are
+shared across methods, with a seed distinct from the fitting labels. This is an
+offline check of full-route utility, not a new training run or simulator success
+measurement. The four-hour allocation limit is not a measured duration estimate.
+
+Check filesystem progress:
+
+```bash
+.venv/bin/python hpc/utility_router_routes.py \
+  --site hpc/site_b200_4gpu.env \
+  --name utility_router_std95k_full_routes --stage status
+```
+
+After every worker completes, aggregate on the CPU:
+
+```bash
+.venv/bin/python hpc/utility_router_routes.py \
+  --site hpc/site_b200_4gpu.env \
+  --name utility_router_std95k_full_routes --stage report
+```
+
+Results and logs:
+
+```text
+runs/utility_router_std95k_full_routes/manifest.json
+runs/utility_router_std95k_full_routes/worker_0.json ... worker_3.json
+runs/utility_router_std95k_full_routes/states/
+runs/utility_router_std95k_full_routes/summary.json
+runs/utility_router_std95k_full_routes/report.md
+hpc/generated/utility_router_std95k_full_routes/logs/full_routes_<job>_<worker>.{out,err}
+```
+
+Use `--submit --resume` with the same name after an interrupted allocation.
+Active arrays are reused; completed state artifacts are retained and verified by
+the worker. Keep the same worker count and immutable inputs, or choose a new
+diagnostic name. `--stage status` only reads files; `--stage report` runs local
+CPU aggregation and never submits a job.
+
+The 16 November full-route addition passed 60 focused CPU tests across routing,
+launching, fitting, cache-backed measurement, offline evaluation and generated
+action diagnostics. This includes actual synthetic cached teacher/student FM
+inference, parity with all seven online selectors, exact leaf coverage, sealed
+artifact validation, and byte-identical resume. Ruff and the teacher diagram
+snapshot check passed. No workstation GPU inference or HPC submission was run.
+
 ## Verification and current limits
 
 The launchers have CPU-only tests for dry-run behavior, typed GRES, exact source
