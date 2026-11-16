@@ -19,6 +19,19 @@ the current cluster requirement: **`aiq`, `--gres=gpu:b200:1`**, with no exclusi
 node request. They do not inherit the old teacher run directory or W&B project
 from `site_b200_4gpu.env`.
 
+HTML reports require the optional `visualization` dependency. In an existing HPC
+environment, install the project's pinned Plotly version with:
+
+```bash
+uv pip install --python .venv/bin/python "plotly==6.3.1"
+```
+
+When synchronizing the full environment, include `--extra visualization`
+alongside `--extra simulator`. If status reports all generated students complete
+but reporting fails with `No module named 'plotly'`, install this dependency and
+repeat only `--stage report`. Saved generation results remain reusable; no GPU
+job needs to be resubmitted. Report aggregation runs on the CPU.
+
 ## 1. Inspect generated actions from the same development cases
 
 Run from the HPC checkout:
@@ -259,6 +272,59 @@ Use the corresponding `summary.json`, per-episode outputs and W&B evaluation
 links. Timeouts and infrastructure errors remain in the planned denominator.
 This initial 32-episode screen is development evidence, not final confirmation
 or a replacement for the existing 160-episode evaluations.
+
+### Expand the matched comparison to 160 episodes per method
+
+After pulling the implementation, use a separate evaluation name while retaining
+the same fitted pilot:
+
+```bash
+cd /hpc/home/phi/rvalperga/chronotree
+
+.venv/bin/python hpc/utility_routers.py \
+  --site hpc/site_b200_4gpu.env \
+  --name utility_router_std95k \
+  --stage evaluate \
+  --eval-name utility_router_std95k_160ep \
+  --eval-gpus 4 --workers-per-gpu 4 --eval-cpus 64 \
+  --episode-count 10 --video-cap 10 \
+  --eval-walltime 12:00:00 \
+  --dry-run
+```
+
+Replace `--dry-run` with `--submit` to submit all seven jobs. The command validates
+and renders all seven before any submission. Each requests four B200s on `aiq`,
+64 CPUs and 128 GB RAM, with 16 simulator workers and a 12-hour scheduling limit;
+that limit is not a duration estimate. Resource type/partition come from the
+original pilot plan (`aiq`/`b200`), and no exclusive-node request is used. The
+account's scheduler limits determine how many jobs can run concurrently.
+
+The four learned readers, two matched random controls and UNIFORM reuse exactly
+the same frozen S_STD95k policy, fitted routers, B128, eight executed targets and
+eight integration steps. There are 160 official validation episodes per method
+(IDs 0–9 for each of 16 tasks), or 1,120 planned rollouts across seven methods.
+Episode IDs 0–1 overlap the earlier screen: this is an expanded matched
+evaluation, not an independent replication. Compare paired episode outcomes,
+timeouts and complete decision latency, rather than treating these overlapping
+screens as independent samples.
+
+`--name` identifies the existing training pilot. `--eval-name` changes only the
+evaluation output prefix, so the original 32-episode plans/results remain intact.
+Repeat the same command with `--submit --resume` for interrupted evaluations.
+The existing evaluation launcher verifies immutable inputs and retains completed
+episodes. Use a new evaluation name for a different evaluation protocol.
+
+```text
+runs/evaluation/utility_router_std95k_160ep_<variant>_packet_eval/
+hpc/generated/utility_router_std95k_160ep_<variant>_packet_eval/logs/
+```
+
+Each output contains `summary.json`, episode results and up to ten videos; W&B
+logging stays in `chronotree-routers`. Finish code updates before submission and
+keep the main checkout at that source revision until all evaluations finish.
+
+For the complementary CPU-only analysis of all individual candidate gains in the
+existing label dataset, see [refinement gain distributions](utility_gain_distribution.md).
 
 ## 4. Check complete router allocations offline
 

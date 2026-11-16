@@ -1,5 +1,33 @@
 # Implementation decisions — 17 October 2026
 
+## 16 November: expand router validation and inspect candidate-gain tails
+
+At the user's request, expand the S_STD95k router comparison to ten official
+validation episodes per task for all seven existing learned/random/UNIFORM
+selectors. A separate `--eval-name` preserves the original two-episode plans;
+the training pilot, selected weights, B128, packet controller, eight executed
+targets and eight integration steps stay fixed. The resulting 160 episodes per
+selector include the earlier IDs 0 and 1, so this is an expanded evaluation,
+not an independent replication. The seven jobs request typed B200s on `aiq`
+through the existing pilot resources. No new student/router fitting or reserved
+test-seed selection is included.
+
+Add CPU-only descriptive plots from the existing validated label transactions.
+Use all proposed candidates and both independent noise banks; keep fitting and
+development partitions, TREE/FLAT readers, first-move and completed-packet effects
+separate. Raw expert-FM loss reduction is the pilot's supervision target; packet
+gain per token is an additional diagnostic, not the original fitted target and
+not a measurement of intermediate packet marginals. Tail concentration and
+discovery-selected confirmation effects address whether rare large gains persist
+under fresh noise. Do not infer a power law from a log-log plot or independent
+sample size from correlated candidates/draws.
+
+The production pilot labels are absent locally. Verification uses synthetic CPU
+fixtures, and the real distribution report must be generated on the HPC using
+the documented command. No production results or Slurm submissions are claimed
+by this implementation. See [the expanded evaluation](utility_router_pilot.md)
+and [gain-distribution analysis](utility_gain_distribution.md).
+
 ## 11 November: preserve empty causal histories in utility samplers
 
 Audit job 72962 exposed `IndexedArchive.flat_arrays` inferring float64 for an

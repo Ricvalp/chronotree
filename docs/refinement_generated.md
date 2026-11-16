@@ -5,6 +5,13 @@ follow-up asks whether the measured allocation choices also change ordinary
 eight-step generation from pure Gaussian noise. It produces predicted
 joint-target/TCP paths, not simulator success rates.
 
+Report rendering requires Plotly from the optional `visualization` extra. For an
+existing HPC environment, use `uv pip install --python .venv/bin/python
+"plotly==6.3.1"`. Future full `uv sync` commands should include both
+`--extra simulator` and `--extra visualization`. A missing Plotly installation
+can fail reporting after generation has already saved complete results;
+install it and rerun report mode on the CPU instead of regenerating actions.
+
 `stmem.inspection.refinement_generated` provides separate `plan`, `generate`,
 and `report` modes. Planning reads only the diagnostic panel's **development
 episodes and discovery draws**. Confirmation losses and the reserved validation

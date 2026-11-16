@@ -263,6 +263,50 @@ def test_evaluation_uses_frozen_child_policy_and_exact_protocol(evaluation_fixtu
         assert config["model"]["budget"] == 128
 
 
+def test_larger_evaluation_has_fresh_names_and_preserves_all_seven_selectors(evaluation_fixture):
+    """Synthetic command rendering: no GPU, checkpoint inference or Slurm calls."""
+    fixture = evaluation_fixture
+    original_plan = Path(fixture.plan["repo"]) / "hpc/generated/pilot/plan.json"
+    original_bytes = original_plan.read_bytes()
+    routers.main(["--name", "pilot", "--stage", "evaluate", "--dry-run"])
+    initial_commands = list(fixture.commands)
+    initial_names = {command[command.index("--name") + 1] for command in initial_commands}
+    assert initial_names == {f"pilot_{variant}_packet_eval" for variant in (
+        "tree_immediate", "tree_packet", "flat_immediate", "flat_packet", "tree_random", "flat_random", "uniform",
+    )}
+    fixture.commands.clear()
+    routers.main(["--name", "pilot", "--stage", "evaluate", "--eval-name", "pilot_160ep",
+                  "--episode-count", "10", "--eval-gpus", "4", "--workers-per-gpu", "4",
+                  "--eval-cpus", "64", "--video-cap", "10", "--eval-walltime", "12:00:00", "--submit"])
+    assert original_plan.read_bytes() == original_bytes
+    assert len(fixture.commands) == 14
+    assert all("--dry-run" in command for command in fixture.commands[:7])
+    assert all("--submit" in command for command in fixture.commands[7:])
+    new_names = {command[command.index("--name") + 1] for command in fixture.commands}
+    assert len(new_names) == 7 and new_names.isdisjoint(initial_names)
+    for before, after in zip(initial_commands, fixture.commands[:7]):
+        assert after[after.index("--name") + 1] == before[before.index("--name") + 1].replace(
+            "pilot_", "pilot_160ep_", 1)
+        for flag in ("--checkpoint", "--config", "--method", "--budget", "--execute-actions"):
+            assert before[before.index(flag) + 1] == after[after.index(flag) + 1]
+        for flag in ("--router-checkpoint", "--router-controller", "--router-selection"):
+            assert (flag in before) == (flag in after)
+            if flag in before:
+                assert before[before.index(flag) + 1] == after[after.index(flag) + 1]
+        for flag, expected in {"--episode-count": "10", "--gpus": "4", "--workers-per-gpu": "4",
+                               "--cpus": "64", "--mem": "128G", "--walltime": "12:00:00",
+                               "--partition": "aiq", "--gpu-type": "b200",
+                               "--wandb-project": "chronotree-routers"}.items():
+            assert after[after.index(flag) + 1] == expected
+        assert "--exclusive" not in after
+
+
+def test_evaluation_name_cannot_rename_training(launch):
+    with pytest.raises(SystemExit):
+        routers.main([*launch.args, "--eval-name", "other", "--dry-run"])
+    assert not (launch.repo / "hpc/generated/pilot/plan.json").exists()
+
+
 @pytest.mark.parametrize("fault", ["partial", "checkpoint_changed", "wrong_credit_target", "flow_steps"])
 def test_all_evaluation_inputs_verified_before_first_dry_run(evaluation_fixture, fault):
     fixture = evaluation_fixture

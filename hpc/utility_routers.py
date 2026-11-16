@@ -274,6 +274,7 @@ def evaluation_inputs(plan, study):
 def evaluate_jobs(plan, args):
     """Matched packet-credit screen, with gain-blind packet and global controls."""
     repo = Path(plan["repo"])
+    evaluation_name = args.eval_name or plan["name"]
     study = evaluation_study(plan)
     student, config, routers = evaluation_inputs(plan, study)
     execute, budget = study["protocol"]["execute_targets"], study["protocol"]["budget"]
@@ -282,7 +283,7 @@ def evaluate_jobs(plan, args):
     variants += [("uniform", "UNIFORM", None, None)]
     commands = []
     for suffix, reader, target, selection in variants:
-        name = f"{plan['name']}_{suffix}_{args.controller}_eval"
+        name = f"{evaluation_name}_{suffix}_{args.controller}_eval"
         command = [plan["python"], str(repo / "hpc/evaluate.py"), "--site", str(args.site.resolve()),
                    "--checkpoint", str(student), "--config", str(config), "--name", name,
                    "--method", reader, "--budget", str(budget), "--execute-actions", str(execute),
@@ -306,7 +307,8 @@ def evaluate_jobs(plan, args):
     if args.submit:
         for command in commands:
             subprocess.run(command, cwd=repo, check=True)
-    return {"evaluation_commands": commands, "episodes_per_task": args.episode_count,
+    return {"evaluation_name": evaluation_name, "evaluation_commands": commands,
+            "episodes_per_task": args.episode_count,
             "controller_comparison": args.controller, "same_episode_seeds": True}
 
 
@@ -334,6 +336,8 @@ def main(argv=None):
     parser.add_argument("--label-walltime", type=walltime, default="04:00:00")
     parser.add_argument("--fit-walltime", type=walltime, default="02:00:00")
     parser.add_argument("--eval-walltime", type=walltime, default="06:00:00")
+    parser.add_argument("--eval-name", type=profile_name,
+                        help="Separate output prefix for this evaluation campaign; keeps the fitted --name pilot fixed")
     parser.add_argument("--eval-gpus", type=int, default=4)
     parser.add_argument("--workers-per-gpu", type=int, default=4)
     parser.add_argument("--eval-cpus", type=int, default=64)
@@ -342,6 +346,8 @@ def main(argv=None):
     parser.add_argument("--controller", choices=("packet", "local"), default="packet")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(supplied)
+    if args.eval_name is not None and args.stage != "evaluate":
+        parser.error("--eval-name is only used with --stage evaluate")
     validate_resources(args.partition, args.gpu_type, args.exclude)
     if (not 1 <= args.label_shards <= 32 or min(args.fit_states, args.steps, args.eval_gpus,
                                              args.workers_per_gpu, args.eval_cpus, args.episode_count) < 1

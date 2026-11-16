@@ -255,7 +255,7 @@ def _validate_arrays(meta, arrays, identity):
                 raise ValueError(f"Nonfinite label array: {key}")
 
 
-def labels_identity(root):
+def labels_identity(root, *, progress=None):
     """Require complete exact worker/state coverage before consuming any labels."""
     root = Path(root)
     identity = _read(root / "identity.json")
@@ -288,6 +288,8 @@ def labels_identity(root):
             if receipt["states"][name] != item:
                 raise ValueError("Committed worker inventory differs from state files")
             inventory[name] = item
+            if progress is not None:
+                progress(len(inventory), len(identity["states"]))
     if set(inventory) != {state["state_id"] for state in identity["states"]}:
         raise ValueError("Label inventory does not cover the planned states exactly")
     return {"identity": identity, "identity_sha256": digest(identity), "states": inventory,
